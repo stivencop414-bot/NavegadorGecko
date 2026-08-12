@@ -1,0 +1,3 @@
+-keepattributes RuntimeVisibleAnnotations
+-keepattributes RuntimeInvisibleAnnotations
+-keepattributes AnnotationDefault

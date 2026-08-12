@@ -1,0 +1,23 @@
+{
+  "manifest_version": 2,
+  "name": "GeckoView Local Extension",
+  "version": "1.0.0",
+  "description": "Extension local para comprobar WebExtensions y Native Messaging.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "my_extension@com.ejemplo.navegador"
+    }
+  },
+  "permissions": [
+    "nativeMessaging",
+    "nativeMessagingFromContent",
+    "geckoViewAddons"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content_script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
