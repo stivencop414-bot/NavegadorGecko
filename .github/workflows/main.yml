@@ -43,49 +43,12 @@ jobs:
         with:
           gradle-version: "8.7"
 
-      - name: Fix GeckoView 125 nullable WebExtension
+      - name: Write corrected MainActivity
         shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("app/src/main/java/com/ejemplo/navegador/MainActivity.kt")
-          s = p.read_text(encoding="utf-8")
-
-          old = '''                { extension ->
-                    extension.setMessageDelegate(messageDelegate, NATIVE_APP_ID)
-                    geckoSession.webExtensionController.setMessageDelegate(
-                        extension,
-                        messageDelegate,
-                        NATIVE_APP_ID
-                    )
-                    if (savedInstanceState == null) geckoSession.loadUri(HOME_PAGE)
-                },'''
-
-          new = '''                { extension ->
-                    if (extension == null) {
-                        Log.e(TAG, "GeckoView devolvió una WebExtension nula")
-                    } else {
-                        extension.setMessageDelegate(messageDelegate, NATIVE_APP_ID)
-                        geckoSession.webExtensionController.setMessageDelegate(
-                            extension,
-                            messageDelegate,
-                            NATIVE_APP_ID
-                        )
-                    }
-                    if (savedInstanceState == null) geckoSession.loadUri(HOME_PAGE)
-                },'''
-
-          if old in s:
-              p.write_text(s.replace(old, new), encoding="utf-8")
-              print("Parche nullable aplicado correctamente.")
-          elif 'if (extension == null)' in s:
-              print("El parche nullable ya estaba aplicado.")
-          else:
-              raise SystemExit("No encontré el bloque esperado en MainActivity.kt; no aplicaré un reemplazo inseguro.")
-          PY
-
-          git diff -- app/src/main/java/com/ejemplo/navegador/MainActivity.kt || true
+          echo 'cGFja2FnZSBjb20uZWplbXBsby5uYXZlZ2Fkb3IKCmltcG9ydCBhbmRyb2lkLmFwcC5BY3Rpdml0eQppbXBvcnQgYW5kcm9pZC5jb250ZW50LkNvbnRleHQKaW1wb3J0IGFuZHJvaWQub3MuQnVuZGxlCmltcG9ydCBhbmRyb2lkLnV0aWwuTG9nCmltcG9ydCBhbmRyb2lkLnZpZXcuS2V5RXZlbnQKaW1wb3J0IGFuZHJvaWQudmlldy5WaWV3CmltcG9ydCBhbmRyb2lkLnZpZXcuaW5wdXRtZXRob2QuRWRpdG9ySW5mbwppbXBvcnQgYW5kcm9pZC52aWV3LmlucHV0bWV0aG9kLklucHV0TWV0aG9kTWFuYWdlcgppbXBvcnQgYW5kcm9pZC53aWRnZXQuQnV0dG9uCmltcG9ydCBhbmRyb2lkLndpZGdldC5FZGl0VGV4dAppbXBvcnQgYW5kcm9pZC53aWRnZXQuUHJvZ3Jlc3NCYXIKaW1wb3J0IG9yZy5qc29uLkpTT05PYmplY3QKaW1wb3J0IG9yZy5tb3ppbGxhLmdlY2tvdmlldy5HZWNrb1Jlc3VsdAppbXBvcnQgb3JnLm1vemlsbGEuZ2Vja292aWV3LkdlY2tvUnVudGltZQppbXBvcnQgb3JnLm1vemlsbGEuZ2Vja292aWV3LkdlY2tvUnVudGltZVNldHRpbmdzCmltcG9ydCBvcmcubW96aWxsYS5nZWNrb3ZpZXcuR2Vja29TZXNzaW9uCmltcG9ydCBvcmcubW96aWxsYS5nZWNrb3ZpZXcuR2Vja29WaWV3CmltcG9ydCBvcmcubW96aWxsYS5nZWNrb3ZpZXcuV2ViRXh0ZW5zaW9uCgpwcml2YXRlIGNvbnN0IHZhbCBUQUcgPSAiR2Vja29Ccm93c2VyIgpwcml2YXRlIGNvbnN0IHZhbCBOQVRJVkVfQVBQX0lEID0gImJyb3dzZXIiCnByaXZhdGUgY29uc3QgdmFsIEVYVEVOU0lPTl9JRCA9ICJteV9leHRlbnNpb25AY29tLmVqZW1wbG8ubmF2ZWdhZG9yIgpwcml2YXRlIGNvbnN0IHZhbCBFWFRFTlNJT05fTE9DQVRJT04gPSAicmVzb3VyY2U6Ly9hbmRyb2lkL2Fzc2V0cy9leHRlbnNpb25zL215X2V4dGVuc2lvbi8iCgpwcml2YXRlIG9iamVjdCBHZWNrb1J1bnRpbWVIb2xkZXIgewogICAgQFZvbGF0aWxlCiAgICBwcml2YXRlIHZhciBpbnN0YW5jZTogR2Vja29SdW50aW1lPyA9IG51bGwKCiAgICBmdW4gZ2V0KGNvbnRleHQ6IENvbnRleHQpOiBHZWNrb1J1bnRpbWUgPSBpbnN0YW5jZSA/OiBzeW5jaHJvbml6ZWQodGhpcykgewogICAgICAgIGluc3RhbmNlID86IEdlY2tvUnVudGltZS5jcmVhdGUoCiAgICAgICAgICAgIGNvbnRleHQuYXBwbGljYXRpb25Db250ZXh0LAogICAgICAgICAgICBHZWNrb1J1bnRpbWVTZXR0aW5ncy5CdWlsZGVyKCkKICAgICAgICAgICAgICAgIC5yZW1vdGVEZWJ1Z2dpbmdFbmFibGVkKGZhbHNlKQogICAgICAgICAgICAgICAgLmphdmFTY3JpcHRFbmFibGVkKHRydWUpCiAgICAgICAgICAgICAgICAuYnVpbGQoKQogICAgICAgICkuYWxzbyB7IGluc3RhbmNlID0gaXQgfQogICAgfQp9CgpjbGFzcyBNYWluQWN0aXZpdHkgOiBBY3Rpdml0eSgpIHsKICAgIHByaXZhdGUgbGF0ZWluaXQgdmFyIGdlY2tvVmlldzogR2Vja29WaWV3CiAgICBwcml2YXRlIGxhdGVpbml0IHZhciBnZWNrb1Nlc3Npb246IEdlY2tvU2Vzc2lvbgogICAgcHJpdmF0ZSBsYXRlaW5pdCB2YXIgdXJsRWRpdFRleHQ6IEVkaXRUZXh0CiAgICBwcml2YXRlIGxhdGVpbml0IHZhciBnb0J1dHRvbjogQnV0dG9uCiAgICBwcml2YXRlIGxhdGVpbml0IHZhciBwcm9ncmVzc0JhcjogUHJvZ3Jlc3NCYXIKCiAgICBwcml2YXRlIHZhbCBtZXNzYWdlRGVsZWdhdGUgPSBvYmplY3QgOiBXZWJFeHRlbnNpb24uTWVzc2FnZURlbGVnYXRlIHsKICAgICAgICBvdmVycmlkZSBmdW4gb25NZXNzYWdlKAogICAgICAgICAgICBuYXRpdmVBcHA6IFN0cmluZywKICAgICAgICAgICAgbWVzc2FnZTogQW55LAogICAgICAgICAgICBzZW5kZXI6IFdlYkV4dGVuc2lvbi5NZXNzYWdlU2VuZGVyCiAgICAgICAgKTogR2Vja29SZXN1bHQ8QW55Pj8gewogICAgICAgICAgICBpZiAobmF0aXZlQXBwICE9IE5BVElWRV9BUFBfSUQpIHJldHVybiBudWxsCiAgICAgICAgICAgIGlmIChzZW5kZXIuc2Vzc2lvbiAhPSBudWxsICYmIHNlbmRlci5zZXNzaW9uICE9PSBnZWNrb1Nlc3Npb24pIHJldHVybiBudWxsCgogICAgICAgICAgICBMb2cuZChUQUcsICJXZWJFeHRlbnNpb24gLT4gQW5kcm9pZDogJG1lc3NhZ2UiKQoKICAgICAgICAgICAgcmV0dXJuIEdlY2tvUmVzdWx0LmZyb21WYWx1ZSgKICAgICAgICAgICAgICAgIEpTT05PYmplY3QoKS5hcHBseSB7CiAgICAgICAgICAgICAgICAgICAgcHV0KCJvayIsIHRydWUpCiAgICAgICAgICAgICAgICAgICAgcHV0KCJtZXNzYWdlIiwgIkhvbGEgZGVzZGUgS290bGluIikKICAgICAgICAgICAgICAgICAgICBwdXQoInJlY2VpdmVkIiwgbWVzc2FnZS50b1N0cmluZygpKQogICAgICAgICAgICAgICAgfQogICAgICAgICAgICApCiAgICAgICAgfQogICAgfQoKICAgIG92ZXJyaWRlIGZ1biBvbkNyZWF0ZShzYXZlZEluc3RhbmNlU3RhdGU6IEJ1bmRsZT8pIHsKICAgICAgICBzdXBlci5vbkNyZWF0ZShzYXZlZEluc3RhbmNlU3RhdGUpCiAgICAgICAgc2V0Q29udGVudFZpZXcoUi5sYXlvdXQuYWN0aXZpdHlfbWFpbikKCiAgICAgICAgZ2Vja29WaWV3ID0gZmluZFZpZXdCeUlkKFIuaWQuZ2Vja29WaWV3KQogICAgICAgIHVybEVkaXRUZXh0ID0gZmluZFZpZXdCeUlkKFIuaWQudXJsRWRpdFRleHQpCiAgICAgICAgZ29CdXR0b24gPSBmaW5kVmlld0J5SWQoUi5pZC5nb0J1dHRvbikKICAgICAgICBwcm9ncmVzc0JhciA9IGZpbmRWaWV3QnlJZChSLmlkLnBhZ2VQcm9ncmVzcykKCiAgICAgICAgZ2Vja29TZXNzaW9uID0gR2Vja29TZXNzaW9uKCkKCiAgICAgICAgZ2Vja29TZXNzaW9uLnNldENvbnRlbnREZWxlZ2F0ZSgKICAgICAgICAgICAgb2JqZWN0IDogR2Vja29TZXNzaW9uLkNvbnRlbnREZWxlZ2F0ZSB7fQogICAgICAgICkKCiAgICAgICAgZ2Vja29TZXNzaW9uLnNldFByb2dyZXNzRGVsZWdhdGUoCiAgICAgICAgICAgIG9iamVjdCA6IEdlY2tvU2Vzc2lvbi5Qcm9ncmVzc0RlbGVnYXRlIHsKICAgICAgICAgICAgICAgIG92ZXJyaWRlIGZ1biBvblBhZ2VTdGFydChzZXNzaW9uOiBHZWNrb1Nlc3Npb24sIHVybDogU3RyaW5nKSB7CiAgICAgICAgICAgICAgICAgICAgdXJsRWRpdFRleHQuc2V0VGV4dCh1cmwpCiAgICAgICAgICAgICAgICAgICAgcHJvZ3Jlc3NCYXIucHJvZ3Jlc3MgPSAwCiAgICAgICAgICAgICAgICAgICAgcHJvZ3Jlc3NCYXIudmlzaWJpbGl0eSA9IFZpZXcuVklTSUJMRQogICAgICAgICAgICAgICAgfQoKICAgICAgICAgICAgICAgIG92ZXJyaWRlIGZ1biBvblByb2dyZXNzQ2hhbmdlKHNlc3Npb246IEdlY2tvU2Vzc2lvbiwgcHJvZ3Jlc3M6IEludCkgewogICAgICAgICAgICAgICAgICAgIHByb2dyZXNzQmFyLnZpc2liaWxpdHkgPSBWaWV3LlZJU0lCTEUKICAgICAgICAgICAgICAgICAgICBwcm9ncmVzc0Jhci5wcm9ncmVzcyA9IHByb2dyZXNzLmNvZXJjZUluKDAsIDEwMCkKICAgICAgICAgICAgICAgIH0KCiAgICAgICAgICAgICAgICBvdmVycmlkZSBmdW4gb25QYWdlU3RvcChzZXNzaW9uOiBHZWNrb1Nlc3Npb24sIHN1Y2Nlc3M6IEJvb2xlYW4pIHsKICAgICAgICAgICAgICAgICAgICBwcm9ncmVzc0Jhci5wcm9ncmVzcyA9IDEwMAogICAgICAgICAgICAgICAgICAgIHByb2dyZXNzQmFyLnBvc3REZWxheWVkKAogICAgICAgICAgICAgICAgICAgICAgICB7IHByb2dyZXNzQmFyLnZpc2liaWxpdHkgPSBWaWV3LkdPTkUgfSwKICAgICAgICAgICAgICAgICAgICAgICAgMTUwCiAgICAgICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgfQogICAgICAgICAgICB9CiAgICAgICAgKQoKICAgICAgICB2YWwgcnVudGltZSA9IEdlY2tvUnVudGltZUhvbGRlci5nZXQoYXBwbGljYXRpb25Db250ZXh0KQoKICAgICAgICBnZWNrb1Nlc3Npb24ub3BlbihydW50aW1lKQogICAgICAgIGdlY2tvVmlldy5zZXRTZXNzaW9uKGdlY2tvU2Vzc2lvbikKCiAgICAgICAgZ29CdXR0b24uc2V0T25DbGlja0xpc3RlbmVyIHsKICAgICAgICAgICAgbmF2aWdhdGVGcm9tQmFyKCkKICAgICAgICB9CgogICAgICAgIHVybEVkaXRUZXh0LnNldE9uRWRpdG9yQWN0aW9uTGlzdGVuZXIgeyBfLCBhY3Rpb25JZCwgZXZlbnQgLT4KICAgICAgICAgICAgdmFsIGVudGVyUHJlc3NlZCA9CiAgICAgICAgICAgICAgICBldmVudD8ua2V5Q29kZSA9PSBLZXlFdmVudC5LRVlDT0RFX0VOVEVSICYmCiAgICAgICAgICAgICAgICAgICAgZXZlbnQuYWN0aW9uID09IEtleUV2ZW50LkFDVElPTl9ET1dOCgogICAgICAgICAgICBpZiAoYWN0aW9uSWQgPT0gRWRpdG9ySW5mby5JTUVfQUNUSU9OX0dPIHx8IGVudGVyUHJlc3NlZCkgewogICAgICAgICAgICAgICAgbmF2aWdhdGVGcm9tQmFyKCkKICAgICAgICAgICAgICAgIHRydWUKICAgICAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgICAgIGZhbHNlCiAgICAgICAgICAgIH0KICAgICAgICB9CgogICAgICAgIGluc3RhbGxCdWlsdEluRXh0ZW5zaW9uKHJ1bnRpbWUsIHNhdmVkSW5zdGFuY2VTdGF0ZSkKICAgIH0KCiAgICBwcml2YXRlIGZ1biBpbnN0YWxsQnVpbHRJbkV4dGVuc2lvbigKICAgICAgICBydW50aW1lOiBHZWNrb1J1bnRpbWUsCiAgICAgICAgc2F2ZWRJbnN0YW5jZVN0YXRlOiBCdW5kbGU/CiAgICApIHsKICAgICAgICBydW50aW1lLndlYkV4dGVuc2lvbkNvbnRyb2xsZXIKICAgICAgICAgICAgLmVuc3VyZUJ1aWx0SW4oRVhURU5TSU9OX0xPQ0FUSU9OLCBFWFRFTlNJT05fSUQpCiAgICAgICAgICAgIC5hY2NlcHQoCiAgICAgICAgICAgICAgICB7IGV4dGVuc2lvbiAtPgogICAgICAgICAgICAgICAgICAgIGlmIChleHRlbnNpb24gPT0gbnVsbCkgewogICAgICAgICAgICAgICAgICAgICAgICBMb2cuZShUQUcsICJHZWNrb1ZpZXcgZGV2b2x2acOzIHVuYSBXZWJFeHRlbnNpb24gbnVsYSIpCiAgICAgICAgICAgICAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgICAgICAgICAgICAgZXh0ZW5zaW9uLnNldE1lc3NhZ2VEZWxlZ2F0ZSgKICAgICAgICAgICAgICAgICAgICAgICAgICAgIG1lc3NhZ2VEZWxlZ2F0ZSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgIE5BVElWRV9BUFBfSUQKICAgICAgICAgICAgICAgICAgICAgICAgKQoKICAgICAgICAgICAgICAgICAgICAgICAgZ2Vja29TZXNzaW9uLndlYkV4dGVuc2lvbkNvbnRyb2xsZXIuc2V0TWVzc2FnZURlbGVnYXRlKAogICAgICAgICAgICAgICAgICAgICAgICAgICAgZXh0ZW5zaW9uLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgbWVzc2FnZURlbGVnYXRlLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgTkFUSVZFX0FQUF9JRAogICAgICAgICAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICAgICAgfQoKICAgICAgICAgICAgICAgICAgICBpZiAoc2F2ZWRJbnN0YW5jZVN0YXRlID09IG51bGwpIHsKICAgICAgICAgICAgICAgICAgICAgICAgZ2Vja29TZXNzaW9uLmxvYWRVcmkoSE9NRV9QQUdFKQogICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgIH0sCiAgICAgICAgICAgICAgICB7IGVycm9yIC0+CiAgICAgICAgICAgICAgICAgICAgTG9nLmUoVEFHLCAiTm8gc2UgcHVkbyBpbnN0YWxhciBsYSBleHRlbnNpw7NuIiwgZXJyb3IpCgogICAgICAgICAgICAgICAgICAgIC8vIEVsIG5hdmVnYWRvciBjb250aW7DumEgZnVuY2lvbmFuZG8gYXVucXVlIGZhbGxlCiAgICAgICAgICAgICAgICAgICAgLy8gbGEgZXh0ZW5zacOzbiBsb2NhbC4KICAgICAgICAgICAgICAgICAgICBpZiAoc2F2ZWRJbnN0YW5jZVN0YXRlID09IG51bGwpIHsKICAgICAgICAgICAgICAgICAgICAgICAgZ2Vja29TZXNzaW9uLmxvYWRVcmkoSE9NRV9QQUdFKQogICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgKQogICAgfQoKICAgIHByaXZhdGUgZnVuIG5hdmlnYXRlRnJvbUJhcigpIHsKICAgICAgICB2YWwgcmF3ID0gdXJsRWRpdFRleHQudGV4dD8udG9TdHJpbmcoKT8udHJpbSgpLm9yRW1wdHkoKQoKICAgICAgICB2YWwgdXJsID0gd2hlbiB7CiAgICAgICAgICAgIHJhdy5pc0JsYW5rKCkgLT4gSE9NRV9QQUdFCiAgICAgICAgICAgIHJhdy5zdGFydHNXaXRoKCJodHRwczovLyIsIGlnbm9yZUNhc2UgPSB0cnVlKSAtPiByYXcKICAgICAgICAgICAgcmF3LnN0YXJ0c1dpdGgoImh0dHA6Ly8iLCBpZ25vcmVDYXNlID0gdHJ1ZSkgLT4gcmF3CiAgICAgICAgICAgIHJhdy5zdGFydHNXaXRoKCJhYm91dDoiLCBpZ25vcmVDYXNlID0gdHJ1ZSkgLT4gcmF3CiAgICAgICAgICAgIGVsc2UgLT4gImh0dHBzOi8vJHJhdyIKICAgICAgICB9CgogICAgICAgIGdlY2tvU2Vzc2lvbi5sb2FkVXJpKHVybCkKCiAgICAgICAgKGdldFN5c3RlbVNlcnZpY2UoSU5QVVRfTUVUSE9EX1NFUlZJQ0UpIGFzIElucHV0TWV0aG9kTWFuYWdlcikKICAgICAgICAgICAgLmhpZGVTb2Z0SW5wdXRGcm9tV2luZG93KHVybEVkaXRUZXh0LndpbmRvd1Rva2VuLCAwKQoKICAgICAgICB1cmxFZGl0VGV4dC5jbGVhckZvY3VzKCkKICAgIH0KCiAgICBvdmVycmlkZSBmdW4gb25EZXN0cm95KCkgewogICAgICAgIGlmICg6OmdlY2tvVmlldy5pc0luaXRpYWxpemVkKSB7CiAgICAgICAgICAgIGdlY2tvVmlldy5yZWxlYXNlU2Vzc2lvbigpCiAgICAgICAgfQoKICAgICAgICBpZiAoOjpnZWNrb1Nlc3Npb24uaXNJbml0aWFsaXplZCkgewogICAgICAgICAgICBnZWNrb1Nlc3Npb24uY2xvc2UoKQogICAgICAgIH0KCiAgICAgICAgc3VwZXIub25EZXN0cm95KCkKICAgIH0KCiAgICBjb21wYW5pb24gb2JqZWN0IHsKICAgICAgICBwcml2YXRlIGNvbnN0IHZhbCBIT01FX1BBR0UgPSAiaHR0cHM6Ly93d3cubW96aWxsYS5vcmcvIgogICAgfQp9Cg==' | base64 -d > app/src/main/java/com/ejemplo/navegador/MainActivity.kt
+          echo "MainActivity.kt actualizado:"
+          sed -n '1,240p' app/src/main/java/com/ejemplo/navegador/MainActivity.kt
 
       - name: Save source correction
         shell: bash
@@ -94,9 +57,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app/src/main/java/com/ejemplo/navegador/MainActivity.kt
           if git diff --cached --quiet; then
-            echo "No hay cambios nuevos que guardar."
+            echo "MainActivity.kt ya estaba actualizado."
           else
-            git commit -m "Fix GeckoView nullable WebExtension [skip ci]"
+            git commit -m "Fix GeckoView 125 nullable extension [skip ci]"
             git push origin HEAD:main
           fi
 
@@ -158,7 +121,9 @@ jobs:
         run: |
           echo "Debug outcome: ${{ steps.debug.outcome }}"
           echo "Release outcome: ${{ steps.release.outcome }}"
-          if [ "${{ steps.debug.outcome }}" != "success" ] || [ "${{ steps.release.outcome }}" != "success" ]; then
+
+          if [ "${{ steps.debug.outcome }}" != "success" ] || \
+             [ "${{ steps.release.outcome }}" != "success" ]; then
             exit 1
           fi
           
