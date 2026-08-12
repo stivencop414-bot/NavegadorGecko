@@ -2,12 +2,11 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
     paths:
       - ".github/workflows/main.yml"
   workflow_dispatch:
 
-# Permite que el propio workflow guarde el proyecto generado en el repositorio.
 permissions:
   contents: write
 
@@ -30,6 +29,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android 34
         shell: bash
@@ -42,57 +43,122 @@ jobs:
         with:
           gradle-version: "8.7"
 
-      - name: Generate project in repository
+      - name: Fix GeckoView 125 nullable WebExtension
         shell: bash
         run: |
-          echo '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' | base64 -d > /tmp/gecko_project.zip
-          rm -rf /tmp/gecko_generated
-          mkdir -p /tmp/gecko_generated
-          unzip -q /tmp/gecko_project.zip -d /tmp/gecko_generated
-          cp -a /tmp/gecko_generated/gecko_ci_project/. "$GITHUB_WORKSPACE/"
-          echo "Proyecto generado en el repositorio:"
-          find app/src/main -type f | sort
+          python3 - <<'PY'
+          from pathlib import Path
 
-      - name: Save generated source files to GitHub
+          p = Path("app/src/main/java/com/ejemplo/navegador/MainActivity.kt")
+          s = p.read_text(encoding="utf-8")
+
+          old = '''                { extension ->
+                    extension.setMessageDelegate(messageDelegate, NATIVE_APP_ID)
+                    geckoSession.webExtensionController.setMessageDelegate(
+                        extension,
+                        messageDelegate,
+                        NATIVE_APP_ID
+                    )
+                    if (savedInstanceState == null) geckoSession.loadUri(HOME_PAGE)
+                },'''
+
+          new = '''                { extension ->
+                    if (extension == null) {
+                        Log.e(TAG, "GeckoView devolvió una WebExtension nula")
+                    } else {
+                        extension.setMessageDelegate(messageDelegate, NATIVE_APP_ID)
+                        geckoSession.webExtensionController.setMessageDelegate(
+                            extension,
+                            messageDelegate,
+                            NATIVE_APP_ID
+                        )
+                    }
+                    if (savedInstanceState == null) geckoSession.loadUri(HOME_PAGE)
+                },'''
+
+          if old in s:
+              p.write_text(s.replace(old, new), encoding="utf-8")
+              print("Parche nullable aplicado correctamente.")
+          elif 'if (extension == null)' in s:
+              print("El parche nullable ya estaba aplicado.")
+          else:
+              raise SystemExit("No encontré el bloque esperado en MainActivity.kt; no aplicaré un reemplazo inseguro.")
+          PY
+
+          git diff -- app/src/main/java/com/ejemplo/navegador/MainActivity.kt || true
+
+      - name: Save source correction
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .gitignore gradle.properties build.gradle.kts settings.gradle.kts app/
+          git add app/src/main/java/com/ejemplo/navegador/MainActivity.kt
           if git diff --cached --quiet; then
             echo "No hay cambios nuevos que guardar."
           else
-            git commit -m "Add GeckoView Android project [skip ci]"
+            git commit -m "Fix GeckoView nullable WebExtension [skip ci]"
             git push origin HEAD:main
           fi
 
-      - name: Build debug and release
+      - name: Build Debug
+        id: debug
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
-          gradle :app:assembleDebug :app:assembleRelease --stacktrace --no-daemon 2>&1 | tee build.log
+          gradle :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee build-debug.log
+
+      - name: Build Release
+        id: release
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle :app:assembleRelease --stacktrace --no-daemon 2>&1 | tee build-release.log
 
       - name: Show APKs
         if: always()
         shell: bash
         run: |
+          echo "=== APK generados ==="
           find app/build/outputs/apk -type f -name "*.apk" -print 2>/dev/null || true
 
-      - name: Upload APKs
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: NavegadorGecko-APKs
-          path: app/build/outputs/apk/**/*.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload build log
+      - name: Upload Debug APKs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NavegadorGecko-build-log
-          path: build.log
+          name: NavegadorGecko-debug-apks
+          path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Upload Release APKs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NavegadorGecko-release-apks
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NavegadorGecko-build-logs
+          path: |
+            build-debug.log
+            build-release.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Final build status
+        if: always()
+        shell: bash
+        run: |
+          echo "Debug outcome: ${{ steps.debug.outcome }}"
+          echo "Release outcome: ${{ steps.release.outcome }}"
+          if [ "${{ steps.debug.outcome }}" != "success" ] || [ "${{ steps.release.outcome }}" != "success" ]; then
+            exit 1
+          fi
           
