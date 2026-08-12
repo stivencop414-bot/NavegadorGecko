@@ -7,7 +7,7 @@ android {
     compileSdk = 36
     defaultConfig {
         applicationId = "com.ejemplo.navegador"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 34
         versionCode = 8
         versionName = "0.7.1"
