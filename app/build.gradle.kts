@@ -16,7 +16,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
     buildTypes {
         debug {
             isMinifyEnabled = false
@@ -45,6 +44,14 @@ android {
         buildConfig = false
     }
 }
+kotlin {
+    compilerOptions {
+        jvmTarget.set(
+            org.jetbrains.kotlin.gradle.dsl.JvmTarget.fromTarget("17")
+        )
+    }
+}
+
 dependencies {
     implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.10"))
     implementation("org.mozilla.geckoview:geckoview-omni:153.0.20260715202819")
