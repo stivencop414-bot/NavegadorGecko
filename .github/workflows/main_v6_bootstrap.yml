@@ -1,0 +1,284 @@
+name: Nexo v6 - Bootstrap & Full Build
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/main.yml"
+      - "NavegadorGecko_v6_source.zip"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Nexo v6 source once
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f ".nexo-v6-installed" ]; then
+            test -f NavegadorGecko_v6_source.zip || {
+              echo "FALTA NavegadorGecko_v6_source.zip EN LA RAIZ DEL REPOSITORIO"
+              exit 20
+            }
+
+            rm -rf /tmp/nexo-v6
+            mkdir -p /tmp/nexo-v6
+            unzip -oq NavegadorGecko_v6_source.zip -d /tmp/nexo-v6
+
+            # El ZIP contiene también un workflow de referencia; conservamos
+            # el bootstrap pequeño que está ejecutándose ahora.
+            rm -rf /tmp/nexo-v6/.github
+
+            rm -rf app
+            cp -a /tmp/nexo-v6/app .
+
+            cp /tmp/nexo-v6/build.gradle.kts .
+            cp /tmp/nexo-v6/settings.gradle.kts .
+            cp /tmp/nexo-v6/gradle.properties .
+            cp /tmp/nexo-v6/.gitignore .
+            cp /tmp/nexo-v6/README.md .
+
+            touch .nexo-v6-installed
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+
+            if ! git diff --cached --quiet; then
+              git commit -m "Install Nexo Browser v6 source [skip ci]"
+              git push origin HEAD:main
+            fi
+          else
+            echo "Nexo v6 source already installed; using repository files."
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android 34
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Validate source files
+        id: static_validation
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            python3 - <<'PY'
+          import json
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          for p in Path("app/src/main").rglob("*.xml"):
+              ET.parse(p)
+              print("XML OK:", p)
+
+          for p in Path("app/src/main/assets/extensions").rglob("manifest.json"):
+              data = json.loads(p.read_text(encoding="utf-8"))
+              assert data["manifest_version"] == 2
+              assert data["browser_specific_settings"]["gecko"]["id"]
+              print("EXTENSION JSON OK:", p)
+          PY
+
+            node --check app/src/main/assets/extensions/nexo_bridge/content_script.js
+          } 2>&1 | tee static-validation.log
+
+      - name: Compile everything and continue through errors
+        id: gradle_build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle \
+            :app:assembleDebug \
+            :app:assembleRelease \
+            :app:lintDebug \
+            :app:lintRelease \
+            --continue \
+            --stacktrace \
+            --no-daemon \
+            2>&1 | tee full-build.log
+
+      - name: Extract all relevant errors
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "===== STATIC VALIDATION ====="
+            cat static-validation.log 2>/dev/null || true
+
+            echo
+            echo "===== COMPILER / R8 / LINT ERRORS ====="
+            grep -Ei \
+              "(^e: | error:|FAILURE:|Execution failed for task|Missing class|Unresolved reference|overrides nothing|Type mismatch|Cannot access|None of the following|Caused by:)" \
+              full-build.log 2>/dev/null || true
+
+            echo
+            echo "===== WARNINGS ====="
+            grep -Ei "(^w: |warning:)" full-build.log 2>/dev/null || true
+          } > errors-summary.txt
+
+          cat errors-summary.txt
+
+      - name: Sign Release APKs for device testing
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p app/build/outputs/apk/release-ci-signed
+
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            mkdir -p "$HOME/.android"
+            keytool -genkeypair \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -dname "CN=Nexo CI,O=Nexo,C=CO" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000
+          fi
+
+          find app/build/outputs/apk/release \
+            -type f -name "*-unsigned.apk" -print0 2>/dev/null |
+          while IFS= read -r -d '' apk; do
+            name="$(basename "$apk")"
+            out="app/build/outputs/apk/release-ci-signed/${name%-unsigned.apk}-ci-signed.apk"
+
+            apksigner sign \
+              --ks "$HOME/.android/debug.keystore" \
+              --ks-key-alias androiddebugkey \
+              --ks-pass pass:android \
+              --key-pass pass:android \
+              --out "$out" \
+              "$apk"
+
+            apksigner verify --verbose "$out"
+          done
+
+      - name: Deep APK validation
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          : > apk-validation.txt
+
+          find \
+            app/build/outputs/apk/debug \
+            app/build/outputs/apk/release-ci-signed \
+            -type f -name "*.apk" -print0 2>/dev/null |
+          while IFS= read -r -d '' apk; do
+            echo "========================================" | tee -a apk-validation.txt
+            echo "$apk" | tee -a apk-validation.txt
+
+            unzip -tq "$apk" >/dev/null ||
+              echo "APK ZIP INVALIDO" | tee -a apk-validation.txt
+
+            for required in \
+              assets/home/index.html \
+              assets/extensions/nexo_bridge/manifest.json \
+              assets/extensions/nexo_bridge/content_script.js
+            do
+              unzip -Z1 "$apk" | grep -qx "$required" &&
+                echo "OK: $required" | tee -a apk-validation.txt ||
+                echo "FALTA: $required" | tee -a apk-validation.txt
+            done
+
+            echo -n "ABIs: " | tee -a apk-validation.txt
+            unzip -Z1 "$apk" |
+              awk -F/ '/^lib\// {print $2}' |
+              sort -u | tr '\n' ' ' | tee -a apk-validation.txt
+            echo | tee -a apk-validation.txt
+
+            sha256sum "$apk" | tee -a apk-validation.txt
+            stat -c "Bytes: %s" "$apk" | tee -a apk-validation.txt
+
+            "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$apk" |
+              head -n 12 | tee -a apk-validation.txt
+          done
+
+      - name: Upload Debug APKs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-v6-debug-apks
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload signed Release APKs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-v6-release-ci-signed-apks
+          path: app/build/outputs/apk/release-ci-signed/*.apk
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-v6-diagnostics
+          path: |
+            static-validation.log
+            full-build.log
+            errors-summary.txt
+            apk-validation.txt
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-release.html
+            app/build/outputs/mapping/release/missing_rules.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Final strict status
+        if: always()
+        shell: bash
+        run: |
+          echo "Static validation: ${{ steps.static_validation.outcome }}"
+          echo "Gradle: ${{ steps.gradle_build.outcome }}"
+
+          if [ "${{ steps.static_validation.outcome }}" != "success" ] ||
+             [ "${{ steps.gradle_build.outcome }}" != "success" ]; then
+            exit 1
+          fi
+
+          debug_count="$(find app/build/outputs/apk/debug -name '*.apk' 2>/dev/null | wc -l)"
+          release_count="$(find app/build/outputs/apk/release-ci-signed -name '*.apk' 2>/dev/null | wc -l)"
+
+          if [ "$debug_count" -lt 2 ] || [ "$release_count" -lt 2 ]; then
+            echo "Faltan APK: debug=$debug_count release=$release_count"
+            exit 2
+          fi
+
+          echo "NEXO V6 FULL BUILD OK"
