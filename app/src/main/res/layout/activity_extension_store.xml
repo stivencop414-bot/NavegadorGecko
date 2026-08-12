@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/storeRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp">
+    <TextView android:id="@+id/storeTitle"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Tienda de extensiones" android:textSize="26sp"
+        android:textStyle="bold" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Catálogo Android de addons.mozilla.org" />
+    <LinearLayout
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="10dp" android:orientation="horizontal">
+        <EditText android:id="@+id/storeSearch"
+            android:layout_width="0dp" android:layout_height="46dp"
+            android:layout_weight="1" android:hint="Buscar extensión"
+            android:imeOptions="actionSearch" android:singleLine="true" />
+        <Button android:id="@+id/storeSearchButton"
+            android:layout_width="wrap_content" android:layout_height="46dp"
+            android:layout_marginStart="5dp" android:text="Buscar"
+            android:textAllCaps="false" />
+    </LinearLayout>
+    <ProgressBar android:id="@+id/storeProgress"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:visibility="gone" />
+    <ListView android:id="@+id/storeList"
+        android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_marginTop="8dp" android:layout_weight="1" />
+</LinearLayout>

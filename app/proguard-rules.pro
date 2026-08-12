@@ -1,3 +1,4 @@
 -keepattributes RuntimeVisibleAnnotations
 -keepattributes RuntimeInvisibleAnnotations
 -keepattributes AnnotationDefault
+-dontwarn java.beans.**

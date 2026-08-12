@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/settingsRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="18dp">
+        <TextView
+            android:id="@+id/settingsTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Configuración"
+            android:textSize="28sp"
+            android:textStyle="bold" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="18dp" android:text="Tema" />
+        <Spinner android:id="@+id/themeSpinner"
+            android:layout_width="match_parent" android:layout_height="48dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="12dp" android:text="Color de acento" />
+        <Spinner android:id="@+id/accentSpinner"
+            android:layout_width="match_parent" android:layout_height="48dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="12dp" android:text="Motor de búsqueda" />
+        <Spinner android:id="@+id/searchSpinner"
+            android:layout_width="match_parent" android:layout_height="48dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="12dp" android:text="Página de inicio" />
+        <EditText android:id="@+id/homePageEdit"
+            android:layout_width="match_parent" android:layout_height="48dp"
+            android:inputType="textUri" android:singleLine="true" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="12dp" android:text="Sesiones vivas máximas" />
+        <Spinner android:id="@+id/liveTabsSpinner"
+            android:layout_width="match_parent" android:layout_height="48dp" />
+        <Switch android:id="@+id/restoreTabsSwitch"
+            android:layout_width="match_parent" android:layout_height="48dp"
+            android:text="Restaurar pestañas al iniciar" />
+        <Switch android:id="@+id/trackingSwitch"
+            android:layout_width="match_parent" android:layout_height="48dp"
+            android:text="Protección contra rastreo" />
+        <Switch android:id="@+id/badgeSwitch"
+            android:layout_width="match_parent" android:layout_height="48dp"
+            android:text="Mostrar indicador del puente Nexo" />
+        <Button android:id="@+id/saveSettingsButton"
+            android:layout_width="match_parent" android:layout_height="48dp"
+            android:layout_marginTop="14dp" android:text="Guardar cambios"
+            android:textAllCaps="false" />
+        <Button android:id="@+id/clearDataButton"
+            android:layout_width="match_parent" android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:text="Borrar cookies, caché e historial"
+            android:textAllCaps="false" />
+    </LinearLayout>
+</ScrollView>

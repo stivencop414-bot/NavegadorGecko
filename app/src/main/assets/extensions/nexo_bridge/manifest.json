@@ -1,11 +1,11 @@
 {
   "manifest_version": 2,
-  "name": "GeckoView Local Extension",
-  "version": "1.0.0",
-  "description": "Extension local para comprobar WebExtensions y Native Messaging.",
+  "name": "Nexo Native Bridge",
+  "version": "1.1.0",
+  "description": "Puente interno entre las páginas y Nexo Browser.",
   "browser_specific_settings": {
     "gecko": {
-      "id": "my_extension@com.ejemplo.navegador"
+      "id": "nexo_bridge@com.ejemplo.navegador"
     }
   },
   "permissions": [

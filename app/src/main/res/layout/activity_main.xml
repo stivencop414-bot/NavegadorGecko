@@ -1,34 +1,95 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootView"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical">
 
     <LinearLayout
+        android:id="@+id/topBar"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="56dp"
+        android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:padding="6dp">
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp">
+
+        <TextView
+            android:id="@+id/brandText"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:gravity="center"
+            android:text="N"
+            android:textSize="24sp"
+            android:textStyle="bold" />
 
         <EditText
-            android:id="@+id/urlEditText"
+            android:id="@+id/omnibox"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="44dp"
             android:layout_weight="1"
-            android:hint="https://..."
+            android:hint="@string/omnibox_hint"
             android:imeOptions="actionGo"
+            android:importantForAutofill="no"
             android:inputType="textUri"
             android:maxLines="1"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
             android:singleLine="true"
             android:textSize="15sp" />
 
         <Button
-            android:id="@+id/goButton"
-            android:layout_width="wrap_content"
-            android:layout_height="48dp"
+            android:id="@+id/tabButton"
+            android:layout_width="48dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="5dp"
+            android:minWidth="0dp"
+            android:padding="0dp"
+            android:text="1"
+            android:textAllCaps="false"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/menuButton"
+            android:layout_width="48dp"
+            android:layout_height="44dp"
             android:layout_marginStart="4dp"
-            android:text="Ir"
-            android:textAllCaps="false" />
+            android:minWidth="0dp"
+            android:padding="0dp"
+            android:text="⋮"
+            android:textAllCaps="false"
+            android:textSize="24sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/navBar"
+        android:layout_width="match_parent"
+        android:layout_height="45dp"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp">
+
+        <Button android:id="@+id/backButton"
+            android:layout_width="0dp" android:layout_height="40dp"
+            android:layout_weight="1" android:minWidth="0dp"
+            android:text="‹" android:textSize="25sp" />
+        <Button android:id="@+id/forwardButton"
+            android:layout_width="0dp" android:layout_height="40dp"
+            android:layout_weight="1" android:minWidth="0dp"
+            android:text="›" android:textSize="25sp" />
+        <Button android:id="@+id/reloadButton"
+            android:layout_width="0dp" android:layout_height="40dp"
+            android:layout_weight="1" android:minWidth="0dp"
+            android:text="↻" android:textSize="20sp" />
+        <Button android:id="@+id/homeButton"
+            android:layout_width="0dp" android:layout_height="40dp"
+            android:layout_weight="1" android:minWidth="0dp"
+            android:text="⌂" android:textSize="19sp" />
+        <Button android:id="@+id/newTabButton"
+            android:layout_width="0dp" android:layout_height="40dp"
+            android:layout_weight="1" android:minWidth="0dp"
+            android:text="+" android:textSize="22sp" />
     </LinearLayout>
 
     <ProgressBar
@@ -37,7 +98,16 @@
         android:layout_width="match_parent"
         android:layout_height="3dp"
         android:max="100"
-        android:progress="0"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/privateBanner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:padding="4dp"
+        android:text="Pestaña privada"
+        android:textSize="12sp"
         android:visibility="gone" />
 
     <org.mozilla.geckoview.GeckoView

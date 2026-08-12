@@ -5,7 +5,6 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
-
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
@@ -14,6 +13,5 @@ dependencyResolutionManagement {
         maven("https://maven.mozilla.org/maven2/")
     }
 }
-
 rootProject.name = "NavegadorGecko"
 include(":app")
