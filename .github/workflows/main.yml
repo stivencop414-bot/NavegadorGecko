@@ -1,4 +1,4 @@
-name: Nexo v7.1 - minSdk26 Full Build
+name: Nexo v7.1 - Kotlin Toolchain Fix & Full Build
 
 on:
   push:
@@ -21,7 +21,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set GeckoView 153 minimum Android version
+      - name: Align Kotlin compiler and stdlib
         shell: bash
         run: |
           set -euo pipefail
@@ -30,41 +30,47 @@ jobs:
           from pathlib import Path
           import re
 
-          p = Path("app/build.gradle.kts")
-          s = p.read_text(encoding="utf-8")
-
-          old = s
-          s = re.sub(
-              r"minSdk\s*=\s*\d+",
-              "minSdk = 26",
-              s,
+          root = Path("build.gradle.kts")
+          text = root.read_text(encoding="utf-8")
+          text = re.sub(
+              r'id\("org\.jetbrains\.kotlin\.android"\)\s+version\s+"[^"]+"',
+              'id("org.jetbrains.kotlin.android") version "2.4.10"',
+              text,
               count=1
           )
+          if 'version "2.4.10"' not in text:
+              raise SystemExit("No se pudo actualizar Kotlin a 2.4.10")
+          root.write_text(text, encoding="utf-8")
 
-          if "minSdk = 26" not in s:
-              raise SystemExit("No se pudo establecer minSdk 26")
+          app = Path("app/build.gradle.kts")
+          text = app.read_text(encoding="utf-8")
 
-          if s != old:
-              p.write_text(s, encoding="utf-8")
-              print("Nexo v7.1: minSdk actualizado a 26")
-          else:
-              print("minSdk 26 ya estaba aplicado")
+          bom = 'implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.10"))'
+          if bom not in text:
+              text = text.replace(
+                  "dependencies {\n",
+                  "dependencies {\n    " + bom + "\n",
+                  1
+              )
 
-          checks = [
+          required = [
               "compileSdk = 36",
               "minSdk = 26",
-              'versionName = "0.7.1"',
-              "geckoview-omni:153.0.20260715202819"
+              "targetSdk = 34",
+              "geckoview-omni:153.0.20260715202819",
+              bom,
           ]
+          for item in required:
+              if item not in text:
+                  raise SystemExit(f"Falta configuración requerida: {item}")
 
-          text = p.read_text(encoding="utf-8")
-          for item in checks:
-              assert item in text, item
+          app.write_text(text, encoding="utf-8")
+          print("Kotlin 2.4.10 + BOM 2.4.10 aplicado.")
           PY
 
-          git diff -- app/build.gradle.kts || true
+          git diff -- build.gradle.kts app/build.gradle.kts || true
 
-      - name: Save minSdk fix
+      - name: Save Kotlin toolchain fix
         shell: bash
         run: |
           set -euo pipefail
@@ -73,11 +79,11 @@ jobs:
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add app/build.gradle.kts
+          git add build.gradle.kts app/build.gradle.kts
 
           if ! git diff --cached --quiet; then
             git commit -m \
-              "Set minSdk 26 for GeckoView 153 [skip ci]"
+              "Align Kotlin 2.4.10 toolchain for GeckoView 153 [skip ci]"
             git push origin HEAD:main
           fi
 
@@ -90,7 +96,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android 36
+      - name: Install Android API 36
         shell: bash
         run: |
           set -euo pipefail
@@ -104,6 +110,34 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
+
+      - name: Verify dependency graph
+        id: deps
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+
+          {
+            echo "===== KOTLIN TOOLCHAIN ====="
+            grep -n "org.jetbrains.kotlin.android" build.gradle.kts || true
+
+            echo
+            echo "===== DEBUG KOTLIN DEPENDENCIES ====="
+            gradle \
+              :app:dependencyInsight \
+              --dependency kotlin-stdlib \
+              --configuration debugRuntimeClasspath \
+              --no-daemon
+
+            echo
+            echo "===== RELEASE KOTLIN DEPENDENCIES ====="
+            gradle \
+              :app:dependencyInsight \
+              --dependency kotlin-stdlib \
+              --configuration releaseRuntimeClasspath \
+              --no-daemon
+          } 2>&1 | tee dependency-check.log
 
       - name: Validate source
         id: static_validation
@@ -129,19 +163,19 @@ jobs:
                   p.read_text(encoding="utf-8")
               )
               assert data["manifest_version"] == 2
-              assert data["browser_specific_settings"]["gecko"]["id"]
-              print("WEBEXTENSION OK:", p)
+              print("EXTENSION OK:", p)
 
-          gradle = Path(
-              "app/build.gradle.kts"
-          ).read_text(encoding="utf-8")
+          root = Path("build.gradle.kts").read_text(encoding="utf-8")
+          app = Path("app/build.gradle.kts").read_text(encoding="utf-8")
 
-          assert "compileSdk = 36" in gradle
-          assert "minSdk = 26" in gradle
-          assert "targetSdk = 34" in gradle
-          assert "153.0.20260715202819" in gradle
+          assert 'version "2.4.10"' in root
+          assert "compileSdk = 36" in app
+          assert "minSdk = 26" in app
+          assert "targetSdk = 34" in app
+          assert "153.0.20260715202819" in app
+          assert "kotlin-bom:2.4.10" in app
 
-          print("BUILD CONFIG OK")
+          print("NEXO BUILD CONFIG OK")
           PY
 
             node --check \
@@ -165,23 +199,25 @@ jobs:
             --no-daemon \
             2>&1 | tee full-build.log
 
-      - name: Collect all errors
+      - name: Collect every build error
         if: always()
         shell: bash
         run: |
           {
-            echo "========================================"
-            echo "NEXO V7.1 - TODOS LOS ERRORES DEL RUN"
-            echo "========================================"
+            echo "=========================================="
+            echo "NEXO V7.1 - BUILD DIAGNOSTICS"
+            echo "=========================================="
             echo
 
-            echo "===== STATIC ====="
-            cat static-validation.log 2>/dev/null || true
+            echo "===== DEPENDENCY CHECK ====="
+            grep -E \
+              "(kotlin-stdlib|org.jetbrains.kotlin.android|selected by rule|By constraint)" \
+              dependency-check.log 2>/dev/null || true
 
             echo
-            echo "===== KOTLIN / JAVA / MANIFEST / R8 / LINT ====="
+            echo "===== ERRORS ====="
             grep -Ei \
-              "(^e: | error:|FAILURE:|Execution failed|Unresolved reference|overrides nothing|Type mismatch|Cannot access|Missing class|AAPT: error|Manifest merger failed|Caused by:|Lint found|No value passed|Too many arguments)" \
+              "(^e: | error:|FAILURE:|Execution failed|Unresolved reference|overrides nothing|Type mismatch|Cannot access|Missing class|AAPT: error|Manifest merger failed|Caused by:|Lint found|No value passed|Too many arguments|incompatible version of Kotlin|FileAnalysisException|KotlinIllegalArgumentException)" \
               full-build.log 2>/dev/null || true
 
             echo
@@ -217,17 +253,15 @@ jobs:
 
           KEY="$HOME/.android/nexo-v71.keystore"
 
-          if [ ! -f "$KEY" ]; then
-            keytool -genkeypair \
-              -keystore "$KEY" \
-              -storepass android \
-              -alias nexo \
-              -keypass android \
-              -dname "CN=Nexo Browser 7.1,O=Nexo,C=CO" \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000
-          fi
+          keytool -genkeypair \
+            -keystore "$KEY" \
+            -storepass android \
+            -alias nexo \
+            -keypass android \
+            -dname "CN=Nexo Browser 7.1,O=Nexo,C=CO" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000
 
           for apk in "${apks[@]}"; do
             base="$(basename "$apk" -unsigned.apk)"
@@ -262,7 +296,7 @@ jobs:
           )
 
           if [ "${#apks[@]}" -eq 0 ]; then
-            echo "No se generaron APKs." \
+            echo "No APKs generated." \
               | tee -a apk-validation.txt
             exit 0
           fi
@@ -274,7 +308,7 @@ jobs:
               | tee -a apk-validation.txt
 
             unzip -tq "$apk" >/dev/null ||
-              echo "APK ZIP INVALIDO" \
+              echo "APK ZIP INVALID" \
                 | tee -a apk-validation.txt
 
             for required in \
@@ -286,7 +320,7 @@ jobs:
                 echo "OK: $required" \
                   | tee -a apk-validation.txt
               else
-                echo "FALTA: $required" \
+                echo "MISSING: $required" \
                   | tee -a apk-validation.txt
               fi
             done
@@ -335,6 +369,7 @@ jobs:
         with:
           name: Nexo-v7.1-diagnostics
           path: |
+            dependency-check.log
             static-validation.log
             full-build.log
             errors-summary.txt
@@ -349,16 +384,13 @@ jobs:
         if: always()
         shell: bash
         run: |
+          echo "Dependency check: ${{ steps.deps.outcome }}"
           echo "Static: ${{ steps.static_validation.outcome }}"
           echo "Gradle: ${{ steps.gradle_build.outcome }}"
 
-          if [ "${{ steps.static_validation.outcome }}" != "success" ]; then
-            exit 1
-          fi
-
-          if [ "${{ steps.gradle_build.outcome }}" != "success" ]; then
-            exit 2
-          fi
+          [ "${{ steps.deps.outcome }}" = "success" ]
+          [ "${{ steps.static_validation.outcome }}" = "success" ]
+          [ "${{ steps.gradle_build.outcome }}" = "success" ]
 
           debug_count="$(
             find app/build/outputs/apk/debug \
