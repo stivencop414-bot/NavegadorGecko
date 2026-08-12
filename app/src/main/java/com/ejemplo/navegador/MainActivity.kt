@@ -25,7 +25,8 @@ private const val EXTENSION_ID = "my_extension@com.ejemplo.navegador"
 private const val EXTENSION_LOCATION = "resource://android/assets/extensions/my_extension/"
 
 private object GeckoRuntimeHolder {
-    @Volatile private var instance: GeckoRuntime? = null
+    @Volatile
+    private var instance: GeckoRuntime? = null
 
     fun get(context: Context): GeckoRuntime = instance ?: synchronized(this) {
         instance ?: GeckoRuntime.create(
@@ -55,11 +56,14 @@ class MainActivity : Activity() {
             if (sender.session != null && sender.session !== geckoSession) return null
 
             Log.d(TAG, "WebExtension -> Android: $message")
-            return GeckoResult.fromValue(JSONObject().apply {
-                put("ok", true)
-                put("message", "Hola desde Kotlin")
-                put("received", message.toString())
-            })
+
+            return GeckoResult.fromValue(
+                JSONObject().apply {
+                    put("ok", true)
+                    put("message", "Hola desde Kotlin")
+                    put("received", message.toString())
+                }
+            )
         }
     }
 
@@ -73,75 +77,126 @@ class MainActivity : Activity() {
         progressBar = findViewById(R.id.pageProgress)
 
         geckoSession = GeckoSession()
-        geckoSession.setContentDelegate(object : GeckoSession.ContentDelegate {})
-        geckoSession.setProgressDelegate(object : GeckoSession.ProgressDelegate {
-            override fun onPageStart(session: GeckoSession, url: String) {
-                urlEditText.setText(url)
-                progressBar.progress = 0
-                progressBar.visibility = View.VISIBLE
-            }
 
-            override fun onProgressChange(session: GeckoSession, progress: Int) {
-                progressBar.visibility = View.VISIBLE
-                progressBar.progress = progress.coerceIn(0, 100)
-            }
+        geckoSession.setContentDelegate(
+            object : GeckoSession.ContentDelegate {}
+        )
 
-            override fun onPageStop(session: GeckoSession, success: Boolean) {
-                progressBar.progress = 100
-                progressBar.postDelayed({ progressBar.visibility = View.GONE }, 150)
+        geckoSession.setProgressDelegate(
+            object : GeckoSession.ProgressDelegate {
+                override fun onPageStart(session: GeckoSession, url: String) {
+                    urlEditText.setText(url)
+                    progressBar.progress = 0
+                    progressBar.visibility = View.VISIBLE
+                }
+
+                override fun onProgressChange(session: GeckoSession, progress: Int) {
+                    progressBar.visibility = View.VISIBLE
+                    progressBar.progress = progress.coerceIn(0, 100)
+                }
+
+                override fun onPageStop(session: GeckoSession, success: Boolean) {
+                    progressBar.progress = 100
+                    progressBar.postDelayed(
+                        { progressBar.visibility = View.GONE },
+                        150
+                    )
+                }
             }
-        })
+        )
 
         val runtime = GeckoRuntimeHolder.get(applicationContext)
+
         geckoSession.open(runtime)
         geckoView.setSession(geckoSession)
 
-        goButton.setOnClickListener { navigateFromBar() }
-        urlEditText.setOnEditorActionListener { _, actionId, event ->
-            val enter = event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN
-            if (actionId == EditorInfo.IME_ACTION_GO || enter) {
-                navigateFromBar()
-                true
-            } else false
+        goButton.setOnClickListener {
+            navigateFromBar()
         }
 
+        urlEditText.setOnEditorActionListener { _, actionId, event ->
+            val enterPressed =
+                event?.keyCode == KeyEvent.KEYCODE_ENTER &&
+                    event.action == KeyEvent.ACTION_DOWN
+
+            if (actionId == EditorInfo.IME_ACTION_GO || enterPressed) {
+                navigateFromBar()
+                true
+            } else {
+                false
+            }
+        }
+
+        installBuiltInExtension(runtime, savedInstanceState)
+    }
+
+    private fun installBuiltInExtension(
+        runtime: GeckoRuntime,
+        savedInstanceState: Bundle?
+    ) {
         runtime.webExtensionController
             .ensureBuiltIn(EXTENSION_LOCATION, EXTENSION_ID)
             .accept(
                 { extension ->
-                    extension.setMessageDelegate(messageDelegate, NATIVE_APP_ID)
-                    geckoSession.webExtensionController.setMessageDelegate(
-                        extension,
-                        messageDelegate,
-                        NATIVE_APP_ID
-                    )
-                    if (savedInstanceState == null) geckoSession.loadUri(HOME_PAGE)
+                    if (extension == null) {
+                        Log.e(TAG, "GeckoView devolvió una WebExtension nula")
+                    } else {
+                        extension.setMessageDelegate(
+                            messageDelegate,
+                            NATIVE_APP_ID
+                        )
+
+                        geckoSession.webExtensionController.setMessageDelegate(
+                            extension,
+                            messageDelegate,
+                            NATIVE_APP_ID
+                        )
+                    }
+
+                    if (savedInstanceState == null) {
+                        geckoSession.loadUri(HOME_PAGE)
+                    }
                 },
                 { error ->
                     Log.e(TAG, "No se pudo instalar la extensión", error)
-                    if (savedInstanceState == null) geckoSession.loadUri(HOME_PAGE)
+
+                    // El navegador continúa funcionando aunque falle
+                    // la extensión local.
+                    if (savedInstanceState == null) {
+                        geckoSession.loadUri(HOME_PAGE)
+                    }
                 }
             )
     }
 
     private fun navigateFromBar() {
         val raw = urlEditText.text?.toString()?.trim().orEmpty()
+
         val url = when {
             raw.isBlank() -> HOME_PAGE
-            raw.startsWith("https://", true) -> raw
-            raw.startsWith("http://", true) -> raw
-            raw.startsWith("about:", true) -> raw
+            raw.startsWith("https://", ignoreCase = true) -> raw
+            raw.startsWith("http://", ignoreCase = true) -> raw
+            raw.startsWith("about:", ignoreCase = true) -> raw
             else -> "https://$raw"
         }
+
         geckoSession.loadUri(url)
+
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(urlEditText.windowToken, 0)
+
         urlEditText.clearFocus()
     }
 
     override fun onDestroy() {
-        if (::geckoView.isInitialized) geckoView.releaseSession()
-        if (::geckoSession.isInitialized) geckoSession.close()
+        if (::geckoView.isInitialized) {
+            geckoView.releaseSession()
+        }
+
+        if (::geckoSession.isInitialized) {
+            geckoSession.close()
+        }
+
         super.onDestroy()
     }
 
