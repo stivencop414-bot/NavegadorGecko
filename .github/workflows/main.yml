@@ -1,355 +1,143 @@
-name: Nexo v7.1 - CompilerOptions Fix & Full Build
+name: Nexo v0.7.1 - Release APK
 
 on:
+  workflow_dispatch:
   push:
-    branches: ["main"]
+    branches: [ main ]
     paths:
       - ".github/workflows/main.yml"
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 40
+    env:
+      COMPILE_SDK: "36"
+      BUILD_TOOLS: "36.0.0"
+      GRADLE_VERSION: "8.14.3"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v4
 
-      - name: Fix Kotlin 2.4 compilerOptions
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          p = Path("app/build.gradle.kts")
-          s = p.read_text(encoding="utf-8")
-
-          s = re.sub(
-              r'^[ \t]*kotlinOptions[ \t]*\{[ \t]*jvmTarget[ \t]*=[ \t]*"17"[ \t]*\}[ \t]*\n?',
-              "",
-              s,
-              count=1,
-              flags=re.M
-          )
-
-          compiler_block = (
-              "\nkotlin {\n"
-              "    compilerOptions {\n"
-              "        jvmTarget.set(\n"
-              "            org.jetbrains.kotlin.gradle.dsl.JvmTarget.fromTarget(\"17\")\n"
-              "        )\n"
-              "    }\n"
-              "}\n\n"
-          )
-
-          if "kotlin {" not in s:
-              s = s.replace(
-                  "\ndependencies {",
-                  compiler_block + "dependencies {",
-                  1
-              )
-
-          if "kotlinOptions" in s:
-              raise SystemExit("Todavía existe kotlinOptions antiguo")
-
-          if 'JvmTarget.fromTarget("17")' not in s:
-              raise SystemExit("No se pudo aplicar compilerOptions JVM 17")
-
-          required = [
-              "compileSdk = 36",
-              "minSdk = 26",
-              "targetSdk = 34",
-              "geckoview-omni:153.0.20260715202819",
-              "kotlin-bom:2.4.10",
-          ]
-          for item in required:
-              if item not in s:
-                  raise SystemExit(f"Falta configuración: {item}")
-
-          p.write_text(s, encoding="utf-8")
-          print("compilerOptions JVM_17 aplicado correctamente.")
-          PY
-
-          git diff -- app/build.gradle.kts || true
-
-      - name: Save compilerOptions fix
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email             "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add app/build.gradle.kts
-
-          if ! git diff --cached --quiet; then
-            git commit -m               "Migrate Kotlin jvmTarget to compilerOptions [skip ci]"
-            git push origin HEAD:main
-          fi
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
+      - name: Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
+      - name: Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android API 36
+      - name: Install Android packages
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager             "platforms;android-36"             "build-tools;36.0.0"             "platform-tools"
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-${COMPILE_SDK}" \
+            "build-tools;${BUILD_TOOLS}"
 
-      - name: Set up Gradle 8.13
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.13"
-
-      - name: Check Kotlin dependency alignment
-        id: deps
-        continue-on-error: true
+      - name: Install Gradle
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
+          curl -fsSL \
+            "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+            -o gradle.zip
+          unzip -q gradle.zip
+          echo "$PWD/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
 
-          {
-            echo "===== ROOT KOTLIN PLUGIN ====="
-            grep -n "org.jetbrains.kotlin.android" build.gradle.kts || true
-
-            echo
-            echo "===== APP COMPILER OPTIONS ====="
-            grep -n -A6 -B2 "compilerOptions" app/build.gradle.kts || true
-
-            echo
-            echo "===== KOTLIN STDLIB ====="
-            gradle               :app:dependencyInsight               --dependency kotlin-stdlib               --configuration debugRuntimeClasspath               --no-daemon
-          } 2>&1 | tee dependency-check.log
-
-      - name: Validate source
-        id: static_validation
-        continue-on-error: true
+      - name: Build Release
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
+          gradle :app:assembleRelease --no-daemon --stacktrace
 
-          {
-            python3 - <<'PY'
-          import json
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-
-          for p in Path("app/src/main").rglob("*.xml"):
-              ET.parse(p)
-              print("XML OK:", p)
-
-          for p in Path(
-              "app/src/main/assets/extensions"
-          ).rglob("manifest.json"):
-              data = json.loads(
-                  p.read_text(encoding="utf-8")
-              )
-              assert data["manifest_version"] == 2
-              print("EXTENSION OK:", p)
-
-          root = Path("build.gradle.kts").read_text(encoding="utf-8")
-          app = Path("app/build.gradle.kts").read_text(encoding="utf-8")
-
-          assert 'version "2.4.10"' in root
-          assert 'JvmTarget.fromTarget("17")' in app
-          assert "kotlinOptions" not in app
-          assert "compileSdk = 36" in app
-          assert "minSdk = 26" in app
-          assert "153.0.20260715202819" in app
-
-          print("STATIC CONFIG OK")
-          PY
-
-            node --check               app/src/main/assets/extensions/nexo_bridge/content_script.js
-          } 2>&1 | tee static-validation.log
-
-      - name: Compile Debug Release R8 and Lint
-        id: gradle_build
-        continue-on-error: true
+      - name: Sign and verify APKs
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
+          mkdir -p artifacts/release
 
-          gradle             :app:assembleDebug             :app:assembleRelease             :app:lintDebug             :app:lintRelease             --continue             --stacktrace             --no-daemon             2>&1 | tee full-build.log
+          keytool -genkeypair -v \
+            -keystore ci-release.jks \
+            -storepass android \
+            -alias nexo \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Nexo CI, OU=Browser, O=Nexo, L=CI, S=CI, C=US"
 
-      - name: Collect ALL errors
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo "=========================================="
-            echo "NEXO V7.1 - COMPLETE DIAGNOSTICS"
-            echo "=========================================="
-            echo
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/release/*.apk)
 
-            echo "===== DEPENDENCY CHECK ====="
-            grep -Ei               "(kotlin-stdlib|org.jetbrains.kotlin.android|compilerOptions|JvmTarget|selected by rule|By constraint)"               dependency-check.log 2>/dev/null || true
-
-            echo
-            echo "===== ERRORS ====="
-            grep -Ei               "(^e: | error:|FAILURE:|Execution failed|Unresolved reference|overrides nothing|Type mismatch|Cannot access|Missing class|AAPT: error|Manifest merger failed|Caused by:|Lint found|No value passed|Too many arguments|incompatible version of Kotlin|FileAnalysisException|KotlinIllegalArgumentException)"               full-build.log 2>/dev/null || true
-
-            echo
-            echo "===== WARNINGS ====="
-            grep -Ei               "(^w: |warning:|deprecated)"               full-build.log 2>/dev/null || true
-          } > errors-summary.txt
-
-          cat errors-summary.txt
-
-      - name: Sign Release APKs
-        if: always()
-        shell: bash
-        run: |
-          set +e
-
-          mkdir -p             app/build/outputs/apk/release-ci-signed             "$HOME/.android"
-
-          mapfile -t apks < <(
-            find app/build/outputs/apk/release               -type f               -name "*-unsigned.apk"               2>/dev/null | sort
-          )
-
-          if [ "${#apks[@]}" -eq 0 ]; then
-            echo "Sin APK Release para firmar."
-            exit 0
+          if [ "${#apks[@]}" -lt 2 ]; then
+            echo "ERROR: se esperaban al menos 2 APK Release y se encontraron ${#apks[@]}."
+            find app/build/outputs -maxdepth 5 -type f -name '*.apk' -print || true
+            exit 1
           fi
 
-          KEY="$HOME/.android/nexo-v71.keystore"
-
-          keytool -genkeypair             -keystore "$KEY"             -storepass android             -alias nexo             -keypass android             -dname "CN=Nexo Browser 7.1,O=Nexo,C=CO"             -keyalg RSA             -keysize 2048             -validity 10000
-
-          for apk in "${apks[@]}"; do
-            base="$(basename "$apk" -unsigned.apk)"
-            out="app/build/outputs/apk/release-ci-signed/${base}-signed.apk"
-
-            "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign               --ks "$KEY"               --ks-key-alias nexo               --ks-pass pass:android               --key-pass pass:android               --out "$out"               "$apk"
-
-            "$ANDROID_HOME/build-tools/36.0.0/apksigner"               verify --verbose "$out"
-          done
-
-      - name: Deep APK validation
-        if: always()
-        shell: bash
-        run: |
-          set +e
-          : > apk-validation.txt
-
-          mapfile -t apks < <(
-            find               app/build/outputs/apk/debug               app/build/outputs/apk/release-ci-signed               -type f               -name "*.apk"               2>/dev/null | sort
-          )
-
-          if [ "${#apks[@]}" -eq 0 ]; then
-            echo "No APKs generated."               | tee -a apk-validation.txt
-            exit 0
-          fi
+          APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
+          test -x "$APKSIGNER"
 
           for apk in "${apks[@]}"; do
-            echo "===================================="               | tee -a apk-validation.txt
-            echo "$apk"               | tee -a apk-validation.txt
+            base="$(basename "$apk" .apk)"
+            out="artifacts/release/${base}-signed.apk"
 
-            unzip -tq "$apk" >/dev/null ||
-              echo "APK ZIP INVALID"                 | tee -a apk-validation.txt
+            "$APKSIGNER" sign \
+              --ks ci-release.jks \
+              --ks-key-alias nexo \
+              --ks-pass pass:android \
+              --key-pass pass:android \
+              --out "$out" \
+              "$apk"
 
-            for required in               assets/home/index.html               assets/extensions/nexo_bridge/manifest.json               assets/extensions/nexo_bridge/content_script.js
-            do
-              if unzip -Z1 "$apk" | grep -qx "$required"; then
-                echo "OK: $required"                   | tee -a apk-validation.txt
-              else
-                echo "MISSING: $required"                   | tee -a apk-validation.txt
-              fi
-            done
-
-            echo -n "ABIs: "               | tee -a apk-validation.txt
-
-            unzip -Z1 "$apk" |
-              awk -F/ '/^lib\// {print $2}' |
-              sort -u |
-              tr '\n' ' ' |
-              tee -a apk-validation.txt
-
-            echo | tee -a apk-validation.txt
-
-            "$ANDROID_HOME/build-tools/36.0.0/aapt"               dump badging "$apk" |
-              head -n 15 |
-              tee -a apk-validation.txt
-
-            sha256sum "$apk"               | tee -a apk-validation.txt
+            "$APKSIGNER" verify --verbose "$out"
           done
 
-      - name: Upload Debug APKs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Nexo-v7.1-debug
-          path: app/build/outputs/apk/debug/**/*.apk
-          if-no-files-found: ignore
-          retention-days: 14
+          echo
+          echo "===== APKs FIRMADAS ====="
+          ls -lh artifacts/release
+          echo
+          echo "===== SHA-256 ====="
+          sha256sum artifacts/release/*.apk
+
+          count="$(find artifacts/release -maxdepth 1 -type f -name '*-signed.apk' | wc -l | tr -d ' ')"
+          test "$count" -ge 2
 
       - name: Upload Release APKs
-        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-v7.1-release
-          path: app/build/outputs/apk/release-ci-signed/*.apk
-          if-no-files-found: ignore
-          retention-days: 14
+          name: Nexo-v071-Release-APKs
+          path: artifacts/release/*.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
 
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Nexo-v7.1-diagnostics
-          path: |
-            dependency-check.log
-            static-validation.log
-            full-build.log
-            errors-summary.txt
-            apk-validation.txt
-            app/build/reports/lint-results-debug.html
-            app/build/reports/lint-results-release.html
-            app/build/outputs/mapping/release/missing_rules.txt
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Final strict status
-        if: always()
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          echo "Dependencies: ${{ steps.deps.outcome }}"
-          echo "Static: ${{ steps.static_validation.outcome }}"
-          echo "Gradle: ${{ steps.gradle_build.outcome }}"
+          set -euo pipefail
 
-          [ "${{ steps.deps.outcome }}" = "success" ]
-          [ "${{ steps.static_validation.outcome }}" = "success" ]
-          [ "${{ steps.gradle_build.outcome }}" = "success" ]
+          if gh release view v0.7.1 >/dev/null 2>&1; then
+            echo "La Release v0.7.1 ya existe; se actualizarán sus APK."
+          else
+            gh release create v0.7.1 \
+              --target "${GITHUB_SHA}" \
+              --title "Nexo Browser v0.7.1" \
+              --notes "Nexo Browser v0.7.1 con GeckoView 153. APK ARM64 recomendada para teléfonos Android modernos."
+          fi
 
-          debug_count="$(
-            find app/build/outputs/apk/debug               -name '*.apk' 2>/dev/null | wc -l
-          )"
+          gh release upload v0.7.1 artifacts/release/*.apk --clobber
 
-          release_count="$(
-            find app/build/outputs/apk/release-ci-signed               -name '*.apk' 2>/dev/null | wc -l
-          )"
-
-          echo "Debug APKs: $debug_count"
-          echo "Release APKs: $release_count"
-
-          [ "$debug_count" -ge 2 ]
-          [ "$release_count" -ge 2 ]
-
-          echo "NEXO V7.1 BUILD OK"
+          echo
+          echo "===== RELEASE PUBLICADA ====="
+          gh release view v0.7.1
