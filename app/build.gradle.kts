@@ -4,13 +4,13 @@ plugins {
 }
 android {
     namespace = "com.ejemplo.navegador"
-    compileSdk = 34
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.ejemplo.navegador"
         minSdk = 24
         targetSdk = 34
-        versionCode = 7
-        versionName = "0.7.0"
+        versionCode = 8
+        versionName = "0.7.1"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -46,6 +46,6 @@ android {
     }
 }
 dependencies {
-    implementation("org.mozilla.geckoview:geckoview-omni:125.0.20240408174943")
+    implementation("org.mozilla.geckoview:geckoview-omni:153.0.20260715202819")
     implementation("androidx.core:core:1.13.1")
 }

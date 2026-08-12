@@ -14,9 +14,13 @@ object GeckoRuntimeHolder {
                 context.applicationContext,
                 GeckoRuntimeSettings.Builder()
                     .remoteDebuggingEnabled(false)
+                    .debugLogging(true)
                     .javaScriptEnabled(true)
                     .build()
-            ).also { runtime = it }
+            ).also {
+                it.warmUp()
+                runtime = it
+            }
         }
 }
 

@@ -24,6 +24,7 @@ object TabManager {
     private var initialized = false
     private var activeId: String? = null
     private val activationHistory = java.util.ArrayDeque<String>()
+    private val crashTimes = mutableMapOf<String, java.util.ArrayDeque<Long>>()
 
     fun initialize(context: Context) {
         appContext = context.applicationContext
@@ -315,6 +316,18 @@ object TabManager {
     private fun configureDelegates(tab: BrowserTab, session: GeckoSession) {
         session.setContentDelegate(
             object : GeckoSession.ContentDelegate {
+                override fun onCrash(session: GeckoSession) {
+                    recoverContentProcess(tab, session, "crash")
+                }
+
+                override fun onKill(session: GeckoSession) {
+                    recoverContentProcess(tab, session, "kill")
+                }
+
+                override fun onFirstContentfulPaint(session: GeckoSession) {
+                    crashTimes.remove(tab.id)
+                }
+
                 override fun onTitleChange(session: GeckoSession, title: String?) {
                     if (!title.isNullOrBlank()) {
                         tab.title = title
@@ -395,6 +408,73 @@ object TabManager {
                 }
             }
         )
+    }
+
+
+    private fun recoverContentProcess(
+        tab: BrowserTab,
+        failedSession: GeckoSession,
+        reason: String
+    ) {
+        if (tab.session !== failedSession) return
+
+        tab.session = null
+
+        val now = System.currentTimeMillis()
+        val times = crashTimes.getOrPut(tab.id) {
+            java.util.ArrayDeque()
+        }
+
+        while (
+            times.isNotEmpty() &&
+            now - times.first() > 15000L
+        ) {
+            times.removeFirst()
+        }
+
+        times.addLast(now)
+
+        val repeated = times.size >= 2
+
+        if (repeated) {
+            val home = BrowserPrefs.homePage(requireContext())
+            tab.url =
+                if (tab.url != home) home
+                else "about:blank"
+            tab.title = "Recuperación de Nexo"
+        }
+
+        persist()
+
+        if (tab.id == activeId) {
+            listener?.onMessage(
+                if (repeated) {
+                    "Gecko falló repetidamente; Nexo abrió una página segura."
+                } else {
+                    "El proceso web se reinició automáticamente."
+                }
+            )
+
+            android.os.Handler(
+                android.os.Looper.getMainLooper()
+            ).post {
+                if (tab.id == activeId && tab.session == null) {
+                    runCatching {
+                        switchTo(
+                            tab.id,
+                            loadUrl = true,
+                            rememberPrevious = false
+                        )
+                    }.onFailure { error ->
+                        android.util.Log.e(
+                            "NexoGecko",
+                            "No se pudo recuperar sesión: $reason",
+                            error
+                        )
+                    }
+                }
+            }
+        }
     }
 
     private fun trimSessions() {

@@ -39,6 +39,30 @@ class MainActivity : Activity(), TabManager.Listener {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        CrashLog.consume(this)?.let { crash ->
+            AlertDialog.Builder(this)
+                .setTitle("Nexo detectó un cierre inesperado")
+                .setMessage(crash.take(8000))
+                .setNegativeButton("Cerrar", null)
+                .setPositiveButton("Copiar") { _, _ ->
+                    val clipboard =
+                        getSystemService(CLIPBOARD_SERVICE) as
+                            android.content.ClipboardManager
+                    clipboard.setPrimaryClip(
+                        android.content.ClipData.newPlainText(
+                            "Nexo crash",
+                            crash
+                        )
+                    )
+                    Toast.makeText(
+                        this,
+                        "Diagnóstico copiado",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                .show()
+        }
+
         viewModel = BrowserViewModel(applicationContext)
         bindViews()
         applyTheme()
