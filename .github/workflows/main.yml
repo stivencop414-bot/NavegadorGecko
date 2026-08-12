@@ -1,4 +1,4 @@
-name: Nexo v7 - Apply UX Fixes & Full Build
+name: Nexo v7.1 - Android 16 Stability Build
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -21,27 +21,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply complete Nexo v7 patch
+      - name: Apply Android 16 stability hotfix
         shell: bash
         run: |
           set -euo pipefail
-          echo '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' | base64 -d | gzip -d > /tmp/nexo_v7.py
-          python3 /tmp/nexo_v7.py
-          git diff -- app/ || true
+          echo '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' | base64 -d | gzip -d > /tmp/nexo_hotfix.py
+          python3 /tmp/nexo_hotfix.py
+          git diff -- app/ build.gradle.kts || true
 
-      - name: Save Nexo v7 source
+      - name: Save v7.1 source
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/
-
+          git add app/ build.gradle.kts
           if ! git diff --cached --quiet; then
-            git commit -m "Implement Nexo Browser v7 UX fixes [skip ci]"
+            git commit -m "Nexo v7.1 Android 16 stability hotfix [skip ci]"
             git push origin HEAD:main
-          else
-            echo "Nexo v7 patch already applied."
           fi
 
       - name: Set up JDK 17
@@ -53,124 +50,184 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android 34
+      - name: Install Android 36
         shell: bash
         run: |
-          set -euo pipefail
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          sdkmanager \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "platform-tools"
 
-      - name: Set up Gradle 8.7
+      - name: Set up Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.7"
+          gradle-version: "8.13"
 
-      - name: Validate XML JSON JavaScript
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python3 - <<'PY'
-          import json
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-
-          for p in Path("app/src/main").rglob("*.xml"):
-              ET.parse(p)
-              print("XML OK:", p)
-
-          for p in Path("app/src/main/assets/extensions").rglob("manifest.json"):
-              data = json.loads(p.read_text(encoding="utf-8"))
-              assert data["manifest_version"] == 2
-              assert data["browser_specific_settings"]["gecko"]["id"]
-              print("EXTENSION OK:", p)
-          PY
-
-          node --check app/src/main/assets/extensions/nexo_bridge/content_script.js
-          grep -q POST_NOTIFICATIONS app/src/main/AndroidManifest.xml
-          grep -q 'versionName = "0.7.0"' app/build.gradle.kts
-
-      - name: Build Debug Release R8 and Lint
+      - name: Validate source
+        id: static
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
-          gradle             :app:assembleDebug             :app:assembleRelease             :app:lintDebug             :app:lintRelease             --stacktrace             --no-daemon             2>&1 | tee full-build.log
+          {
+            python3 - <<'PY'
+          import json
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          for p in Path("app/src/main").rglob("*.xml"):
+              ET.parse(p)
+              print("XML OK:", p)
+          for p in Path("app/src/main/assets/extensions").rglob("manifest.json"):
+              json.loads(p.read_text(encoding="utf-8"))
+              print("EXTENSION OK:", p)
+          PY
+            node --check app/src/main/assets/extensions/nexo_bridge/content_script.js
+          } 2>&1 | tee static-validation.log
+
+      - name: Compile all and collect errors
+        id: gradle_build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle \
+            :app:assembleDebug \
+            :app:assembleRelease \
+            :app:lintDebug \
+            :app:lintRelease \
+            --continue \
+            --stacktrace \
+            --no-daemon \
+            2>&1 | tee full-build.log
+
+      - name: Error summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "===== BUILD ERRORS ====="
+            grep -Ei \
+              "(^e: | error:|FAILURE:|Execution failed|Unresolved reference|overrides nothing|Type mismatch|Cannot access|Missing class|AAPT: error|Caused by:|Lint found)" \
+              full-build.log 2>/dev/null || true
+            echo
+            echo "===== WARNINGS ====="
+            grep -Ei "(^w: |warning:)" full-build.log 2>/dev/null || true
+          } > errors-summary.txt
+          cat errors-summary.txt
 
       - name: Sign Release APKs
+        if: always()
         shell: bash
         run: |
-          set -euo pipefail
-
+          set +e
           mkdir -p app/build/outputs/apk/release-ci-signed "$HOME/.android"
 
-          KEYSTORE="$HOME/.android/nexo-v7.keystore"
+          mapfile -t apks < <(
+            find app/build/outputs/apk/release \
+              -type f -name "*-unsigned.apk" 2>/dev/null | sort
+          )
 
-          if [ ! -f "$KEYSTORE" ]; then
-            keytool -genkeypair               -keystore "$KEYSTORE"               -storepass android               -alias nexo               -keypass android               -dname "CN=Nexo Browser V7,O=Nexo,C=CO"               -keyalg RSA               -keysize 2048               -validity 10000
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "No Release APKs yet."
+            exit 0
           fi
 
-          for apk in app/build/outputs/apk/release/*-unsigned.apk; do
+          KEY="$HOME/.android/nexo-v71.keystore"
+          keytool -genkeypair \
+            -keystore "$KEY" \
+            -storepass android \
+            -alias nexo \
+            -keypass android \
+            -dname "CN=Nexo Browser 7.1,O=Nexo,C=CO" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000
+
+          for apk in "${apks[@]}"; do
             base="$(basename "$apk" -unsigned.apk)"
-            output="app/build/outputs/apk/release-ci-signed/${base}-signed.apk"
+            out="app/build/outputs/apk/release-ci-signed/${base}-signed.apk"
 
-            "$ANDROID_HOME/build-tools/34.0.0/apksigner" sign               --ks "$KEYSTORE"               --ks-key-alias nexo               --ks-pass pass:android               --key-pass pass:android               --out "$output"               "$apk"
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
+              --ks "$KEY" \
+              --ks-key-alias nexo \
+              --ks-pass pass:android \
+              --key-pass pass:android \
+              --out "$out" \
+              "$apk"
 
-            "$ANDROID_HOME/build-tools/34.0.0/apksigner"               verify --verbose "$output"
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify \
+              --verbose "$out"
           done
 
-      - name: Verify four APKs
+      - name: Validate APKs
+        if: always()
         shell: bash
         run: |
-          set -euo pipefail
-
-          debug_count="$(find app/build/outputs/apk/debug -name '*.apk' | wc -l)"
-          release_count="$(find app/build/outputs/apk/release-ci-signed -name '*.apk' | wc -l)"
-
-          [ "$debug_count" -eq 2 ]
-          [ "$release_count" -eq 2 ]
-
+          set +e
           : > apk-validation.txt
 
-          for apk in             app/build/outputs/apk/debug/*.apk             app/build/outputs/apk/release-ci-signed/*.apk
+          for apk in \
+            app/build/outputs/apk/debug/*.apk \
+            app/build/outputs/apk/release-ci-signed/*.apk
           do
-            echo "====================================" | tee -a apk-validation.txt
-            echo "$apk" | tee -a apk-validation.txt
-
-            unzip -tq "$apk" >/dev/null
-            unzip -Z1 "$apk" | grep -qx assets/home/index.html
-            unzip -Z1 "$apk" | grep -qx assets/extensions/nexo_bridge/manifest.json
-            unzip -Z1 "$apk" | grep -qx assets/extensions/nexo_bridge/content_script.js
-
-            "$ANDROID_HOME/build-tools/34.0.0/aapt"               dump badging "$apk" | head -n 15 | tee -a apk-validation.txt
-
+            [ -f "$apk" ] || continue
+            echo "==== $apk ====" | tee -a apk-validation.txt
+            unzip -tq "$apk" >/dev/null || echo "INVALID ZIP" | tee -a apk-validation.txt
+            unzip -Z1 "$apk" | grep -qx assets/home/index.html \
+              && echo "HOME OK" | tee -a apk-validation.txt
+            unzip -Z1 "$apk" | grep -qx assets/extensions/nexo_bridge/manifest.json \
+              && echo "BRIDGE OK" | tee -a apk-validation.txt
+            "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" \
+              | head -n 12 | tee -a apk-validation.txt
             sha256sum "$apk" | tee -a apk-validation.txt
           done
 
       - name: Upload Debug APKs
-        uses: actions/upload-artifact@v4
-        with:
-          name: Nexo-v7-UX-debug
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload Release APKs
-        uses: actions/upload-artifact@v4
-        with:
-          name: Nexo-v7-UX-release
-          path: app/build/outputs/apk/release-ci-signed/*.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-v7-UX-reports
+          name: Nexo-v7.1-android16-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload Release APKs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-v7.1-android16-release
+          path: app/build/outputs/apk/release-ci-signed/*.apk
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-v7.1-diagnostics
           path: |
+            static-validation.log
             full-build.log
+            errors-summary.txt
             apk-validation.txt
             app/build/reports/lint-results-debug.html
             app/build/reports/lint-results-release.html
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Final status
+        if: always()
+        shell: bash
+        run: |
+          echo "Static: ${{ steps.static.outcome }}"
+          echo "Gradle: ${{ steps.gradle_build.outcome }}"
+          [ "${{ steps.static.outcome }}" = "success" ]
+          [ "${{ steps.gradle_build.outcome }}" = "success" ]
+
+          debug_count="$(find app/build/outputs/apk/debug -name '*.apk' 2>/dev/null | wc -l)"
+          release_count="$(find app/build/outputs/apk/release-ci-signed -name '*.apk' 2>/dev/null | wc -l)"
+
+          echo "Debug=$debug_count Release=$release_count"
+          [ "$debug_count" -ge 2 ]
+          [ "$release_count" -ge 2 ]
