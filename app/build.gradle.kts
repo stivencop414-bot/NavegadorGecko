@@ -46,6 +46,7 @@ android {
     }
 }
 dependencies {
+    implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.10"))
     implementation("org.mozilla.geckoview:geckoview-omni:153.0.20260715202819")
     implementation("androidx.core:core:1.13.1")
 }
