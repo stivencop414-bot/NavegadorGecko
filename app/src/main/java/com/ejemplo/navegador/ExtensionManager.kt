@@ -378,25 +378,91 @@ object ExtensionManager {
             }
         }
 
-    /*
-     * GeckoView 125 usa estos callbacks de PromptDelegate. El resultado se
-     * mantiene pendiente mientras el usuario decide.
-     */
+    /* GeckoView 153 PromptDelegate */
     private val promptDelegate =
         object : WebExtensionController.PromptDelegate {
-            override fun onInstallPrompt(
-                extension: WebExtension
-            ): GeckoResult<AllowOrDeny>? =
-                showPermissionPrompt(extension, "Instalar extensión")
+            override fun onInstallPromptRequest(
+                extension: WebExtension,
+                permissions: Array<out String>,
+                origins: Array<out String>,
+                dataCollectionPermissions: Array<out String>
+            ): GeckoResult<WebExtension.PermissionPromptResponse>? =
+                showInstallPermissionPrompt(
+                    extension,
+                    permissions,
+                    origins,
+                    dataCollectionPermissions
+                )
 
             override fun onUpdatePrompt(
-                current: WebExtension,
-                updated: WebExtension,
+                extension: WebExtension,
                 newPermissions: Array<out String>,
-                newOrigins: Array<out String>
+                newOrigins: Array<out String>,
+                newDataCollectionPermissions: Array<out String>
             ): GeckoResult<AllowOrDeny>? =
-                showPermissionPrompt(updated, "Actualizar extensión")
+                showPermissionPrompt(extension, "Actualizar extensión")
         }
+
+    private fun showInstallPermissionPrompt(
+        extension: WebExtension,
+        permissions: Array<out String>,
+        origins: Array<out String>,
+        dataCollectionPermissions: Array<out String>
+    ): GeckoResult<WebExtension.PermissionPromptResponse> {
+        val result = GeckoResult<WebExtension.PermissionPromptResponse>()
+        val activity = promptActivity.get()
+
+        fun response(allowed: Boolean) =
+            WebExtension.PermissionPromptResponse(
+                allowed,
+                false,
+                allowed && dataCollectionPermissions.isNotEmpty()
+            )
+
+        if (activity == null || activity.isFinishing) {
+            result.complete(response(false))
+            return result
+        }
+
+        val details = buildString {
+            append(extension.metaData?.name ?: extension.id)
+            append("\nVersión: ")
+            append(extension.metaData?.version ?: "?")
+
+            if (permissions.isNotEmpty()) {
+                append("\n\nPermisos: ")
+                append(permissions.joinToString(", "))
+            }
+
+            if (origins.isNotEmpty()) {
+                append("\n\nSitios: ")
+                append(origins.joinToString(", "))
+            }
+
+            if (dataCollectionPermissions.isNotEmpty()) {
+                append("\n\nDatos solicitados: ")
+                append(dataCollectionPermissions.joinToString(", "))
+            }
+        }
+
+        activity.runOnUiThread {
+            AlertDialog.Builder(activity)
+                .setTitle("Instalar extensión")
+                .setMessage(details)
+                .setNegativeButton("Cancelar") { _, _ ->
+                    result.complete(response(false))
+                }
+                .setPositiveButton("Permitir") { _, _ ->
+                    result.complete(response(true))
+                }
+                .setOnCancelListener {
+                    result.complete(response(false))
+                }
+                .show()
+        }
+
+        return result
+    }
 
     private fun showPermissionPrompt(
         extension: WebExtension,
