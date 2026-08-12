@@ -1,0 +1,394 @@
+name: Nexo v6 - Robust Fix & Full Build
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/main.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Apply all consolidated fixes robustly
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("app/src/main/java/com/ejemplo/navegador")
+
+          # ------------------------------------------------------------
+          # ExtensionManager.kt
+          # ------------------------------------------------------------
+          p = root / "ExtensionManager.kt"
+          s = p.read_text(encoding="utf-8")
+          before = s
+
+          # GeckoResult.accept() expone Throwable? en GeckoView 125.
+          s = s.replace(
+              "{ onError(it) }",
+              "{ onError(it ?: IllegalStateException(\"GeckoView devolvió un error nulo\")) }"
+          )
+          s = s.replace("error.message", "error?.message")
+          s = s.replace("error.javaClass.simpleName", "error?.javaClass?.simpleName")
+          s = s.replace("it.message", "it?.message")
+
+          # SessionTabDelegate.onCloseTab() recibe WebExtension? como source.
+          s, n_close = re.subn(
+              r"(override\s+fun\s+onCloseTab\s*\(\s*source\s*:\s*)WebExtension(\s*,)",
+              r"\1WebExtension?\2",
+              s,
+              count=1,
+              flags=re.S
+          )
+
+          if s != before:
+              p.write_text(s, encoding="utf-8")
+              print("ExtensionManager.kt actualizado")
+          else:
+              print("ExtensionManager.kt ya estaba corregido")
+
+          print("onCloseTab corregido/encontrado:", n_close or "ya aplicado")
+
+          # ------------------------------------------------------------
+          # MainActivity.kt
+          # ------------------------------------------------------------
+          p = root / "MainActivity.kt"
+          s = p.read_text(encoding="utf-8")
+          before = s
+
+          s = s.replace(
+              "val text = TextView(this).apply {",
+              "val tabText = TextView(this).apply {",
+              1
+          )
+
+          # Solo dentro del bloque recién renombrado.
+          s = re.sub(
+              r"(val\s+tabText\s*=\s*TextView\(this\)\.apply\s*\{\s*)text\s*=",
+              r"\1this.text =",
+              s,
+              count=1,
+              flags=re.S
+          )
+
+          s = s.replace(
+              "row.addView(text)",
+              "row.addView(tabText)",
+              1
+          )
+
+          if s != before:
+              p.write_text(s, encoding="utf-8")
+              print("MainActivity.kt actualizado")
+          else:
+              print("MainActivity.kt ya estaba corregido")
+
+          # ------------------------------------------------------------
+          # SettingsActivity.kt
+          # ------------------------------------------------------------
+          p = root / "SettingsActivity.kt"
+          s = p.read_text(encoding="utf-8")
+          before = s
+          s = s.replace(
+              '"Error: ${error.message}"',
+              '"Error: ${error?.message ?: "desconocido"}"'
+          )
+
+          if s != before:
+              p.write_text(s, encoding="utf-8")
+              print("SettingsActivity.kt actualizado")
+          else:
+              print("SettingsActivity.kt ya estaba corregido")
+
+          # Comprobaciones mínimas antes de Gradle.
+          ext = (root / "ExtensionManager.kt").read_text(encoding="utf-8")
+          main = (root / "MainActivity.kt").read_text(encoding="utf-8")
+          settings = (root / "SettingsActivity.kt").read_text(encoding="utf-8")
+
+          assert "error.message" not in ext
+          assert "error.javaClass.simpleName" not in ext
+          assert "it.message" not in ext
+          assert re.search(
+              r"onCloseTab\s*\(\s*source\s*:\s*WebExtension\?",
+              ext,
+              re.S
+          )
+          assert "val text = TextView(this).apply {" not in main
+          assert "row.addView(text)" not in main
+          assert '"Error: ${error.message}"' not in settings
+
+          print("VERIFICACION DE PARCHES: OK")
+          PY
+
+          echo "===== DIFF ====="
+          git diff -- app/src/main/java/com/ejemplo/navegador
+
+      - name: Commit fixes to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/ejemplo/navegador
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios nuevos."
+          else
+            git commit -m "Apply robust Nexo v6 GeckoView fixes [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android 34
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Validate XML JSON JavaScript
+        id: static
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            python3 - <<'PY'
+          import json
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          for p in Path("app/src/main").rglob("*.xml"):
+              ET.parse(p)
+              print("XML OK:", p)
+
+          for p in Path("app/src/main/assets/extensions").rglob("manifest.json"):
+              data = json.loads(p.read_text(encoding="utf-8"))
+              assert data["manifest_version"] == 2
+              assert data["browser_specific_settings"]["gecko"]["id"]
+              print("EXTENSION OK:", p)
+          PY
+
+            node --check app/src/main/assets/extensions/nexo_bridge/content_script.js
+          } 2>&1 | tee static-validation.log
+
+      - name: Compile Debug Release R8 and Lint
+        id: gradle
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle \
+            :app:assembleDebug \
+            :app:assembleRelease \
+            :app:lintDebug \
+            :app:lintRelease \
+            --continue \
+            --stacktrace \
+            --no-daemon \
+            2>&1 | tee full-build.log
+
+      - name: Collect every error from this pass
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "===== STATIC ====="
+            cat static-validation.log 2>/dev/null || true
+            echo
+            echo "===== ERRORS ====="
+            grep -Ei \
+              "(^e: | error:|FAILURE:|Execution failed for task|Missing class|Unresolved reference|overrides nothing|Type mismatch|Cannot access|None of the following|Caused by:|Lint found)" \
+              full-build.log 2>/dev/null || true
+            echo
+            echo "===== WARNINGS ====="
+            grep -Ei "(^w: |warning:)" full-build.log 2>/dev/null || true
+          } > errors-summary.txt
+          cat errors-summary.txt
+
+      - name: Sign release APKs
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p app/build/outputs/apk/release-ci-signed
+
+          mapfile -t apks < <(
+            find app/build/outputs/apk/release \
+              -type f -name "*-unsigned.apk" 2>/dev/null | sort
+          )
+
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "No hay Release APK para firmar."
+            exit 0
+          fi
+
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -dname "CN=Nexo CI,O=Nexo,C=CO" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000
+          fi
+
+          for apk in "${apks[@]}"; do
+            base="$(basename "$apk" -unsigned.apk)"
+            out="app/build/outputs/apk/release-ci-signed/${base}-ci-signed.apk"
+
+            "$ANDROID_HOME/build-tools/34.0.0/apksigner" sign \
+              --ks "$HOME/.android/debug.keystore" \
+              --ks-key-alias androiddebugkey \
+              --ks-pass pass:android \
+              --key-pass pass:android \
+              --out "$out" \
+              "$apk"
+
+            "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify \
+              --verbose "$out"
+          done
+
+      - name: Validate APK contents
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          : > apk-validation.txt
+
+          mapfile -t apks < <(
+            find \
+              app/build/outputs/apk/debug \
+              app/build/outputs/apk/release-ci-signed \
+              -type f -name "*.apk" 2>/dev/null | sort
+          )
+
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "No hay APKs." | tee -a apk-validation.txt
+            exit 0
+          fi
+
+          for apk in "${apks[@]}"; do
+            echo "========================================" | tee -a apk-validation.txt
+            echo "$apk" | tee -a apk-validation.txt
+            unzip -tq "$apk" >/dev/null ||
+              echo "APK ZIP INVALIDO" | tee -a apk-validation.txt
+
+            for required in \
+              assets/home/index.html \
+              assets/extensions/nexo_bridge/manifest.json \
+              assets/extensions/nexo_bridge/content_script.js
+            do
+              if unzip -Z1 "$apk" | grep -qx "$required"; then
+                echo "OK: $required" | tee -a apk-validation.txt
+              else
+                echo "FALTA: $required" | tee -a apk-validation.txt
+              fi
+            done
+
+            echo -n "ABIs: " | tee -a apk-validation.txt
+            unzip -Z1 "$apk" |
+              awk -F/ '/^lib\// {print $2}' |
+              sort -u |
+              tr '\n' ' ' |
+              tee -a apk-validation.txt
+            echo | tee -a apk-validation.txt
+
+            sha256sum "$apk" | tee -a apk-validation.txt
+            stat -c "Bytes: %s" "$apk" | tee -a apk-validation.txt
+
+            "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$apk" |
+              head -n 12 |
+              tee -a apk-validation.txt
+          done
+
+      - name: Upload Debug APKs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-v6-debug-apks
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload signed Release APKs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-v6-release-ci-signed-apks
+          path: app/build/outputs/apk/release-ci-signed/*.apk
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-v6-diagnostics
+          path: |
+            static-validation.log
+            full-build.log
+            errors-summary.txt
+            apk-validation.txt
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-release.html
+            app/build/outputs/mapping/release/missing_rules.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Final strict result
+        if: always()
+        shell: bash
+        run: |
+          echo "Static: ${{ steps.static.outcome }}"
+          echo "Gradle: ${{ steps.gradle.outcome }}"
+
+          if [ "${{ steps.static.outcome }}" != "success" ] ||
+             [ "${{ steps.gradle.outcome }}" != "success" ]; then
+            exit 1
+          fi
+
+          debug_count="$(find app/build/outputs/apk/debug -name '*.apk' 2>/dev/null | wc -l)"
+          release_count="$(find app/build/outputs/apk/release-ci-signed -name '*.apk' 2>/dev/null | wc -l)"
+
+          echo "Debug APKs: $debug_count"
+          echo "Release APKs: $release_count"
+
+          if [ "$debug_count" -lt 2 ] || [ "$release_count" -lt 2 ]; then
+            exit 2
+          fi
+
+          echo "NEXO V6 FULL BUILD OK"
