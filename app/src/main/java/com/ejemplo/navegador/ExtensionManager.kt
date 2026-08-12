@@ -99,7 +99,7 @@ object ExtensionManager {
             .list()
             .accept(
                 { onSuccess(it.orEmpty()) },
-                { onError(it) }
+                { onError(it ?: IllegalStateException("GeckoView devolvió un error nulo")) }
             )
     }
 
@@ -126,7 +126,7 @@ object ExtensionManager {
                 { error ->
                     onDone(
                         false,
-                        "No se pudo instalar: ${error.message ?: error.javaClass.simpleName}"
+                        "No se pudo instalar: ${error?.message ?: error?.javaClass?.simpleName}"
                     )
                 }
             )
@@ -159,7 +159,7 @@ object ExtensionManager {
                 onDone
             )
         }.onFailure {
-            onDone(false, "Importación fallida: ${it.message}")
+            onDone(false, "Importación fallida: ${it?.message}")
         }
     }
 
@@ -192,7 +192,7 @@ object ExtensionManager {
                 )
             },
             { error ->
-                onDone(false, error.message ?: "No se pudo cambiar el estado")
+                onDone(false, error?.message ?: "No se pudo cambiar el estado")
             }
         )
     }
@@ -212,7 +212,7 @@ object ExtensionManager {
             .uninstall(extension)
             .accept(
                 { onDone(true, "Extensión desinstalada") },
-                { onDone(false, it.message ?: "No se pudo desinstalar") }
+                { onDone(false, it?.message ?: "No se pudo desinstalar") }
             )
     }
 
@@ -232,7 +232,7 @@ object ExtensionManager {
                         if (allowed) "Permitida en privado" else "Bloqueada en privado"
                     )
                 },
-                { onDone(false, it.message ?: "No se pudo cambiar el permiso") }
+                { onDone(false, it?.message ?: "No se pudo cambiar el permiso") }
             )
     }
 
@@ -301,7 +301,7 @@ object ExtensionManager {
             extension,
             object : WebExtension.SessionTabDelegate {
                 override fun onCloseTab(
-                    source: WebExtension,
+                    source: WebExtension?,
                     session: GeckoSession
                 ): GeckoResult<AllowOrDeny> {
                     TabManager.closeBySession(session)

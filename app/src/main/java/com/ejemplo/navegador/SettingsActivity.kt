@@ -162,7 +162,7 @@ class SettingsActivity : Activity() {
                             runOnUiThread {
                                 Toast.makeText(
                                     this,
-                                    "Error: ${error.message}",
+                                    "Error: ${error?.message ?: "desconocido"}",
                                     Toast.LENGTH_LONG
                                 ).show()
                             }

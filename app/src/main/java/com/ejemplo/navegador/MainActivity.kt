@@ -196,8 +196,8 @@ class MainActivity : Activity(), TabManager.Listener {
                 orientation = LinearLayout.HORIZONTAL
             }
 
-            val text = TextView(this).apply {
-                text =
+            val tabText = TextView(this).apply {
+                this.text =
                     (if (tab.isPrivate) "◉ " else "") +
                     tab.title.take(46) + "\n" + tab.url.take(78)
                 textSize = 14f
@@ -222,7 +222,7 @@ class MainActivity : Activity(), TabManager.Listener {
                 }
             }
 
-            row.addView(text)
+            row.addView(tabText)
             row.addView(close)
             container.addView(row)
         }
