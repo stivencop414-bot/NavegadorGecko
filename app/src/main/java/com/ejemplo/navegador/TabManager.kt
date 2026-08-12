@@ -23,6 +23,7 @@ object TabManager {
     private var listener: Listener? = null
     private var initialized = false
     private var activeId: String? = null
+    private val activationHistory = java.util.ArrayDeque<String>()
 
     fun initialize(context: Context) {
         appContext = context.applicationContext
@@ -103,12 +104,25 @@ object TabManager {
         return session
     }
 
-    fun switchTo(id: String, loadUrl: Boolean = true) {
+    fun switchTo(
+        id: String,
+        loadUrl: Boolean = true,
+        rememberPrevious: Boolean = true
+    ) {
         val target = tabs.firstOrNull { it.id == id } ?: return
         val old = activeTab()
 
         if (old?.id != target.id) {
             old?.session?.setActive(false)
+
+            if (rememberPrevious && old != null) {
+                activationHistory.remove(old.id)
+                activationHistory.addLast(old.id)
+
+                while (activationHistory.size > 30) {
+                    activationHistory.removeFirst()
+                }
+            }
         }
 
         activeId = target.id
@@ -139,6 +153,7 @@ object TabManager {
 
         val removed = tabs[index]
         val wasActive = removed.id == activeId
+        activationHistory.remove(id)
 
         removed.session?.let { session ->
             runCatching {
@@ -157,7 +172,7 @@ object TabManager {
 
         if (wasActive) {
             val next = tabs[index.coerceAtMost(tabs.lastIndex)]
-            switchTo(next.id)
+            switchTo(next.id, rememberPrevious = false)
         } else {
             listener?.onTabCountChanged(tabs.size)
             persist()
@@ -176,6 +191,35 @@ object TabManager {
 
     fun reload() {
         activeSession()?.reload()
+    }
+
+    fun canGoBackOrPrevious(): Boolean =
+        activeTab()?.canGoBack == true ||
+            activationHistory.any { id ->
+                id != activeId && tabs.any { it.id == id }
+            }
+
+    fun goBackOrPrevious() {
+        if (activeTab()?.canGoBack == true) {
+            activeSession()?.goBack()
+            return
+        }
+
+        while (activationHistory.isNotEmpty()) {
+            val previousId = activationHistory.removeLast()
+
+            if (
+                previousId != activeId &&
+                tabs.any { it.id == previousId }
+            ) {
+                switchTo(
+                    previousId,
+                    loadUrl = true,
+                    rememberPrevious = false
+                )
+                return
+            }
+        }
     }
 
     fun goBack() {

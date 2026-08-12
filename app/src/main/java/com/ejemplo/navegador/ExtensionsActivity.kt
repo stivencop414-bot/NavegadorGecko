@@ -36,7 +36,7 @@ class ExtensionsActivity : Activity() {
         findViewById<Button>(R.id.importButton).setOnClickListener {
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
-                type = "application/octet-stream"
+                type = "*/*"
                 putExtra(
                     Intent.EXTRA_MIME_TYPES,
                     arrayOf(
@@ -102,10 +102,7 @@ class ExtensionsActivity : Activity() {
                 }
 
                 runOnUiThread {
-                    listView.adapter = ArrayAdapter(
-                        this,
-                        android.R.layout.simple_list_item_1,
-                        extensions.map { extension ->
+                    listView.adapter = ThemeManager.listAdapter(this, extensions.map { extension ->
                             val meta = extension.metaData
                             val system =
                                 if (extension.id == ExtensionManager.BRIDGE_ID) " · Sistema"

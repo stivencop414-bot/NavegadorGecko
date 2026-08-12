@@ -73,7 +73,7 @@ class MainActivity : Activity(), TabManager.Listener {
             TabManager.reload()
         }
 
-        backButton.setOnClickListener { TabManager.goBack() }
+        backButton.setOnClickListener { TabManager.goBackOrPrevious() }
         forwardButton.setOnClickListener { TabManager.goForward() }
 
         findViewById<Button>(R.id.homeButton).setOnClickListener {
@@ -184,6 +184,7 @@ class MainActivity : Activity(), TabManager.Listener {
 
     private fun showTabsDialog() {
         val p = ThemeManager.palette(this)
+        var tabsDialog: AlertDialog? = null
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             val d = resources.displayMetrics.density
@@ -210,6 +211,7 @@ class MainActivity : Activity(), TabManager.Listener {
                 )
                 setOnClickListener {
                     TabManager.switchTo(tab.id)
+                    tabsDialog?.dismiss()
                 }
             }
 
@@ -227,13 +229,15 @@ class MainActivity : Activity(), TabManager.Listener {
             container.addView(row)
         }
 
-        AlertDialog.Builder(this)
+        tabsDialog = AlertDialog.Builder(this)
             .setTitle("Pestañas (${TabManager.allTabs().size})")
             .setView(container)
             .setNegativeButton("Cerrar", null)
             .setNeutralButton("Privada") { _, _ -> viewModel.newTab(true) }
             .setPositiveButton("Nueva") { _, _ -> viewModel.newTab(false) }
-            .show()
+            .create()
+
+        tabsDialog?.show()
     }
 
     private fun shareCurrent() {
@@ -330,7 +334,7 @@ class MainActivity : Activity(), TabManager.Listener {
     private fun renderTab(tab: BrowserTab) {
         if (!omnibox.hasFocus()) omnibox.setText(tab.url)
 
-        backButton.isEnabled = tab.canGoBack
+        backButton.isEnabled = TabManager.canGoBackOrPrevious()
         forwardButton.isEnabled = tab.canGoForward
         privateBanner.visibility = if (tab.isPrivate) View.VISIBLE else View.GONE
 
@@ -380,8 +384,8 @@ class MainActivity : Activity(), TabManager.Listener {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (TabManager.activeTab()?.canGoBack == true) {
-            TabManager.goBack()
+        if (TabManager.canGoBackOrPrevious()) {
+            TabManager.goBackOrPrevious()
         } else {
             super.onBackPressed()
         }

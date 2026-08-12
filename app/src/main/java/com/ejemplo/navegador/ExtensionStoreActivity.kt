@@ -69,10 +69,7 @@ class ExtensionStoreActivity : Activity() {
             result.onSuccess { values ->
                 addons = values
 
-                listView.adapter = ArrayAdapter(
-                    this,
-                    android.R.layout.simple_list_item_1,
-                    values.map {
+                listView.adapter = ThemeManager.listAdapter(this, values.map {
                         "${it.name}\n${it.summary.take(110)}" +
                             if (it.users > 0) " · ${it.users} usuarios/día" else ""
                     }

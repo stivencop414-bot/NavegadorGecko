@@ -6,6 +6,10 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.view.View
+import android.widget.Switch
+import android.widget.Spinner
+import android.widget.ArrayAdapter
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -84,14 +88,116 @@ object ThemeManager {
 
     fun styleButton(activity: Activity, button: Button, primary: Boolean = false) {
         val p = palette(activity)
+        val foreground = if (primary) p.onAccent else p.text
         button.background = rounded(activity, if (primary) p.accent else p.elevated)
-        button.setTextColor(if (primary) p.onAccent else p.text)
+        button.setTextColor(foreground)
+        button.compoundDrawableTintList = ColorStateList.valueOf(foreground)
         button.backgroundTintList = null
     }
 
     fun styleText(activity: Activity, text: TextView, muted: Boolean = false) {
         val p = palette(activity)
         text.setTextColor(if (muted) p.muted else p.text)
+    }
+
+
+    fun spinnerAdapter(
+        activity: Activity,
+        items: List<String>
+    ): ArrayAdapter<String> =
+        object : ArrayAdapter<String>(
+            activity,
+            android.R.layout.simple_spinner_item,
+            items
+        ) {
+            init {
+                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            }
+
+            override fun getView(
+                position: Int,
+                convertView: View?,
+                parent: ViewGroup
+            ): View = paint(super.getView(position, convertView, parent), false)
+
+            override fun getDropDownView(
+                position: Int,
+                convertView: View?,
+                parent: ViewGroup
+            ): View = paint(
+                super.getDropDownView(position, convertView, parent),
+                true
+            )
+
+            private fun paint(view: View, dropdown: Boolean): View {
+                val p = palette(activity)
+                (view as? TextView)?.apply {
+                    setTextColor(p.text)
+                    textSize = 15f
+                    val d = resources.displayMetrics.density
+                    setPadding(
+                        (14 * d).toInt(),
+                        (11 * d).toInt(),
+                        (14 * d).toInt(),
+                        (11 * d).toInt()
+                    )
+                    background = rounded(
+                        activity,
+                        if (dropdown) p.surface else p.elevated,
+                        12f
+                    )
+                }
+                return view
+            }
+        }
+
+    fun listAdapter(
+        activity: Activity,
+        items: List<String>
+    ): ArrayAdapter<String> =
+        object : ArrayAdapter<String>(
+            activity,
+            android.R.layout.simple_list_item_1,
+            items
+        ) {
+            override fun getView(
+                position: Int,
+                convertView: View?,
+                parent: ViewGroup
+            ): View {
+                val v = super.getView(position, convertView, parent)
+                val p = palette(activity)
+                (v as? TextView)?.apply {
+                    setTextColor(p.text)
+                    textSize = 14f
+                    val d = resources.displayMetrics.density
+                    setPadding(
+                        (14 * d).toInt(),
+                        (12 * d).toInt(),
+                        (14 * d).toInt(),
+                        (12 * d).toInt()
+                    )
+                    background = rounded(activity, p.surface, 10f)
+                }
+                return v
+            }
+        }
+
+    fun styleSpinner(activity: Activity, spinner: Spinner) {
+        spinner.background = rounded(activity, palette(activity).elevated, 12f)
+        spinner.backgroundTintList = null
+    }
+
+    fun styleSwitch(activity: Activity, toggle: Switch) {
+        val p = palette(activity)
+        toggle.setTextColor(p.text)
+        toggle.thumbTintList = ColorStateList(
+            arrayOf(
+                intArrayOf(android.R.attr.state_checked),
+                intArrayOf()
+            ),
+            intArrayOf(p.accent, p.muted)
+        )
     }
 
     fun styleEdit(activity: Activity, edit: EditText) {

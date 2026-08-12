@@ -10,7 +10,7 @@
         android:text="Tienda de extensiones" android:textSize="26sp"
         android:textStyle="bold" />
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Catálogo Android de addons.mozilla.org" />
+        android:text="Mozilla Add-ons (AMO) · extensiones Android revisadas" />
     <LinearLayout
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:layout_marginTop="10dp" android:orientation="horizontal">

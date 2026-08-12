@@ -3,6 +3,8 @@ package com.ejemplo.navegador
 import android.app.Activity
 import android.app.AlertDialog
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -71,26 +73,10 @@ class SettingsActivity : Activity() {
     }
 
     private fun populate() {
-        theme.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            themes.map { it.first }
-        )
-        accent.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            accents.map { it.first }
-        )
-        search.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            engines.map { it.first }
-        )
-        liveTabs.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            liveOptions.map(Int::toString)
-        )
+        theme.adapter = ThemeManager.spinnerAdapter(this, themes.map { it.first })
+        accent.adapter = ThemeManager.spinnerAdapter(this, accents.map { it.first })
+        search.adapter = ThemeManager.spinnerAdapter(this, engines.map { it.first })
+        liveTabs.adapter = ThemeManager.spinnerAdapter(this, liveOptions.map(Int::toString))
 
         theme.setSelection(
             themes.indexOfFirst { it.second == BrowserPrefs.theme(this) }.coerceAtLeast(0)
@@ -172,10 +158,35 @@ class SettingsActivity : Activity() {
             .show()
     }
 
+
+    private fun styleReadableTree(view: View) {
+        when (view) {
+            is EditText -> Unit
+            is Button -> Unit
+            is TextView -> ThemeManager.styleText(this, view)
+        }
+
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                styleReadableTree(view.getChildAt(i))
+            }
+        }
+    }
+
     private fun applyTheme() {
         val p = ThemeManager.palette(this)
-        findViewById<android.view.View>(R.id.settingsRoot)
-            .setBackgroundColor(p.background)
+        val settingsRoot =
+            findViewById<android.view.View>(R.id.settingsRoot)
+        settingsRoot.setBackgroundColor(p.background)
+        styleReadableTree(settingsRoot)
+
+        listOf(theme, accent, search, liveTabs).forEach {
+            ThemeManager.styleSpinner(this, it)
+        }
+
+        listOf(restore, tracking, badge).forEach {
+            ThemeManager.styleSwitch(this, it)
+        }
 
         ThemeManager.styleText(
             this,

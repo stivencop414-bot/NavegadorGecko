@@ -35,7 +35,7 @@ object AmoClient {
                 )
 
                 if (query.isBlank()) {
-                    params += "promoted=recommended"
+                    params += "promoted=badged"
                 } else {
                     params += "q=" + URLEncoder.encode(query, "UTF-8")
                 }
@@ -77,18 +77,20 @@ object AmoClient {
             for (i in 0 until results.length()) {
                 val addon = results.optJSONObject(i) ?: continue
                 val current = addon.optJSONObject("current_version") ?: continue
-                val files = current.optJSONArray("files") ?: continue
+                var xpi = current
+                    .optJSONObject("file")
+                    ?.optString("url")
+                    .orEmpty()
 
-                var xpi = ""
-                for (j in 0 until files.length()) {
-                    val file = files.optJSONObject(j) ?: continue
-                    val platform = file.optString("platform")
-                    if (
-                        platform.equals("android", true) ||
-                        platform.equals("all", true)
-                    ) {
-                        xpi = file.optString("url")
-                        if (xpi.isNotBlank()) break
+                // Compatibilidad con respuestas antiguas/cacheadas de AMO.
+                if (xpi.isBlank()) {
+                    val files = current.optJSONArray("files")
+                    if (files != null) {
+                        for (j in 0 until files.length()) {
+                            val file = files.optJSONObject(j) ?: continue
+                            xpi = file.optString("url")
+                            if (xpi.isNotBlank()) break
+                        }
                     }
                 }
 
