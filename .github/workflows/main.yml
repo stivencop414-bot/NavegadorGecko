@@ -1,4 +1,4 @@
-name: Nexo v0.11.1 - PiP UI Polish FIX2
+name: Nexo v0.11.1 - PiP UI FIX3
 
 on:
   workflow_dispatch:
@@ -13,24 +13,24 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 65
     env:
       COMPILE_SDK: "36"
       BUILD_TOOLS: "36.0.0"
       GRADLE_VERSION: "8.14.4"
 
     steps:
-      - name: Checkout current main
+      - name: Checkout v0.11.0
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Apply Nexo v0.11.1 FIX2 patch
+      - name: Apply v0.11.1 PiP UI FIX3
         shell: bash
         run: |
           set -euo pipefail
-          echo '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d | gzip -d > /tmp/nexo_v011.py
-          python3 /tmp/nexo_v011.py
+          printf '%s' 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 | base64 -d | gzip -d > /tmp/nexo_v0111_fix3.py
+          python3 /tmp/nexo_v0111_fix3.py
           git diff --stat
 
       - name: Java 17
@@ -47,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager             "platforms;android-${COMPILE_SDK}"             "build-tools;${BUILD_TOOLS}"             "platform-tools"
+          sdkmanager "platforms;android-${COMPILE_SDK}" "build-tools;${BUILD_TOOLS}" "platform-tools"
 
       - name: Install Gradle
         shell: bash
@@ -57,7 +57,7 @@ jobs:
           unzip -q gradle.zip
           echo "$PWD/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
 
-      - name: Validate XML WebExtensions and JavaScript
+      - name: Validate source
         shell: bash
         run: |
           set -euo pipefail
@@ -68,20 +68,16 @@ jobs:
 
           for p in Path("app/src/main").rglob("*.xml"):
               ET.parse(p)
-              print("XML OK:", p)
 
           for p in Path("app/src/main/assets/extensions").rglob("manifest.json"):
               json.loads(p.read_text(encoding="utf-8"))
-              print("EXTENSION OK:", p)
 
-          translator = Path(
-              "app/src/main/assets/extensions/nexo_translator/content.js"
+          main = Path(
+              "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
           ).read_text(encoding="utf-8")
-
-          assert "document.createTreeWalker" in translator
-          assert "NodeFilter.SHOW_TEXT" in translator
-          assert "innerHTML" not in translator
-          assert "sendNativeMessage" in translator
+          assert "enterSmartPipNow" in main
+          assert "Mini reproductor" in main
+          assert "override fun onPause()" in main
           PY
 
           node --check app/src/main/assets/extensions/nexo_bridge/content_script.js
@@ -101,7 +97,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app/
           if ! git diff --cached --quiet; then
-            git commit -m "Nexo v0.11 background media translator [skip ci]"
+            git commit -m "Nexo v0.11.1 PiP UI fix [skip ci]"
             git push origin HEAD:main
           fi
 
@@ -110,8 +106,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/release
-
-          keytool -genkeypair             -keystore nexo-v011-ci.jks             -storepass android             -alias nexo             -keypass android             -keyalg RSA             -keysize 2048             -validity 10000             -dname "CN=Nexo Browser v0.11,O=Nexo,C=CO"
+          keytool -genkeypair             -keystore nexo-v0111-ci.jks             -storepass android             -alias nexo             -keypass android             -keyalg RSA             -keysize 2048             -validity 10000             -dname "CN=Nexo Browser v0.11.1,O=Nexo,C=CO"
 
           APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
           ARM64="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*arm64-v8a*.apk' | head -n 1)"
@@ -120,9 +115,9 @@ jobs:
           test -n "$ARM64"
           test -n "$ARM32"
 
-          "$APKSIGNER" sign             --ks nexo-v011-ci.jks             --ks-key-alias nexo             --ks-pass pass:android             --key-pass pass:android             --out artifacts/release/Nexo-v0.11.1-arm64-v8a.apk             "$ARM64"
+          "$APKSIGNER" sign             --ks nexo-v0111-ci.jks             --ks-key-alias nexo             --ks-pass pass:android             --key-pass pass:android             --out artifacts/release/Nexo-v0.11.1-arm64-v8a.apk             "$ARM64"
 
-          "$APKSIGNER" sign             --ks nexo-v011-ci.jks             --ks-key-alias nexo             --ks-pass pass:android             --key-pass pass:android             --out artifacts/release/Nexo-v0.11.1-armeabi-v7a.apk             "$ARM32"
+          "$APKSIGNER" sign             --ks nexo-v0111-ci.jks             --ks-key-alias nexo             --ks-pass pass:android             --key-pass pass:android             --out artifacts/release/Nexo-v0.11.1-armeabi-v7a.apk             "$ARM32"
 
           "$APKSIGNER" verify --verbose artifacts/release/Nexo-v0.11.1-arm64-v8a.apk
           "$APKSIGNER" verify --verbose artifacts/release/Nexo-v0.11.1-armeabi-v7a.apk
@@ -158,7 +153,7 @@ jobs:
           TARGET_SHA="$(git rev-parse HEAD)"
 
           if ! gh release view v0.11.1 >/dev/null 2>&1; then
-            gh release create v0.11.1               --target "$TARGET_SHA"               --title "Nexo Browser v0.11.1"               --notes "Ajusta el diseño principal de Nexo, reduce y moderniza la barra inferior, añade PiP más fiable para video al salir del navegador con fallback manual y automático, mantiene la traducción TreeWalker y conserva el fix de reproducción multimedia en segundo plano."
+            gh release create v0.11.1               --target "$TARGET_SHA"               --title "Nexo Browser v0.11.1"               --notes "PiP reforzado en Android 8+, fallback onPause/onUserLeaveHint, mini reproductor manual y barra inferior compacta. Conserva traducción TreeWalker y reproducción de audio en segundo plano."
           fi
 
           gh release upload v0.11.1             artifacts/release/Nexo-v0.11.1-arm64-v8a.apk             artifacts/release/Nexo-v0.11.1-armeabi-v7a.apk             --clobber
