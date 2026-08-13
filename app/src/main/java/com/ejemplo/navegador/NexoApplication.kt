@@ -11,7 +11,6 @@ class NexoApplication : Application() {
         super.onCreate()
         AppContext.initialize(this)
         CrashLog.install(this)
-        GeckoRuntimeHolder.preload(this)
     }
 }
 

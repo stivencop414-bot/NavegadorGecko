@@ -1,7 +1,6 @@
 package com.ejemplo.navegador
 
 import android.content.Context
-import android.os.Build
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
@@ -11,9 +10,6 @@ object GeckoRuntimeHolder {
     @Volatile private var runtime: GeckoRuntime? = null
     @Volatile private var executor: GeckoWebExecutor? = null
 
-    fun preload(context: Context) {
-        get(context)
-    }
 
     fun get(context: Context): GeckoRuntime =
         runtime ?: synchronized(this) {
@@ -23,18 +19,19 @@ object GeckoRuntimeHolder {
                     .debugLogging(false)
                     .consoleOutput(false)
                     .javaScriptEnabled(true)
-                    .largeKeepaliveFactor(3)
+                    .largeKeepaliveFactor(2)
 
-                if (Build.VERSION.SDK_INT >= 29) {
-                    builder.appZygoteProcessEnabled(true)
-                }
 
                 GeckoRuntime.create(
                     context.applicationContext,
                     builder.build()
                 ).also {
                     runtime = it
-                    it.warmUp()
+
+                    // warmUp es una optimización; si el dispositivo no la
+                    // tolera, Nexo debe continuar abriendo normalmente.
+                    runCatching { it.warmUp() }
+
                     executor = GeckoWebExecutor(it)
                     applyRuntimePrefs(context)
                 }
