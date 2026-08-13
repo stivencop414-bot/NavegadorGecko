@@ -91,11 +91,32 @@
         android:textSize="12sp"
         android:visibility="gone" />
 
-    <org.mozilla.geckoview.GeckoView
-        android:id="@+id/geckoView"
+    <FrameLayout
+        android:id="@+id/browserFrame"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="1">
+
+        <org.mozilla.geckoview.GeckoView
+            android:id="@+id/geckoView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <Button
+            android:id="@+id/miniPlayerButton"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="12dp"
+            android:minWidth="0dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="▣  Mini"
+            android:textAllCaps="false"
+            android:textSize="13sp"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/navBar"

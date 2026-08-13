@@ -373,12 +373,23 @@ object TabManager {
         TranslatorManager.bindSession(session)
 
         if (loadUrl) {
-            val restored = tab.sessionState
-                ?.let { GeckoSession.SessionState.fromString(it) }
+            val restored =
+                if (!tab.isLoading) {
+                    tab.sessionState
+                        ?.let {
+                            GeckoSession.SessionState.fromString(it)
+                        }
+                } else {
+                    null
+                }
+
             if (restored != null) {
                 session.restoreState(restored)
             } else {
-                GeckoRuntimeHolder.speculativeConnect(context, tab.url)
+                GeckoRuntimeHolder.speculativeConnect(
+                    context,
+                    tab.url
+                )
                 session.loadUri(tab.url)
             }
         }
@@ -508,6 +519,7 @@ object TabManager {
                 override fun onPageStart(session: GeckoSession, url: String) {
                     BrowserMediaController.resetVideo(tab.id)
                     tab.url = url
+                    tab.isLoading = true
                     tab.lastUsed = System.currentTimeMillis()
                     persist()
                     listener?.onTabChanged(tab)
@@ -526,6 +538,8 @@ object TabManager {
                 }
 
                 override fun onPageStop(session: GeckoSession, success: Boolean) {
+                    tab.isLoading = false
+                    persist()
                     listener?.onProgress(tab, 100, false)
 
                     if (success && !tab.isPrivate) {
@@ -549,6 +563,7 @@ object TabManager {
         if (tab.session !== failedSession) return
 
         tab.session = null
+        tab.sessionState = null
         BrowserMediaController.removeTab(tab.id)
 
         val now = System.currentTimeMillis()
@@ -659,6 +674,11 @@ object TabManager {
                                 "lastUsed",
                                 System.currentTimeMillis()
                             ),
+                            isLoading =
+                                o.optBoolean(
+                                    "loading",
+                                    false
+                                ),
                             sessionState = o.optString("sessionState")
                                 .takeIf { it.isNotBlank() && it != "null" }
                         )
@@ -694,6 +714,7 @@ object TabManager {
                     put("title", tab.title)
                     put("desktopMode", tab.desktopMode)
                     put("lastUsed", tab.lastUsed)
+                    put("loading", tab.isLoading)
                     put("sessionState", tab.sessionState ?: "")
                 }
             )

@@ -44,6 +44,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     private lateinit var forwardButton: ImageButton
     private lateinit var clearOmniboxButton: Button
     private lateinit var privateBanner: TextView
+    private lateinit var miniPlayerButton: Button
     private lateinit var root: View
     private lateinit var topBar: View
     private lateinit var navBar: View
@@ -91,6 +92,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         forwardButton = findViewById(R.id.forwardButton)
         clearOmniboxButton = findViewById(R.id.clearOmniboxButton)
         privateBanner = findViewById(R.id.privateBanner)
+        miniPlayerButton = findViewById(R.id.miniPlayerButton)
     }
 
     private fun configureUi() {
@@ -102,6 +104,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         findViewById<ImageButton>(R.id.newTabButton).setOnClickListener { viewModel.newTab(false) }
         tabButton.setOnClickListener { showTabsDialog() }
         findViewById<Button>(R.id.menuButton).setOnClickListener { showMenu(it) }
+        miniPlayerButton.setOnClickListener { startMiniPlayer() }
 
         clearOmniboxButton.setOnClickListener {
             omnibox.setText("")
@@ -151,7 +154,6 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         desktop.isCheckable = true
         desktop.isChecked = current?.desktopMode == true
         popup.menu.add("Compartir página")
-        popup.menu.add("Mini reproductor")
         popup.menu.add("Traducir página")
         popup.menu.add("Extensiones")
         popup.menu.add("Historial")
@@ -167,37 +169,16 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
                     TabManager.setDesktopMode(!(current?.desktopMode ?: false)); true
                 }
                 "Compartir página" -> { shareCurrent(); true }
-                "Mini reproductor" -> {
-                    if (!enterSmartPipNow(force = true)) {
-                        Toast.makeText(
-                            this,
-                            "No detecté multimedia activa para mini reproductor",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    true
-                }
                 "Traducir página" -> {
-                    TranslatorManager.translateActive(this) { ok, message ->
+                    TranslatorManager.translateActive(
+                        this
+                    ) { _, message ->
                         runOnUiThread {
                             Toast.makeText(
                                 this,
                                 message,
                                 Toast.LENGTH_LONG
                             ).show()
-
-                            if (
-                                !ok &&
-                                BrowserPrefs.translatorApiKey(this).isBlank()
-                            ) {
-                                suppressAutoPipOnce = true
-                                startActivity(
-                                    Intent(
-                                        this,
-                                        SettingsActivity::class.java
-                                    )
-                                )
-                            }
                         }
                     }
                     true
@@ -215,7 +196,12 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
     private fun captureCurrentTabPreview() {
         val tab = TabManager.activeTab() ?: return
-        if (tab.isPrivate || geckoView.width <= 0 || geckoView.height <= 0) return
+        if (
+            tab.isPrivate ||
+            tab.isLoading ||
+            geckoView.width <= 0 ||
+            geckoView.height <= 0
+        ) return
         runCatching {
             geckoView.capturePixels().accept(
                 { bitmap ->
@@ -384,6 +370,11 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         topBar.setBackgroundColor(p.surface)
         navBar.setBackgroundColor(p.surface)
         ThemeManager.styleEdit(this, omnibox)
+        ThemeManager.styleButton(
+            this,
+            miniPlayerButton,
+            primary = true
+        )
         listOf(
             R.id.tabButton,
             R.id.menuButton,
@@ -471,6 +462,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
                 REQUEST_MEDIA_NOTIFICATIONS
             )
         }
+        updateMiniPlayerChip()
         updatePipParams()
     }
 
@@ -481,6 +473,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         privateBanner.visibility =
             if (!isInPictureInPictureMode && tab.isPrivate) View.VISIBLE else View.GONE
         title = if (tab.isPrivate) "Privado · ${tab.title}" else tab.title
+        updateMiniPlayerChip()
     }
 
     override fun onStart() {
@@ -505,20 +498,6 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         }
     }
 
-    override fun onPause() {
-        if (
-            Build.VERSION.SDK_INT >= 26 &&
-            !isChangingConfigurations &&
-            !isFinishing &&
-            !suppressAutoPipOnce &&
-            !isInPictureInPictureMode
-        ) {
-            enterSmartPipNow()
-        }
-
-        super.onPause()
-    }
-
     override fun onStop() {
         captureCurrentTabPreview()
         if (!isInPictureInPictureMode) {
@@ -527,40 +506,83 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         super.onStop()
     }
 
-    private fun looksLikeVideoPage(url: String): Boolean {
-        val value = url.lowercase()
-
-        return value.contains("youtube.com/") ||
-            value.contains("youtu.be/") ||
-            value.contains("twitch.tv/") ||
-            value.contains("vimeo.com/") ||
-            value.contains("dailymotion.com/") ||
-            value.contains("bilibili.com/video")
-    }
-
-    private fun shouldEnterSmartPip(): Boolean {
-        if (Build.VERSION.SDK_INT < 26) return false
-        if (suppressAutoPipOnce) return false
-        if (!BrowserPrefs.smartPip(this)) return false
-
-        val tab = TabManager.activeTab() ?: return false
-        if (!BrowserMediaController.isPlaying(tab.id)) return false
-
-        return BrowserMediaController.isVideoPlaying(tab.id) ||
-            looksLikeVideoPage(tab.url)
-    }
-
-    private fun enterSmartPipNow(force: Boolean = false): Boolean {
-        if (Build.VERSION.SDK_INT < 26) return false
-        if (isInPictureInPictureMode) return true
-
+    private fun isMiniVideoAvailable(): Boolean {
         val tab = TabManager.activeTab() ?: return false
 
-        if (!force && !shouldEnterSmartPip()) return false
-        if (force && !BrowserMediaController.isPlaying(tab.id)) return false
+        return BrowserPrefs.smartPip(this) &&
+            BrowserMediaController.isVideoPlaying(tab.id)
+    }
 
+    private fun updateMiniPlayerChip() {
+        miniPlayerButton.visibility =
+            if (
+                !isInPictureInPictureMode &&
+                isMiniVideoAvailable()
+            ) View.VISIBLE else View.GONE
+    }
+
+    private fun startMiniPlayer() {
+        if (Build.VERSION.SDK_INT < 26) {
+            Toast.makeText(
+                this,
+                "Mini reproductor requiere Android 8 o superior",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        val tab = TabManager.activeTab() ?: return
+        val session = tab.session ?: return
+
+        if (!BrowserMediaController.isVideoPlaying(tab.id)) {
+            updateMiniPlayerChip()
+            return
+        }
+
+        ExtensionManager.setPipMode(session, true)
+        miniPlayerButton.visibility = View.GONE
+
+        geckoView.postDelayed(
+            {
+                val builder = PictureInPictureParams.Builder()
+                    .setAspectRatio(pipAspectRatio(tab.id))
+
+                if (geckoView.width > 0 && geckoView.height > 0) {
+                    builder.setSourceRectHint(
+                        Rect(
+                            geckoView.left,
+                            geckoView.top,
+                            geckoView.right,
+                            geckoView.bottom
+                        )
+                    )
+                }
+
+                if (Build.VERSION.SDK_INT >= 31) {
+                    builder
+                        .setAutoEnterEnabled(false)
+                        .setSeamlessResizeEnabled(true)
+                }
+
+                val entered = runCatching {
+                    enterPictureInPictureMode(builder.build())
+                }.getOrDefault(false)
+
+                if (!entered) {
+                    ExtensionManager.setPipMode(session, false)
+                    updateMiniPlayerChip()
+                }
+            },
+            120L
+        )
+    }
+
+    private fun updatePipParams() {
+        if (Build.VERSION.SDK_INT < 26) return
+
+        val tab = TabManager.activeTab()
         val builder = PictureInPictureParams.Builder()
-            .setAspectRatio(pipAspectRatio(tab.id))
+            .setAspectRatio(pipAspectRatio(tab?.id))
 
         if (geckoView.width > 0 && geckoView.height > 0) {
             builder.setSourceRectHint(
@@ -575,35 +597,13 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
         if (Build.VERSION.SDK_INT >= 31) {
             builder
-                .setAutoEnterEnabled(true)
+                .setAutoEnterEnabled(false)
                 .setSeamlessResizeEnabled(true)
         }
 
-        return runCatching {
-            enterPictureInPictureMode(builder.build())
-        }.getOrDefault(false)
-    }
-
-    private fun updatePipParams() {
-        if (Build.VERSION.SDK_INT < 26) return
-
-        val tab = TabManager.activeTab()
-        val videoPlaying = shouldEnterSmartPip()
-
-        val builder = PictureInPictureParams.Builder()
-            .setAspectRatio(pipAspectRatio(tab?.id))
-
-        if (geckoView.width > 0 && geckoView.height > 0) {
-            builder.setSourceRectHint(
-                Rect(geckoView.left, geckoView.top, geckoView.right, geckoView.bottom)
-            )
+        runCatching {
+            setPictureInPictureParams(builder.build())
         }
-
-        if (Build.VERSION.SDK_INT >= 31) {
-            builder.setAutoEnterEnabled(videoPlaying).setSeamlessResizeEnabled(true)
-        }
-
-        runCatching { setPictureInPictureParams(builder.build()) }
     }
 
     private fun pipAspectRatio(tabId: String?): Rational {
@@ -616,24 +616,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         else Rational(16, 9)
     }
 
-    private fun enterSmartPipLegacy() {
-        if (Build.VERSION.SDK_INT !in 26..30 || isInPictureInPictureMode) return
-        val tab = TabManager.activeTab() ?: return
-        if (!BrowserPrefs.smartPip(this) || !BrowserMediaController.isVideoPlaying(tab.id)) return
-
-        val builder = PictureInPictureParams.Builder().setAspectRatio(pipAspectRatio(tab.id))
-        if (geckoView.width > 0 && geckoView.height > 0) {
-            builder.setSourceRectHint(
-                Rect(geckoView.left, geckoView.top, geckoView.right, geckoView.bottom)
-            )
-        }
-        runCatching { enterPictureInPictureMode(builder.build()) }
-    }
-
     override fun onUserLeaveHint() {
-        if (!suppressAutoPipOnce) {
-            enterSmartPipNow()
-        }
         super.onUserLeaveHint()
     }
 
@@ -642,8 +625,15 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         newConfig: Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        ExtensionManager.setPipMode(
+            attachedSession,
+            isInPictureInPictureMode
+        )
+
         runCatching {
-            attachedSession?.compositorController?.onPipModeChanged(isInPictureInPictureMode)
+            attachedSession
+                ?.compositorController
+                ?.onPipModeChanged(isInPictureInPictureMode)
         }
         topBar.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
         navBar.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
@@ -651,6 +641,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         val current = TabManager.activeTab()
         privateBanner.visibility =
             if (!isInPictureInPictureMode && current?.isPrivate == true) View.VISIBLE else View.GONE
+        updateMiniPlayerChip()
         root.requestLayout()
     }
 

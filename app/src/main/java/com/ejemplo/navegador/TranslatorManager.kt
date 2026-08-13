@@ -1,23 +1,19 @@
 package com.ejemplo.navegador
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
-import android.text.Html
 import android.util.Log
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import com.google.mlkit.nl.languageid.LanguageIdentification
+import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.Translation
+import com.google.mlkit.nl.translate.Translator
+import com.google.mlkit.nl.translate.TranslatorOptions
 import org.json.JSONArray
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.WebExtension
-import java.net.URLEncoder
 import java.util.IdentityHashMap
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 object TranslatorManager {
     const val TRANSLATOR_ID =
@@ -30,23 +26,16 @@ object TranslatorManager {
     private const val MAX_TEXTS = 128
     private const val MAX_CHARS = 24000
 
-    private val main = Handler(Looper.getMainLooper())
-    private val executor = Executors.newFixedThreadPool(2)
     private val ports =
         IdentityHashMap<GeckoSession, WebExtension.Port>()
     private val pending =
         IdentityHashMap<GeckoSession, String>()
 
+    private val languageIdentifier =
+        LanguageIdentification.getClient()
+
     private var extension: WebExtension? = null
     private var initialized = false
-
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
-        .callTimeout(40, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
-        .build()
 
     fun initialize(context: Context) {
         if (initialized) return
@@ -63,7 +52,6 @@ object TranslatorManager {
                     if (installed == null) return@accept
 
                     extension = installed
-
                     TabManager.liveSessions().forEach {
                         bindSession(it)
                     }
@@ -93,16 +81,6 @@ object TranslatorManager {
         context: Context,
         callback: (Boolean, String) -> Unit
     ) {
-        val key = BrowserPrefs.translatorApiKey(context).trim()
-
-        if (key.isBlank()) {
-            callback(
-                false,
-                "Configura tu API key de Google Translate en Configuración."
-            )
-            return
-        }
-
         val session = TabManager.activeSession()
 
         if (session == null) {
@@ -117,11 +95,11 @@ object TranslatorManager {
             synchronized(pending) {
                 pending[session] = target
             }
-            bindSession(session)
 
+            bindSession(session)
             callback(
                 true,
-                "Preparando el traductor de esta página…"
+                "Preparando traducción en el dispositivo…"
             )
             return
         }
@@ -129,7 +107,10 @@ object TranslatorManager {
         runCatching {
             sendTranslateCommand(port, target)
         }.onSuccess {
-            callback(true, "Traduciendo página…")
+            callback(
+                true,
+                "Traduciendo en el dispositivo…"
+            )
         }.onFailure {
             callback(
                 false,
@@ -176,14 +157,16 @@ object TranslatorManager {
                             val json = message as? JSONObject
                                 ?: return
 
-                            when (json.optString("type")) {
-                                "translator_status" -> {
-                                    val msg = json.optString(
+                            if (
+                                json.optString("type") ==
+                                "translator_status"
+                            ) {
+                                TabManager.notifyMessage(
+                                    json.optString(
                                         "message",
                                         "Traducción finalizada"
                                     )
-                                    TabManager.notifyMessage(msg)
-                                }
+                                )
                             }
                         }
 
@@ -225,23 +208,31 @@ object TranslatorManager {
 
                 val json = message as? JSONObject
                     ?: return GeckoResult.fromValue(
-                        errorResponse("Mensaje de traducción inválido.")
+                        errorResponse(
+                            "Mensaje de traducción inválido."
+                        )
                     )
 
                 if (json.optString("type") != "translate") {
                     return GeckoResult.fromValue(
-                        errorResponse("Tipo de mensaje no soportado.")
+                        errorResponse(
+                            "Tipo de mensaje no soportado."
+                        )
                     )
                 }
 
                 val textsJson = json.optJSONArray("texts")
                     ?: return GeckoResult.fromValue(
-                        errorResponse("No llegaron textos para traducir.")
+                        errorResponse(
+                            "No llegaron textos para traducir."
+                        )
                     )
 
                 val texts = buildList {
                     for (i in 0 until textsJson.length()) {
-                        val text = textsJson.optString(i).trim()
+                        val text =
+                            textsJson.optString(i).trim()
+
                         if (text.isNotBlank()) add(text)
                     }
                 }
@@ -260,122 +251,168 @@ object TranslatorManager {
 
                 val target = json.optString(
                     "target",
-                    BrowserPrefs.translatorTarget(AppContext.get())
-                ).take(10)
+                    BrowserPrefs.translatorTarget(
+                        AppContext.get()
+                    )
+                )
 
                 val result = GeckoResult<Any>()
 
-                executor.execute {
-                    val response = runCatching {
-                        translateGoogle(
-                            AppContext.get(),
-                            texts,
-                            target
+                translateOnDevice(
+                    texts,
+                    target,
+                    onSuccess = { translated ->
+                        result.complete(
+                            JSONObject().apply {
+                                put("ok", true)
+                                put(
+                                    "translations",
+                                    JSONArray(translated)
+                                )
+                            }
+                        )
+                    },
+                    onError = { error ->
+                        result.complete(
+                            errorResponse(error)
                         )
                     }
-
-                    main.post {
-                        response.onSuccess { translated ->
-                            result.complete(
-                                JSONObject().apply {
-                                    put("ok", true)
-                                    put(
-                                        "translations",
-                                        JSONArray(translated)
-                                    )
-                                }
-                            )
-                        }.onFailure { error ->
-                            result.complete(
-                                errorResponse(
-                                    error.message
-                                        ?: "Error de traducción."
-                                )
-                            )
-                        }
-                    }
-                }
+                )
 
                 return result
             }
         }
 
-    private fun translateGoogle(
-        context: Context,
+    private fun translateOnDevice(
         texts: List<String>,
-        target: String
-    ): List<String> {
-        val key = BrowserPrefs.translatorApiKey(context).trim()
-        if (key.isBlank()) {
-            error("Falta la API key de Google Translate.")
-        }
+        targetTag: String,
+        onSuccess: (List<String>) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val target =
+            TranslateLanguage.fromLanguageTag(targetTag)
 
-        val bodyJson = JSONObject().apply {
-            put("q", JSONArray(texts))
-            put("target", target)
-            put("format", "text")
-        }
-
-        val encodedKey = URLEncoder.encode(key, "UTF-8")
-        val url =
-            "https://translation.googleapis.com/" +
-            "language/translate/v2?key=$encodedKey"
-
-        val request = Request.Builder()
-            .url(url)
-            .post(
-                bodyJson.toString()
-                    .toRequestBody(
-                        "application/json; charset=utf-8"
-                            .toMediaType()
-                    )
+        if (target == null) {
+            onError(
+                "El idioma destino no es compatible."
             )
-            .header("Accept", "application/json")
-            .build()
-
-        http.newCall(request).execute().use { response ->
-            val body = response.body.string()
-
-            if (!response.isSuccessful) {
-                val apiMessage = runCatching {
-                    JSONObject(body)
-                        .optJSONObject("error")
-                        ?.optString("message")
-                }.getOrNull()
-
-                error(
-                    apiMessage
-                        ?.takeIf { it.isNotBlank() }
-                        ?: "Google Translate HTTP ${response.code}"
-                )
-            }
-
-            val translations = JSONObject(body)
-                .getJSONObject("data")
-                .getJSONArray("translations")
-
-            if (translations.length() != texts.size) {
-                error(
-                    "Google devolvió ${translations.length()} " +
-                    "resultados para ${texts.size} textos."
-                )
-            }
-
-            return buildList {
-                for (i in 0 until translations.length()) {
-                    val raw = translations
-                        .getJSONObject(i)
-                        .getString("translatedText")
-
-                    add(
-                        Html.fromHtml(
-                            raw,
-                            Html.FROM_HTML_MODE_LEGACY
-                        ).toString()
-                    )
-                }
-            }
+            return
         }
+
+        val sample = texts
+            .joinToString(" ")
+            .take(4000)
+
+        languageIdentifier
+            .identifyLanguage(sample)
+            .addOnSuccessListener { sourceTag ->
+                if (sourceTag == "und") {
+                    onError(
+                        "No pude identificar el idioma de la página."
+                    )
+                    return@addOnSuccessListener
+                }
+
+                val source =
+                    TranslateLanguage.fromLanguageTag(
+                        sourceTag
+                    )
+
+                if (source == null) {
+                    onError(
+                        "El idioma detectado no puede traducirse sin conexión."
+                    )
+                    return@addOnSuccessListener
+                }
+
+                if (source == target) {
+                    onSuccess(texts)
+                    return@addOnSuccessListener
+                }
+
+                val options =
+                    TranslatorOptions.Builder()
+                        .setSourceLanguage(source)
+                        .setTargetLanguage(target)
+                        .build()
+
+                val translator =
+                    Translation.getClient(options)
+
+                val conditions =
+                    DownloadConditions.Builder()
+                        .build()
+
+                translator
+                    .downloadModelIfNeeded(conditions)
+                    .addOnSuccessListener {
+                        translateSequentially(
+                            translator,
+                            texts,
+                            0,
+                            ArrayList(texts.size),
+                            onSuccess = {
+                                translator.close()
+                                onSuccess(it)
+                            },
+                            onError = {
+                                translator.close()
+                                onError(it)
+                            }
+                        )
+                    }
+                    .addOnFailureListener { error ->
+                        translator.close()
+                        onError(
+                            "No pude descargar el modelo de idioma: " +
+                                (error.message
+                                    ?: "error desconocido")
+                        )
+                    }
+            }
+            .addOnFailureListener { error ->
+                onError(
+                    "No pude detectar el idioma: " +
+                        (error.message
+                            ?: "error desconocido")
+                )
+            }
+    }
+
+    private fun translateSequentially(
+        translator: Translator,
+        texts: List<String>,
+        index: Int,
+        output: ArrayList<String>,
+        onSuccess: (List<String>) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (index >= texts.size) {
+            onSuccess(output)
+            return
+        }
+
+        translator
+            .translate(texts[index])
+            .addOnSuccessListener { translated ->
+                output.add(translated)
+
+                translateSequentially(
+                    translator,
+                    texts,
+                    index + 1,
+                    output,
+                    onSuccess,
+                    onError
+                )
+            }
+            .addOnFailureListener { error ->
+                onError(
+                    "Error traduciendo la página: " +
+                        (error.message
+                            ?: "error desconocido")
+                )
+            }
     }
 
     private fun errorResponse(message: String) =

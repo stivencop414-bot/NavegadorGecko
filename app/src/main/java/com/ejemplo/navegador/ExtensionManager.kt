@@ -327,6 +327,29 @@ object ExtensionManager {
             )
     }
 
+    fun setPipMode(
+        session: GeckoSession?,
+        active: Boolean
+    ) {
+        if (session == null) return
+
+        val message = JSONObject().apply {
+            put("type", "pip_mode")
+            put("active", active)
+        }
+
+        ports.toList()
+            .filter {
+                it.sender.session === session &&
+                    it.sender.isTopLevel()
+            }
+            .forEach { port ->
+                runCatching {
+                    port.postMessage(message)
+                }
+            }
+    }
+
     fun sendBrowserState(context: Context) {
         val message = JSONObject().apply {
             put("type", "browser_state")

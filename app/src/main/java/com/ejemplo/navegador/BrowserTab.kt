@@ -12,6 +12,7 @@ data class BrowserTab(
     var canGoBack: Boolean = false,
     var canGoForward: Boolean = false,
     var lastUsed: Long = System.currentTimeMillis(),
+    var isLoading: Boolean = false,
     var sessionState: String? = null,
     var session: GeckoSession? = null
 )

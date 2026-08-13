@@ -40,14 +40,8 @@
             android:textStyle="bold" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="5dp"
-            android:text="Usa Google Cloud Translation Basic. La clave se guarda localmente en el dispositivo."
+            android:text="Traducción integrada en el dispositivo. Nexo descarga el modelo del idioma la primera vez y luego traduce sin enviar el texto de la página a una API externa."
             android:textSize="12sp" />
-        <EditText android:id="@+id/translatorApiKeyEdit"
-            android:layout_width="match_parent" android:layout_height="48dp"
-            android:layout_marginTop="9dp"
-            android:hint="Google Translate API key"
-            android:inputType="textPassword"
-            android:singleLine="true" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="10dp" android:text="Traducir a" />
         <Spinner android:id="@+id/translatorTargetSpinner"
@@ -57,7 +51,7 @@
             android:layout_marginTop="18dp" android:text="Multimedia" android:textStyle="bold" />
         <Switch android:id="@+id/smartPipSwitch"
             android:layout_width="match_parent" android:layout_height="54dp"
-            android:text="PiP inteligente al salir mientras un video se reproduce" />
+            android:text="Mostrar botón Mini cuando Nexo detecte un video" />
         <Switch android:id="@+id/backgroundMediaSwitch"
             android:layout_width="match_parent" android:layout_height="62dp"
             android:text="Reproducción en segundo plano · mantener audio/video y controles multimedia" />

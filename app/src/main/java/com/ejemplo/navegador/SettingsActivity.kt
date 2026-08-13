@@ -6,7 +6,6 @@ import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
-import android.widget.EditText
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
@@ -27,7 +26,6 @@ class SettingsActivity : Activity() {
     private lateinit var freeSearch: Switch
     private lateinit var smartPip: Switch
     private lateinit var backgroundMedia: Switch
-    private lateinit var translatorKey: EditText
     private lateinit var translatorTarget: Spinner
 
     private val themes = listOf(
@@ -93,7 +91,6 @@ class SettingsActivity : Activity() {
         freeSearch = findViewById(R.id.freeSearchSwitch)
         smartPip = findViewById(R.id.smartPipSwitch)
         backgroundMedia = findViewById(R.id.backgroundMediaSwitch)
-        translatorKey = findViewById(R.id.translatorApiKeyEdit)
         translatorTarget = findViewById(R.id.translatorTargetSpinner)
 
         populate()
@@ -128,7 +125,6 @@ class SettingsActivity : Activity() {
         freeSearch.isChecked = BrowserPrefs.freeSearch(this)
         smartPip.isChecked = BrowserPrefs.smartPip(this)
         backgroundMedia.isChecked = BrowserPrefs.backgroundMedia(this)
-        translatorKey.setText(BrowserPrefs.translatorApiKey(this))
         translatorTarget.setSelection(
             translatorLanguages.indexOfFirst {
                 it.second == BrowserPrefs.translatorTarget(this)
@@ -150,10 +146,6 @@ class SettingsActivity : Activity() {
         BrowserPrefs.setFreeSearch(this, freeSearch.isChecked)
         BrowserPrefs.setSmartPip(this, smartPip.isChecked)
         BrowserPrefs.setBackgroundMedia(this, backgroundMedia.isChecked)
-        BrowserPrefs.setTranslatorApiKey(
-            this,
-            translatorKey.text.toString()
-        )
         BrowserPrefs.setTranslatorTarget(
             this,
             translatorLanguages[
@@ -227,7 +219,6 @@ class SettingsActivity : Activity() {
             ThemeManager.styleSwitch(this, it)
         }
         ThemeManager.styleText(this, findViewById(R.id.settingsTitle))
-        ThemeManager.styleEdit(this, translatorKey)
         ThemeManager.styleButton(this, findViewById(R.id.saveSettingsButton), primary = true)
         ThemeManager.styleButton(this, findViewById(R.id.clearDataButton))
     }
