@@ -1,6 +1,6 @@
 # Nexo Browser v6
 
-Navegador Android en Kotlin/XML con GeckoView 125.
+Navegador Android en Kotlin/XML con GeckoView 153.
 
 ## Incluye
 - Omnibox: URL o búsqueda por palabras.
