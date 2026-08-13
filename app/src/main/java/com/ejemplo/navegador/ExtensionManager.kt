@@ -168,7 +168,7 @@ object ExtensionManager {
 
         val detail = when (install.code) {
             WebExtension.InstallException.ErrorCodes.ERROR_SIGNEDSTATE_REQUIRED ->
-                "El XPI no está firmado por Mozilla."
+                "El paquete no está firmado por Mozilla. Las extensiones locales normales deben conservar una firma válida para que GeckoView permita instalarlas."
             WebExtension.InstallException.ErrorCodes.ERROR_CORRUPT_FILE ->
                 "El archivo XPI está corrupto o no es un paquete válido."
             WebExtension.InstallException.ErrorCodes.ERROR_FILE_ACCESS ->
@@ -191,67 +191,784 @@ object ExtensionManager {
         return "No se pudo instalar: $detail"
     }
 
-    fun importXpi(
+
+    data class LocalExtensionCandidate(
+        val label: String,
+        val document:
+            androidx.documentfile.provider.DocumentFile,
+        val isFolder: Boolean
+    )
+
+    fun scanExtensionFolder(
         context: Context,
-        source: Uri,
-        onDone: (Boolean, String) -> Unit
+        treeUri: Uri,
+        onDone:
+            (Result<List<LocalExtensionCandidate>>) -> Unit
     ) {
         Thread {
-            val prepared = runCatching {
-                val folder = File(context.cacheDir, "extensions")
-                folder.mkdirs()
+            val result = runCatching {
+                val root =
+                    androidx.documentfile.provider.DocumentFile
+                        .fromTreeUri(
+                            context,
+                            treeUri
+                        )
+                        ?: error(
+                            "Android no permitió abrir esta carpeta."
+                        )
 
-                val target = File(
-                    folder,
-                    "import-${System.currentTimeMillis()}.xpi"
-                )
+                val candidates =
+                    mutableListOf<
+                        LocalExtensionCandidate
+                        >()
 
-                context.contentResolver.openInputStream(source).use { input ->
-                    requireNotNull(input) { "No se pudo abrir el archivo seleccionado." }
-                    FileOutputStream(target).use { out ->
-                        input.copyTo(out, 64 * 1024)
+                fun walk(
+                    directory:
+                        androidx.documentfile.provider.DocumentFile,
+                    depth: Int
+                ) {
+                    if (
+                        depth > 6 ||
+                        candidates.size >= 100
+                    ) {
+                        return
                     }
-                }
 
-                if (target.length() <= 0L) {
-                    error("El archivo está vacío.")
-                }
+                    val children =
+                        runCatching {
+                            directory.listFiles()
+                        }.getOrDefault(
+                            emptyArray()
+                        )
 
-                ZipFile(target).use { zip ->
-                    val manifest = zip.getEntry("manifest.json")
-                        ?: error("El XPI no contiene manifest.json en la raíz.")
+                    val hasManifest =
+                        children.any {
+                            it.isFile &&
+                                it.name.equals(
+                                    "manifest.json",
+                                    ignoreCase = true
+                                )
+                        }
 
-                    zip.getInputStream(manifest).bufferedReader().use { reader ->
-                        val json = JSONObject(reader.readText())
-                        val name = json.optString("name")
-                        val version = json.optString("version")
+                    if (hasManifest) {
+                        candidates +=
+                            LocalExtensionCandidate(
+                                label =
+                                    "Carpeta · " +
+                                        (
+                                            directory.name
+                                                ?: "Extensión"
+                                            ),
+                                document =
+                                    directory,
+                                isFolder = true
+                            )
+                    }
 
-                        if (name.isBlank() || version.isBlank()) {
-                            error("El manifest.json no contiene nombre o versión.")
+                    children.forEach {
+                        child ->
+
+                        if (
+                            candidates.size >= 100
+                        ) {
+                            return@forEach
+                        }
+
+                        if (child.isDirectory) {
+                            walk(
+                                child,
+                                depth + 1
+                            )
+                        } else if (child.isFile) {
+                            val name =
+                                child.name
+                                    ?.lowercase()
+                                    .orEmpty()
+
+                            if (
+                                name.endsWith(".xpi") ||
+                                name.endsWith(".zip")
+                            ) {
+                                candidates +=
+                                    LocalExtensionCandidate(
+                                        label =
+                                            if (
+                                                name.endsWith(
+                                                    ".xpi"
+                                                )
+                                            ) {
+                                                "XPI · " +
+                                                    (
+                                                        child.name
+                                                            ?: "extensión.xpi"
+                                                        )
+                                            } else {
+                                                "ZIP · " +
+                                                    (
+                                                        child.name
+                                                            ?: "extensión.zip"
+                                                        )
+                                            },
+                                        document =
+                                            child,
+                                        isFolder =
+                                            false
+                                    )
+                            }
                         }
                     }
                 }
 
-                target
+                walk(
+                    root,
+                    0
+                )
+
+                candidates
+                    .distinctBy {
+                        it.document.uri
+                            .toString()
+                    }
+                    .take(100)
             }
 
-            Handler(Looper.getMainLooper()).post {
-                prepared.onSuccess { target ->
+            Handler(
+                Looper.getMainLooper()
+            ).post {
+                onDone(result)
+            }
+        }.start()
+    }
+
+    fun importCandidate(
+        context: Context,
+        candidate:
+            LocalExtensionCandidate,
+        onDone:
+            (Boolean, String) -> Unit
+    ) {
+        if (candidate.isFolder) {
+            importFolder(
+                context,
+                candidate.document,
+                onDone
+            )
+        } else {
+            importXpi(
+                context,
+                candidate.document.uri,
+                onDone
+            )
+        }
+    }
+
+    fun importXpi(
+        context: Context,
+        source: Uri,
+        onDone:
+            (Boolean, String) -> Unit
+    ) {
+        Thread {
+            val prepared =
+                runCatching {
+                    val cache =
+                        File(
+                            context.cacheDir,
+                            "extensions"
+                        )
+
+                    cache.mkdirs()
+
+                    val target =
+                        File(
+                            cache,
+                            "import-" +
+                                System.currentTimeMillis() +
+                                ".xpi"
+                        )
+
+                    copyUriWithLimit(
+                        context,
+                        source,
+                        target
+                    )
+
+                    normalizeArchive(
+                        target
+                    )
+                }
+
+            Handler(
+                Looper.getMainLooper()
+            ).post {
+                prepared.onSuccess {
+                    target ->
+
                     installInternal(
                         context,
-                        Uri.fromFile(target).toString(),
-                        WebExtensionController.INSTALLATION_METHOD_FROM_FILE,
+                        Uri.fromFile(
+                            target
+                        ).toString(),
+                        WebExtensionController
+                            .INSTALLATION_METHOD_FROM_FILE,
                         onDone,
-                        cleanup = { runCatching { target.delete() } }
+                        cleanup = {
+                            runCatching {
+                                target.delete()
+                            }
+                        }
                     )
                 }.onFailure {
+                    error ->
+
                     onDone(
                         false,
-                        "Importación fallida: ${it.message ?: "archivo XPI inválido"}"
+                        "Importación fallida: " +
+                            (
+                                error.message
+                                    ?: "paquete inválido"
+                                )
                     )
                 }
             }
         }.start()
+    }
+
+    private fun importFolder(
+        context: Context,
+        folder:
+            androidx.documentfile.provider.DocumentFile,
+        onDone:
+            (Boolean, String) -> Unit
+    ) {
+        Thread {
+            val prepared =
+                runCatching {
+                    val cache =
+                        File(
+                            context.cacheDir,
+                            "extensions"
+                        )
+
+                    cache.mkdirs()
+
+                    val target =
+                        File(
+                            cache,
+                            "folder-" +
+                                System.currentTimeMillis() +
+                                ".xpi"
+                        )
+
+                    packageDocumentFolder(
+                        context,
+                        folder,
+                        target
+                    )
+
+                    validateArchive(
+                        target
+                    )
+
+                    target
+                }
+
+            Handler(
+                Looper.getMainLooper()
+            ).post {
+                prepared.onSuccess {
+                    target ->
+
+                    installInternal(
+                        context,
+                        Uri.fromFile(
+                            target
+                        ).toString(),
+                        WebExtensionController
+                            .INSTALLATION_METHOD_FROM_FILE,
+                        onDone,
+                        cleanup = {
+                            runCatching {
+                                target.delete()
+                            }
+                        }
+                    )
+                }.onFailure {
+                    error ->
+
+                    onDone(
+                        false,
+                        "No se pudo preparar la carpeta: " +
+                            (
+                                error.message
+                                    ?: "estructura inválida"
+                                )
+                    )
+                }
+            }
+        }.start()
+    }
+
+    private fun copyUriWithLimit(
+        context: Context,
+        source: Uri,
+        target: File
+    ) {
+        var total = 0L
+
+        context.contentResolver
+            .openInputStream(source)
+            .use {
+                input ->
+
+                requireNotNull(input) {
+                    "No se pudo abrir el archivo."
+                }
+
+                FileOutputStream(
+                    target
+                ).use {
+                    output ->
+
+                    val buffer =
+                        ByteArray(
+                            128 * 1024
+                        )
+
+                    while (true) {
+                        val count =
+                            input.read(buffer)
+
+                        if (count < 0) {
+                            break
+                        }
+
+                        total += count
+
+                        if (
+                            total >
+                            120L *
+                            1024L *
+                            1024L
+                        ) {
+                            error(
+                                "El archivo supera el límite de 120 MB."
+                            )
+                        }
+
+                        output.write(
+                            buffer,
+                            0,
+                            count
+                        )
+                    }
+                }
+            }
+
+        if (total <= 0L) {
+            error(
+                "El archivo está vacío."
+            )
+        }
+    }
+
+    private fun normalizeArchive(
+        input: File
+    ): File {
+        val rootManifest =
+            java.util.zip.ZipFile(
+                input
+            ).use {
+                zip ->
+
+                zip.getEntry(
+                    "manifest.json"
+                ) != null
+            }
+
+        if (rootManifest) {
+            validateArchive(
+                input
+            )
+
+            return input
+        }
+
+        val prefix =
+            java.util.zip.ZipFile(
+                input
+            ).use {
+                zip ->
+
+                zip.entries()
+                    .asSequence()
+                    .filter {
+                        !it.isDirectory &&
+                            it.name
+                                .endsWith(
+                                    "/manifest.json"
+                                )
+                    }
+                    .map {
+                        it.name
+                            .removeSuffix(
+                                "manifest.json"
+                            )
+                    }
+                    .sortedBy {
+                        it.count {
+                            char ->
+                            char == '/'
+                        }
+                    }
+                    .firstOrNull()
+            }
+                ?: error(
+                    "El ZIP no contiene manifest.json."
+                )
+
+        val repacked =
+            File(
+                input.parentFile,
+                "normalized-" +
+                    System.currentTimeMillis() +
+                    ".xpi"
+            )
+
+        java.util.zip.ZipFile(
+            input
+        ).use {
+            zip ->
+
+            java.util.zip.ZipOutputStream(
+                FileOutputStream(
+                    repacked
+                )
+            ).use {
+                output ->
+
+                var entries = 0
+
+                zip.entries()
+                    .asSequence()
+                    .filter {
+                        !it.isDirectory &&
+                            it.name
+                                .startsWith(
+                                    prefix
+                                )
+                    }
+                    .forEach {
+                        entry ->
+
+                        val relative =
+                            entry.name
+                                .removePrefix(
+                                    prefix
+                                )
+
+                        if (
+                            relative.isBlank()
+                        ) {
+                            return@forEach
+                        }
+
+                        entries += 1
+
+                        if (
+                            entries > 5000
+                        ) {
+                            error(
+                                "El ZIP contiene demasiados archivos."
+                            )
+                        }
+
+                        output.putNextEntry(
+                            java.util.zip.ZipEntry(
+                                relative
+                            )
+                        )
+
+                        zip.getInputStream(
+                            entry
+                        ).use {
+                            stream ->
+
+                            stream.copyTo(
+                                output,
+                                128 * 1024
+                            )
+                        }
+
+                        output.closeEntry()
+                    }
+            }
+        }
+
+        input.delete()
+
+        validateArchive(
+            repacked
+        )
+
+        return repacked
+    }
+
+    private fun packageDocumentFolder(
+        context: Context,
+        root:
+            androidx.documentfile.provider.DocumentFile,
+        target: File
+    ) {
+        var files = 0
+        var bytes = 0L
+
+        java.util.zip.ZipOutputStream(
+            FileOutputStream(
+                target
+            )
+        ).use {
+            output ->
+
+            fun addDirectory(
+                directory:
+                    androidx.documentfile.provider.DocumentFile,
+                prefix: String,
+                depth: Int
+            ) {
+                if (depth > 15) {
+                    error(
+                        "La carpeta tiene demasiados niveles."
+                    )
+                }
+
+                val children =
+                    directory.listFiles()
+
+                children.forEach {
+                    child ->
+
+                    val name =
+                        child.name
+                            ?.takeIf {
+                                it.isNotBlank()
+                            }
+                            ?: return@forEach
+
+                    val entryName =
+                        if (
+                            prefix.isBlank()
+                        ) {
+                            name
+                        } else {
+                            "$prefix/$name"
+                        }
+
+                    if (
+                        child.isDirectory
+                    ) {
+                        addDirectory(
+                            child,
+                            entryName,
+                            depth + 1
+                        )
+                    } else if (
+                        child.isFile
+                    ) {
+                        files += 1
+
+                        if (
+                            files > 4000
+                        ) {
+                            error(
+                                "La extensión contiene demasiados archivos."
+                            )
+                        }
+
+                        output.putNextEntry(
+                            java.util.zip.ZipEntry(
+                                entryName
+                            )
+                        )
+
+                        context
+                            .contentResolver
+                            .openInputStream(
+                                child.uri
+                            )
+                            .use {
+                                input ->
+
+                                requireNotNull(
+                                    input
+                                ) {
+                                    "No se pudo leer $name"
+                                }
+
+                                val buffer =
+                                    ByteArray(
+                                        128 * 1024
+                                    )
+
+                                while (true) {
+                                    val count =
+                                        input.read(
+                                            buffer
+                                        )
+
+                                    if (
+                                        count < 0
+                                    ) {
+                                        break
+                                    }
+
+                                    bytes += count
+
+                                    if (
+                                        bytes >
+                                        120L *
+                                        1024L *
+                                        1024L
+                                    ) {
+                                        error(
+                                            "La carpeta supera el límite de 120 MB."
+                                        )
+                                    }
+
+                                    output.write(
+                                        buffer,
+                                        0,
+                                        count
+                                    )
+                                }
+                            }
+
+                        output.closeEntry()
+                    }
+                }
+            }
+
+            addDirectory(
+                root,
+                "",
+                0
+            )
+        }
+    }
+
+    private fun validateArchive(
+        target: File
+    ) {
+        if (
+            target.length() <= 0L
+        ) {
+            error(
+                "El paquete está vacío."
+            )
+        }
+
+        java.util.zip.ZipFile(
+            target
+        ).use {
+            zip ->
+
+            val manifest =
+                zip.getEntry(
+                    "manifest.json"
+                )
+                    ?: error(
+                        "No existe manifest.json en la raíz."
+                    )
+
+            zip.getInputStream(
+                manifest
+            )
+                .bufferedReader()
+                .use {
+                    reader ->
+
+                    val json =
+                        JSONObject(
+                            reader.readText()
+                        )
+
+                    val name =
+                        json.optString(
+                            "name"
+                        )
+
+                    val version =
+                        json.optString(
+                            "version"
+                        )
+
+                    if (
+                        name.isBlank() ||
+                        version.isBlank()
+                    ) {
+                        error(
+                            "manifest.json no contiene nombre y versión."
+                        )
+                    }
+                }
+        }
+    }
+
+    fun updateExtension(
+        context: Context,
+        extension: WebExtension,
+        onDone:
+            (Boolean, String) -> Unit
+    ) {
+        GeckoRuntimeHolder
+            .get(context)
+            .webExtensionController
+            .update(extension)
+            .accept(
+                {
+                    updated ->
+
+                    if (updated == null) {
+                        onDone(
+                            true,
+                            "Ya tienes la versión más reciente de " +
+                                (
+                                    extension
+                                        .metaData
+                                        .name
+                                        ?: extension.id
+                                    )
+                        )
+                    } else {
+                        registerExtension(
+                            updated
+                        )
+
+                        onDone(
+                            true,
+                            "Actualizada: " +
+                                (
+                                    updated
+                                        .metaData
+                                        .name
+                                        ?: updated.id
+                                    )
+                        )
+                    }
+                },
+                {
+                    error ->
+
+                    onDone(
+                        false,
+                        "No se pudo buscar una actualización: " +
+                            (
+                                error?.message
+                                    ?: "error desconocido"
+                                )
+                    )
+                }
+            )
     }
 
     fun setEnabled(

@@ -1,82 +1,112 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/extensionsRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="15dp">
+    android:padding="14dp">
 
     <TextView
         android:id="@+id/extensionsTitle"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Extensiones"
-        android:textSize="27sp"
+        android:text="Mis extensiones"
+        android:textSize="25sp"
         android:textStyle="bold" />
 
     <TextView
         android:id="@+id/extensionsInfo"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="Instala desde Mozilla, importa un XPI firmado o administra tus extensiones."
-        android:textSize="13sp" />
+        android:layout_marginTop="3dp"
+        android:text="Instala, busca, actualiza y administra complementos para Nexo."
+        android:textSize="12.5sp" />
 
-    <LinearLayout
+    <Button
+        android:id="@+id/storeButton"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginTop="11dp"
+        android:text="Explorar tienda de extensiones"
+        android:textAllCaps="false" />
+
+    <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:orientation="horizontal">
+        android:layout_marginTop="7dp"
+        android:scrollbars="none">
 
-        <Button
-            android:id="@+id/storeButton"
-            android:layout_width="0dp"
-            android:layout_height="48dp"
-            android:layout_weight="1"
-            android:text="Tienda"
-            android:textAllCaps="false" />
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
 
-        <Button
-            android:id="@+id/importButton"
-            android:layout_width="0dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="6dp"
-            android:layout_weight="1"
-            android:text="XPI local"
-            android:textAllCaps="false" />
+            <Button
+                android:id="@+id/importButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:text="Archivo XPI / ZIP"
+                android:textAllCaps="false" />
 
-        <Button
-            android:id="@+id/urlInstallButton"
-            android:layout_width="0dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="6dp"
-            android:layout_weight="1"
-            android:text="URL"
-            android:textAllCaps="false" />
-    </LinearLayout>
+            <Button
+                android:id="@+id/folderButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginStart="5dp"
+                android:text="Buscar en carpeta"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/urlInstallButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginStart="5dp"
+                android:text="Instalar por URL"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/updateAllButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginStart="5dp"
+                android:text="Actualizar todas"
+                android:textAllCaps="false" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <EditText
+        android:id="@+id/extensionsSearch"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginTop="8dp"
+        android:hint="Buscar entre mis extensiones"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:singleLine="true" />
 
     <TextView
         android:id="@+id/extensionsStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="9dp"
+        android:layout_marginTop="7dp"
         android:text="Cargando…"
-        android:textSize="12.5sp" />
+        android:textSize="12.3sp" />
 
     <ProgressBar
         android:id="@+id/extensionsProgress"
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
         android:layout_height="3dp"
-        android:layout_marginTop="5dp"
+        android:layout_marginTop="4dp"
         android:visibility="gone" />
 
     <ListView
         android:id="@+id/extensionsList"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="8dp"
         android:layout_weight="1"
         android:clipToPadding="false"
-        android:paddingBottom="14dp" />
+        android:paddingBottom="12dp" />
 </LinearLayout>
