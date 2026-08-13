@@ -13,7 +13,10 @@ data class StoreAddon(
     val version: String,
     val xpiUrl: String,
     val detailUrl: String,
-    val users: Long
+    val iconUrl: String,
+    val author: String,
+    val users: Long,
+    val rating: Double
 )
 
 object AmoClient {
@@ -23,52 +26,89 @@ object AmoClient {
         Thread {
             val result = runCatching {
                 val params = mutableListOf(
-                    "app=android", "type=extension", "page_size=25", "lang=es", "sort=users"
+                    "app=android",
+                    "type=extension",
+                    "page_size=30",
+                    "lang=es"
                 )
-                if (query.isBlank()) params += "promoted=badged"
-                else params += "q=" + URLEncoder.encode(query, "UTF-8")
+                if (query.isBlank()) {
+                    params += "promoted=badged"
+                    params += "sort=recommended,users"
+                } else {
+                    params += "sort=relevance"
+                    params += "q=" + URLEncoder.encode(query.take(100), "UTF-8")
+                }
 
                 val connection = URL("$API?${params.joinToString("&")}")
                     .openConnection() as HttpURLConnection
-                connection.connectTimeout = 8000
-                connection.readTimeout = 12000
+                connection.connectTimeout = 7000
+                connection.readTimeout = 10000
                 connection.useCaches = true
+                connection.instanceFollowRedirects = true
                 connection.setRequestProperty("Accept", "application/json")
-                connection.setRequestProperty("User-Agent", "NexoBrowser/0.8 GeckoView/153")
+                connection.setRequestProperty("User-Agent", "NexoBrowser/0.9 GeckoView/153")
 
-                if (connection.responseCode !in 200..299) error("AMO HTTP ${connection.responseCode}")
-                parse(connection.inputStream.bufferedReader().use { it.readText() })
+                if (connection.responseCode !in 200..299) {
+                    error("AMO HTTP ${connection.responseCode}")
+                }
+
+                connection.inputStream.bufferedReader().use { parse(it.readText()) }
             }
+
             Handler(Looper.getMainLooper()).post { callback(result) }
         }.start()
     }
 
     private fun parse(text: String): List<StoreAddon> {
         val results = JSONObject(text).optJSONArray("results") ?: return emptyList()
+
         return buildList {
             for (i in 0 until results.length()) {
                 val addon = results.optJSONObject(i) ?: continue
                 val current = addon.optJSONObject("current_version") ?: continue
-                var xpi = current.optJSONObject("file")?.optString("url").cleanNull()
+
+                var xpi = current.optJSONObject("file")
+                    ?.optString("url")
+                    .cleanNull()
+
                 if (xpi.isBlank()) {
                     val oldFiles = current.optJSONArray("files")
                     if (oldFiles != null) {
                         for (j in 0 until oldFiles.length()) {
-                            xpi = oldFiles.optJSONObject(j)?.optString("url").cleanNull()
+                            xpi = oldFiles.optJSONObject(j)
+                                ?.optString("url")
+                                .cleanNull()
                             if (xpi.isNotBlank()) break
                         }
                     }
                 }
                 if (xpi.isBlank()) continue
 
+                val icons = addon.optJSONObject("icons")
+                val icon = icons?.optString("64").cleanNull()
+                    .ifBlank { icons?.optString("128").cleanNull() }
+                    .ifBlank { addon.optString("icon_url").cleanNull() }
+
+                val author = addon.optJSONArray("authors")
+                    ?.optJSONObject(0)
+                    ?.optString("name")
+                    .cleanNull()
+
                 add(
                     StoreAddon(
-                        localized(addon.opt("name")).ifBlank { "Extensión de Mozilla" },
-                        localized(addon.opt("summary")).ifBlank { "Sin descripción disponible" },
-                        current.optString("version").cleanNull(),
-                        xpi,
-                        addon.optString("url").cleanNull(),
-                        addon.optLong("average_daily_users")
+                        name = localized(addon.opt("name"))
+                            .ifBlank { "Extensión de Mozilla" },
+                        summary = localized(addon.opt("summary"))
+                            .ifBlank { "Sin descripción disponible" },
+                        version = current.optString("version").cleanNull(),
+                        xpiUrl = xpi,
+                        detailUrl = addon.optString("url").cleanNull(),
+                        iconUrl = icon,
+                        author = author,
+                        users = addon.optLong("average_daily_users"),
+                        rating = addon.optJSONObject("ratings")
+                            ?.optDouble("average", 0.0)
+                            ?: 0.0
                     )
                 )
             }
@@ -93,7 +133,7 @@ object AmoClient {
         }
 
     private fun String?.cleanNull(): String {
-        val v = this?.trim().orEmpty()
-        return if (v.equals("null", true)) "" else v
+        val value = this?.trim().orEmpty()
+        return if (value.equals("null", true)) "" else value
     }
 }

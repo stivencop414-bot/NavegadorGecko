@@ -5,7 +5,6 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
-import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ListView
@@ -18,6 +17,7 @@ import org.mozilla.geckoview.WebExtension
 class ExtensionsActivity : Activity() {
     private lateinit var listView: ListView
     private lateinit var progress: ProgressBar
+    private lateinit var status: TextView
     private var extensions: List<WebExtension> = emptyList()
     private val importRequestCode = 701
 
@@ -28,6 +28,7 @@ class ExtensionsActivity : Activity() {
 
         listView = findViewById(R.id.extensionsList)
         progress = findViewById(R.id.extensionsProgress)
+        status = findViewById(R.id.extensionsStatus)
 
         findViewById<Button>(R.id.storeButton).setOnClickListener {
             startActivity(Intent(this, ExtensionStoreActivity::class.java))
@@ -42,7 +43,8 @@ class ExtensionsActivity : Activity() {
                     arrayOf(
                         "application/x-xpinstall",
                         "application/zip",
-                        "application/octet-stream"
+                        "application/octet-stream",
+                        "application/x-zip-compressed"
                     )
                 )
             }
@@ -73,54 +75,43 @@ class ExtensionsActivity : Activity() {
     }
 
     @Deprecated("Deprecated in Java")
-    override fun onActivityResult(
-        requestCode: Int,
-        resultCode: Int,
-        data: Intent?
-    ) {
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode == importRequestCode && resultCode == RESULT_OK) {
             val uri = data?.data ?: return
             setLoading(true)
+            status.text = "Validando archivo XPI…"
 
             ExtensionManager.importXpi(this, uri) { ok, message ->
-                setLoading(false)
-                toast(message)
-                if (ok) load()
+                runOnUiThread {
+                    setLoading(false)
+                    status.text = if (ok) "Importación completada" else "Importación rechazada"
+                    toast(message)
+                    if (ok) load()
+                }
             }
         }
     }
 
     private fun load() {
         setLoading(true)
-
         ExtensionManager.list(
             onSuccess = { items ->
-                extensions = items.sortedBy {
-                    it.metaData?.name ?: it.id
-                }
-
+                extensions = items.sortedBy { it.metaData.name ?: it.id }
                 runOnUiThread {
-                    listView.adapter = ThemeManager.listAdapter(this, extensions.map { extension ->
-                            val meta = extension.metaData
-                            val system =
-                                if (extension.id == ExtensionManager.BRIDGE_ID) " · Sistema"
-                                else ""
-                            val state =
-                                if (meta?.enabled == false) "Deshabilitada"
-                                else "Habilitada"
-
-                            "${meta?.name ?: extension.id}$system\n" +
-                                "v${meta?.version ?: "?"} · $state"
-                        }
-                    )
+                    status.text = "${extensions.size} extensiones instaladas"
+                    listView.adapter = InstalledExtensionAdapter(this, extensions)
+                    listView.divider = null
+                    listView.dividerHeight =
+                        (resources.displayMetrics.density * 8).toInt()
                     setLoading(false)
                 }
             },
             onError = {
                 runOnUiThread {
                     setLoading(false)
+                    status.text = "No se pudieron cargar las extensiones"
                     toast("No se pudieron listar: ${it.message}")
                 }
             }
@@ -134,21 +125,12 @@ class ExtensionsActivity : Activity() {
         if (extension.id == ExtensionManager.BRIDGE_ID) {
             popup.menu.add("Puente interno de Nexo")
         } else {
+            popup.menu.add(if (meta.enabled) "Deshabilitar" else "Habilitar")
             popup.menu.add(
-                if (meta?.enabled == false) "Habilitar" else "Deshabilitar"
+                if (meta.allowedInPrivateBrowsing) "Bloquear en privado"
+                else "Permitir en privado"
             )
-            popup.menu.add(
-                if (meta?.allowedInPrivateBrowsing == true) {
-                    "Bloquear en privado"
-                } else {
-                    "Permitir en privado"
-                }
-            )
-
-            if (!meta?.optionsPageUrl.isNullOrBlank()) {
-                popup.menu.add("Opciones")
-            }
-
+            if (!meta.optionsPageUrl.isNullOrBlank()) popup.menu.add("Opciones")
             popup.menu.add("Desinstalar")
         }
 
@@ -183,13 +165,13 @@ class ExtensionsActivity : Activity() {
                     true
                 }
                 "Opciones" -> {
-                    meta?.optionsPageUrl?.let { openInBrowser(it) }
+                    meta.optionsPageUrl?.let { openInBrowser(it) }
                     true
                 }
                 "Desinstalar" -> {
                     AlertDialog.Builder(this)
-                        .setTitle("Desinstalar")
-                        .setMessage(meta?.name ?: extension.id)
+                        .setTitle("Desinstalar extensión")
+                        .setMessage(meta.name ?: extension.id)
                         .setNegativeButton("Cancelar", null)
                         .setPositiveButton("Desinstalar") { _, _ ->
                             ExtensionManager.uninstall(this, extension) { ok, msg ->
@@ -203,7 +185,6 @@ class ExtensionsActivity : Activity() {
                 else -> true
             }
         }
-
         popup.show()
     }
 
@@ -211,11 +192,14 @@ class ExtensionsActivity : Activity() {
         val input = EditText(this).apply {
             hint = "https://.../extension.xpi"
             setSingleLine(true)
+            ThemeManager.styleEdit(this@ExtensionsActivity, this)
         }
 
         AlertDialog.Builder(this)
             .setTitle("Instalar desde URL")
-            .setMessage("Debe ser un XPI compatible y firmado por Mozilla.")
+            .setMessage(
+                "Usa una URL HTTPS directa a un XPI compatible y firmado por Mozilla."
+            )
             .setView(input)
             .setNegativeButton("Cancelar", null)
             .setPositiveButton("Instalar") { _, _ ->
@@ -223,9 +207,11 @@ class ExtensionsActivity : Activity() {
                 if (url.isNotBlank()) {
                     setLoading(true)
                     ExtensionManager.installUrl(this, url) { ok, message ->
-                        setLoading(false)
-                        toast(message)
-                        if (ok) load()
+                        runOnUiThread {
+                            setLoading(false)
+                            toast(message)
+                            if (ok) load()
+                        }
                     }
                 }
             }
@@ -254,12 +240,9 @@ class ExtensionsActivity : Activity() {
     private fun applyTheme() {
         val p = ThemeManager.palette(this)
         findViewById<View>(R.id.extensionsRoot).setBackgroundColor(p.background)
-        ThemeManager.styleText(this, findViewById<TextView>(R.id.extensionsTitle))
-        ThemeManager.styleText(
-            this,
-            findViewById<TextView>(R.id.extensionsInfo),
-            muted = true
-        )
+        ThemeManager.styleText(this, findViewById(R.id.extensionsTitle))
+        ThemeManager.styleText(this, findViewById(R.id.extensionsInfo), muted = true)
+        ThemeManager.styleText(this, status, muted = true)
         ThemeManager.styleButton(this, findViewById(R.id.storeButton), true)
         ThemeManager.styleButton(this, findViewById(R.id.importButton))
         ThemeManager.styleButton(this, findViewById(R.id.urlInstallButton))

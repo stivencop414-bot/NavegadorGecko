@@ -115,7 +115,11 @@ object TabManager {
         val old = activeTab()
 
         if (old?.id != target.id) {
-            old?.session?.setActive(false)
+            old?.session?.let { session ->
+                session.setFocused(false)
+                session.setPriorityHint(GeckoSession.PRIORITY_DEFAULT)
+                session.setActive(false)
+            }
 
             if (rememberPrevious && old != null) {
                 activationHistory.remove(old.id)
@@ -131,7 +135,9 @@ object TabManager {
         target.lastUsed = System.currentTimeMillis()
 
         val session = ensureSession(target, loadUrl)
+        session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
         session.setActive(true)
+        session.setFocused(true)
 
         listener?.onActiveTabChanged(target, session)
         listener?.onTabChanged(target)
@@ -187,6 +193,7 @@ object TabManager {
         tab.url = url
         tab.lastUsed = System.currentTimeMillis()
 
+        GeckoRuntimeHolder.speculativeConnect(requireContext(), url)
         ensureSession(tab).loadUri(url)
         listener?.onTabChanged(tab)
         persist()
@@ -253,12 +260,26 @@ object TabManager {
         persist()
     }
 
+    fun prepareForBackground() {
+        activeSession()?.let { session ->
+            session.flushSessionState()
+            session.setFocused(false)
+            session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
+            session.setActive(false)
+        }
+        persist()
+    }
+
     fun suspendForBackground() {
-        tabs.forEach { it.session?.setActive(false) }
+        prepareForBackground()
     }
 
     fun resumeActive() {
-        activeSession()?.setActive(true)
+        activeSession()?.let { session ->
+            session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
+            session.setActive(true)
+            session.setFocused(true)
+        }
     }
 
     fun closeAllSessionsKeepingState() {
@@ -314,8 +335,12 @@ object TabManager {
         if (loadUrl) {
             val restored = tab.sessionState
                 ?.let { GeckoSession.SessionState.fromString(it) }
-            if (restored != null) session.restoreState(restored)
-            else session.loadUri(tab.url)
+            if (restored != null) {
+                session.restoreState(restored)
+            } else {
+                GeckoRuntimeHolder.speculativeConnect(context, tab.url)
+                session.loadUri(tab.url)
+            }
         }
         return session
     }

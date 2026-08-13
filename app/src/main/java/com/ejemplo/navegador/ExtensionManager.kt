@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import org.json.JSONObject
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
@@ -13,6 +15,7 @@ import org.mozilla.geckoview.WebExtensionController
 import java.io.File
 import java.io.FileOutputStream
 import java.lang.ref.WeakReference
+import java.util.zip.ZipFile
 
 object ExtensionManager {
     const val BRIDGE_ID = "nexo_bridge@com.ejemplo.navegador"
@@ -108,11 +111,27 @@ object ExtensionManager {
         url: String,
         onDone: (Boolean, String) -> Unit
     ) {
+        installInternal(
+            context,
+            url,
+            WebExtensionController.INSTALLATION_METHOD_MANAGER,
+            onDone
+        )
+    }
+
+    private fun installInternal(
+        context: Context,
+        url: String,
+        installationMethod: String,
+        onDone: (Boolean, String) -> Unit,
+        cleanup: (() -> Unit)? = null
+    ) {
         GeckoRuntimeHolder.get(context)
             .webExtensionController
-            .install(url)
+            .install(url, installationMethod)
             .accept(
                 { extension ->
+                    cleanup?.invoke()
                     if (extension == null) {
                         onDone(false, "GeckoView no devolvió la extensión.")
                     } else {
@@ -124,12 +143,39 @@ object ExtensionManager {
                     }
                 },
                 { error ->
-                    onDone(
-                        false,
-                        "No se pudo instalar: ${error?.message ?: error?.javaClass?.simpleName}"
-                    )
+                    cleanup?.invoke()
+                    onDone(false, installErrorMessage(error))
                 }
             )
+    }
+
+    private fun installErrorMessage(error: Throwable?): String {
+        val install = error as? WebExtension.InstallException
+            ?: return "No se pudo instalar: ${error?.message ?: "error desconocido"}"
+
+        val detail = when (install.code) {
+            WebExtension.InstallException.ErrorCodes.ERROR_SIGNEDSTATE_REQUIRED ->
+                "El XPI no está firmado por Mozilla."
+            WebExtension.InstallException.ErrorCodes.ERROR_CORRUPT_FILE ->
+                "El archivo XPI está corrupto o no es un paquete válido."
+            WebExtension.InstallException.ErrorCodes.ERROR_FILE_ACCESS ->
+                "Nexo no pudo acceder al archivo seleccionado."
+            WebExtension.InstallException.ErrorCodes.ERROR_INCOMPATIBLE ->
+                "La extensión no es compatible con esta versión de GeckoView."
+            WebExtension.InstallException.ErrorCodes.ERROR_NETWORK_FAILURE ->
+                "Falló la descarga por un problema de red."
+            WebExtension.InstallException.ErrorCodes.ERROR_BLOCKLISTED ->
+                "Mozilla bloqueó esta extensión por seguridad."
+            WebExtension.InstallException.ErrorCodes.ERROR_SOFT_BLOCKED ->
+                "Mozilla marcó esta extensión como potencialmente problemática."
+            WebExtension.InstallException.ErrorCodes.ERROR_UNSUPPORTED_ADDON_TYPE ->
+                "Este tipo de complemento no es compatible."
+            WebExtension.InstallException.ErrorCodes.ERROR_USER_CANCELED ->
+                "Instalación cancelada."
+            else ->
+                install.message ?: "Error de instalación (${install.code})."
+        }
+        return "No se pudo instalar: $detail"
     }
 
     fun importXpi(
@@ -137,30 +183,62 @@ object ExtensionManager {
         source: Uri,
         onDone: (Boolean, String) -> Unit
     ) {
-        runCatching {
-            val folder = File(context.cacheDir, "extensions")
-            folder.mkdirs()
+        Thread {
+            val prepared = runCatching {
+                val folder = File(context.cacheDir, "extensions")
+                folder.mkdirs()
 
-            val target = File(
-                folder,
-                "import-${System.currentTimeMillis()}.xpi"
-            )
+                val target = File(
+                    folder,
+                    "import-${System.currentTimeMillis()}.xpi"
+                )
 
-            context.contentResolver.openInputStream(source).use { input ->
-                requireNotNull(input) { "No se pudo abrir el XPI" }
-                FileOutputStream(target).use { out ->
-                    input.copyTo(out)
+                context.contentResolver.openInputStream(source).use { input ->
+                    requireNotNull(input) { "No se pudo abrir el archivo seleccionado." }
+                    FileOutputStream(target).use { out ->
+                        input.copyTo(out, 64 * 1024)
+                    }
                 }
+
+                if (target.length() <= 0L) {
+                    error("El archivo está vacío.")
+                }
+
+                ZipFile(target).use { zip ->
+                    val manifest = zip.getEntry("manifest.json")
+                        ?: error("El XPI no contiene manifest.json en la raíz.")
+
+                    zip.getInputStream(manifest).bufferedReader().use { reader ->
+                        val json = JSONObject(reader.readText())
+                        val name = json.optString("name")
+                        val version = json.optString("version")
+
+                        if (name.isBlank() || version.isBlank()) {
+                            error("El manifest.json no contiene nombre o versión.")
+                        }
+                    }
+                }
+
+                target
             }
 
-            installUrl(
-                context,
-                Uri.fromFile(target).toString(),
-                onDone
-            )
-        }.onFailure {
-            onDone(false, "Importación fallida: ${it?.message}")
-        }
+            Handler(Looper.getMainLooper()).post {
+                prepared.onSuccess { target ->
+                    installInternal(
+                        context,
+                        Uri.fromFile(target).toString(),
+                        WebExtensionController.INSTALLATION_METHOD_FROM_FILE,
+                        onDone,
+                        cleanup = { runCatching { target.delete() } }
+                    )
+                }.onFailure {
+                    onDone(
+                        false,
+                        "Importación fallida: ${it.message ?: "archivo XPI inválido"}"
+                    )
+                }
+            }
+        }.start()
     }
 
     fun setEnabled(

@@ -11,6 +11,7 @@ import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
@@ -89,6 +90,15 @@ object ThemeManager {
         button.compoundDrawableTintList = ColorStateList.valueOf(foreground)
         button.backgroundTintList = null
         button.stateListAnimator = null
+    }
+
+    fun styleIconButton(activity: Activity, button: ImageButton, active: Boolean = false) {
+        val p = palette(activity)
+        button.background = rounded(activity, if (active) p.accent else p.elevated, 18f)
+        button.imageTintList = ColorStateList.valueOf(if (active) p.onAccent else p.text)
+        button.backgroundTintList = null
+        button.stateListAnimator = null
+        button.elevation = 0f
     }
 
     fun styleText(activity: Activity, text: TextView, muted: Boolean = false) {

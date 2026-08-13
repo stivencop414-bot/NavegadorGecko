@@ -9,7 +9,9 @@ import kotlin.system.exitProcess
 class NexoApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        AppContext.initialize(this)
         CrashLog.install(this)
+        GeckoRuntimeHolder.preload(this)
     }
 }
 

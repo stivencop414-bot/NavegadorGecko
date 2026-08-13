@@ -100,37 +100,71 @@
     <LinearLayout
         android:id="@+id/navBar"
         android:layout_width="match_parent"
-        android:layout_height="60dp"
+        android:layout_height="66dp"
         android:gravity="center"
         android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingTop="6dp"
-        android:paddingEnd="8dp"
-        android:paddingBottom="6dp">
+        android:paddingStart="10dp"
+        android:paddingTop="7dp"
+        android:paddingEnd="10dp"
+        android:paddingBottom="7dp">
 
-        <Button android:id="@+id/backButton"
-            android:layout_width="0dp" android:layout_height="48dp"
-            android:layout_weight="1" android:drawableTop="@drawable/ic_nav_back"
-            android:gravity="center" android:minWidth="0dp" android:text="" />
-        <Button android:id="@+id/forwardButton"
-            android:layout_width="0dp" android:layout_height="48dp"
-            android:layout_marginStart="5dp" android:layout_weight="1"
-            android:drawableTop="@drawable/ic_nav_forward"
-            android:gravity="center" android:minWidth="0dp" android:text="" />
-        <Button android:id="@+id/homeButton"
-            android:layout_width="0dp" android:layout_height="48dp"
-            android:layout_marginStart="5dp" android:layout_weight="1"
-            android:drawableTop="@drawable/ic_nav_home"
-            android:gravity="center" android:minWidth="0dp" android:text="" />
-        <Button android:id="@+id/reloadButton"
-            android:layout_width="0dp" android:layout_height="48dp"
-            android:layout_marginStart="5dp" android:layout_weight="1"
-            android:drawableTop="@drawable/ic_nav_reload"
-            android:gravity="center" android:minWidth="0dp" android:text="" />
-        <Button android:id="@+id/newTabButton"
-            android:layout_width="0dp" android:layout_height="48dp"
-            android:layout_marginStart="5dp" android:layout_weight="1"
-            android:drawableTop="@drawable/ic_nav_add"
-            android:gravity="center" android:minWidth="0dp" android:text="" />
+        <ImageButton
+            android:id="@+id/backButton"
+            android:layout_width="0dp"
+            android:layout_height="50dp"
+            android:layout_weight="1"
+            android:background="@android:color/transparent"
+            android:contentDescription="Atrás"
+            android:padding="13dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_nav_back" />
+
+        <ImageButton
+            android:id="@+id/forwardButton"
+            android:layout_width="0dp"
+            android:layout_height="50dp"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:background="@android:color/transparent"
+            android:contentDescription="Adelante"
+            android:padding="13dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_nav_forward" />
+
+        <ImageButton
+            android:id="@+id/homeButton"
+            android:layout_width="0dp"
+            android:layout_height="50dp"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:background="@android:color/transparent"
+            android:contentDescription="Inicio"
+            android:padding="13dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_nav_home" />
+
+        <ImageButton
+            android:id="@+id/reloadButton"
+            android:layout_width="0dp"
+            android:layout_height="50dp"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:background="@android:color/transparent"
+            android:contentDescription="Recargar"
+            android:padding="13dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_nav_reload" />
+
+        <ImageButton
+            android:id="@+id/newTabButton"
+            android:layout_width="0dp"
+            android:layout_height="50dp"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:background="@android:color/transparent"
+            android:contentDescription="Nueva pestaña"
+            android:padding="13dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_nav_add" />
     </LinearLayout>
 </LinearLayout>

@@ -19,6 +19,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.ProgressBar
@@ -32,8 +33,8 @@ class MainActivity : Activity(), TabManager.Listener {
     private lateinit var omnibox: EditText
     private lateinit var progress: ProgressBar
     private lateinit var tabButton: Button
-    private lateinit var backButton: Button
-    private lateinit var forwardButton: Button
+    private lateinit var backButton: ImageButton
+    private lateinit var forwardButton: ImageButton
     private lateinit var clearOmniboxButton: Button
     private lateinit var privateBanner: TextView
     private lateinit var root: View
@@ -84,11 +85,11 @@ class MainActivity : Activity(), TabManager.Listener {
 
     private fun configureUi() {
         findViewById<TextView>(R.id.brandText).setOnClickListener { viewModel.goHome() }
-        findViewById<Button>(R.id.reloadButton).setOnClickListener { TabManager.reload() }
+        findViewById<ImageButton>(R.id.reloadButton).setOnClickListener { TabManager.reload() }
         backButton.setOnClickListener { TabManager.goBackOrPrevious() }
         forwardButton.setOnClickListener { TabManager.goForward() }
-        findViewById<Button>(R.id.homeButton).setOnClickListener { viewModel.goHome() }
-        findViewById<Button>(R.id.newTabButton).setOnClickListener { viewModel.newTab(false) }
+        findViewById<ImageButton>(R.id.homeButton).setOnClickListener { viewModel.goHome() }
+        findViewById<ImageButton>(R.id.newTabButton).setOnClickListener { viewModel.newTab(false) }
         tabButton.setOnClickListener { showTabsDialog() }
         findViewById<Button>(R.id.menuButton).setOnClickListener { showMenu(it) }
 
@@ -331,10 +332,18 @@ class MainActivity : Activity(), TabManager.Listener {
         navBar.setBackgroundColor(p.surface)
         ThemeManager.styleEdit(this, omnibox)
         listOf(
-            R.id.tabButton, R.id.menuButton, R.id.clearOmniboxButton,
-            R.id.backButton, R.id.forwardButton, R.id.reloadButton,
-            R.id.homeButton, R.id.newTabButton
+            R.id.tabButton,
+            R.id.menuButton,
+            R.id.clearOmniboxButton
         ).forEach { ThemeManager.styleButton(this, findViewById(it)) }
+
+        listOf(
+            backButton,
+            forwardButton,
+            findViewById<ImageButton>(R.id.homeButton),
+            findViewById<ImageButton>(R.id.reloadButton),
+            findViewById<ImageButton>(R.id.newTabButton)
+        ).forEach { ThemeManager.styleIconButton(this, it) }
 
         privateBanner.setBackgroundColor(p.accent)
         privateBanner.setTextColor(p.onAccent)
@@ -421,6 +430,7 @@ class MainActivity : Activity(), TabManager.Listener {
 
     override fun onStop() {
         captureCurrentTabPreview()
+        TabManager.prepareForBackground()
         super.onStop()
     }
 
@@ -431,7 +441,7 @@ class MainActivity : Activity(), TabManager.Listener {
             geckoView.releaseSession()
             attachedSession = null
         }
-        if (isFinishing) TabManager.closeAllSessionsKeepingState()
+        // No cerrar las GeckoSession al recrear o destruir solo la Activity.
         super.onDestroy()
     }
 

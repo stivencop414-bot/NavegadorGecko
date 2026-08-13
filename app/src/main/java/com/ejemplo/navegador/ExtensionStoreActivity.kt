@@ -7,7 +7,7 @@ import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
-import android.widget.ArrayAdapter
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ListView
@@ -19,7 +19,7 @@ class ExtensionStoreActivity : Activity() {
     private lateinit var query: EditText
     private lateinit var listView: ListView
     private lateinit var progress: ProgressBar
-    private var addons: List<StoreAddon> = emptyList()
+    private lateinit var status: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeManager.applyWindow(this)
@@ -29,8 +29,19 @@ class ExtensionStoreActivity : Activity() {
         query = findViewById(R.id.storeSearch)
         listView = findViewById(R.id.storeList)
         progress = findViewById(R.id.storeProgress)
+        status = findViewById(R.id.storeStatus)
 
-        findViewById<Button>(R.id.storeSearchButton).setOnClickListener {
+        findViewById<Button>(R.id.storeSearchButton).setOnClickListener { search() }
+        findViewById<Button>(R.id.recommendedButton).setOnClickListener {
+            query.setText("")
+            search()
+        }
+        findViewById<Button>(R.id.privacyButton).setOnClickListener {
+            query.setText("privacy")
+            search()
+        }
+        findViewById<Button>(R.id.blockersButton).setOnClickListener {
+            query.setText("ad blocker")
             search()
         }
 
@@ -40,10 +51,6 @@ class ExtensionStoreActivity : Activity() {
                 search()
                 true
             } else false
-        }
-
-        listView.setOnItemClickListener { _, _, position, _ ->
-            showAddon(addons[position])
         }
 
         applyTheme()
@@ -61,41 +68,34 @@ class ExtensionStoreActivity : Activity() {
     }
 
     private fun search() {
-        progress.visibility = View.VISIBLE
+        setLoading(true)
+        val term = query.text.toString().trim()
 
-        AmoClient.search(query.text.toString().trim()) { result ->
-            progress.visibility = View.GONE
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(query.windowToken, 0)
+        query.clearFocus()
+
+        AmoClient.search(term) { result ->
+            setLoading(false)
 
             result.onSuccess { values ->
-                addons = values
+                status.text = when {
+                    values.isEmpty() -> "No se encontraron extensiones compatibles"
+                    term.isBlank() -> "${values.size} recomendadas para Android"
+                    else -> "${values.size} resultados para “$term”"
+                }
 
-                listView.adapter = ThemeManager.listAdapter(
+                listView.adapter = StoreAddonAdapter(
                     this,
-                    values.map {
-                        buildString {
-                            append(it.name)
-                            append("\n")
-                            append(it.summary.take(125))
-                            if (it.users > 0) {
-                                append("\n")
-                                append("%,d".format(it.users))
-                                append(" usuarios")
-                            }
-                        }
-                    }
+                    values,
+                    onInstall = ::install,
+                    onDetails = ::showAddon
                 )
                 listView.divider = null
                 listView.dividerHeight =
-                    (resources.displayMetrics.density * 7).toInt()
-
-                if (values.isEmpty()) {
-                    Toast.makeText(
-                        this,
-                        "No se encontraron extensiones Android",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
+                    (resources.displayMetrics.density * 9).toInt()
             }.onFailure {
+                status.text = "No se pudo cargar la tienda"
                 Toast.makeText(
                     this,
                     "Error de tienda: ${it.message}",
@@ -105,27 +105,45 @@ class ExtensionStoreActivity : Activity() {
         }
     }
 
+    private fun install(addon: StoreAddon) {
+        setLoading(true)
+        status.text = "Instalando ${addon.name}…"
+
+        ExtensionManager.installUrl(this, addon.xpiUrl) { ok, message ->
+            runOnUiThread {
+                setLoading(false)
+                status.text = if (ok) "Extensión instalada" else "No se pudo instalar"
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     private fun showAddon(addon: StoreAddon) {
+        val rating = if (addon.rating > 0.0) "%.1f / 5".format(addon.rating)
+        else "Sin puntuación"
+
         AlertDialog.Builder(this)
             .setTitle(addon.name)
             .setMessage(
-                "${addon.summary}\n\nVersión: ${addon.version}\n" +
-                    "Usuarios/día: ${addon.users}\n\n" +
-                    "GeckoView validará la firma y la instalación."
+                buildString {
+                    if (addon.author.isNotBlank()) append("Por ${addon.author}\n\n")
+                    append(addon.summary)
+                    append("\n\nVersión: ${addon.version.ifBlank { "?" }}")
+                    append("\nPuntuación: $rating")
+                    if (addon.users > 0) append("\nUsuarios: %,d".format(addon.users))
+                    append("\n\nGeckoView verificará compatibilidad, firma y permisos.")
+                }
             )
-            .setNegativeButton("Cancelar", null)
-            .setNeutralButton("Ver ficha") { _, _ ->
+            .setNegativeButton("Cerrar", null)
+            .setNeutralButton("Ver en Mozilla") { _, _ ->
                 if (addon.detailUrl.isNotBlank()) openInBrowser(addon.detailUrl)
             }
-            .setPositiveButton("Instalar") { _, _ ->
-                progress.visibility = View.VISIBLE
-
-                ExtensionManager.installUrl(this, addon.xpiUrl) { _, message ->
-                    progress.visibility = View.GONE
-                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-                }
-            }
+            .setPositiveButton("Instalar") { _, _ -> install(addon) }
             .show()
+    }
+
+    private fun setLoading(value: Boolean) {
+        progress.visibility = if (value) View.VISIBLE else View.GONE
     }
 
     private fun openInBrowser(url: String) {
@@ -140,13 +158,13 @@ class ExtensionStoreActivity : Activity() {
     private fun applyTheme() {
         val p = ThemeManager.palette(this)
         findViewById<View>(R.id.storeRoot).setBackgroundColor(p.background)
-        ThemeManager.styleText(this, findViewById<TextView>(R.id.storeTitle))
-        ThemeManager.styleText(
-            this,
-            findViewById<TextView>(R.id.storeSubtitle),
-            muted = true
-        )
+        ThemeManager.styleText(this, findViewById(R.id.storeTitle))
+        ThemeManager.styleText(this, findViewById(R.id.storeSubtitle), muted = true)
+        ThemeManager.styleText(this, status, muted = true)
         ThemeManager.styleEdit(this, query)
         ThemeManager.styleButton(this, findViewById(R.id.storeSearchButton), true)
+        ThemeManager.styleButton(this, findViewById(R.id.recommendedButton))
+        ThemeManager.styleButton(this, findViewById(R.id.privacyButton))
+        ThemeManager.styleButton(this, findViewById(R.id.blockersButton))
     }
 }
