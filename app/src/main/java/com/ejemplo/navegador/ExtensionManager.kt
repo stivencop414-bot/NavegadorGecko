@@ -101,7 +101,9 @@ object ExtensionManager {
             .webExtensionController
             .list()
             .accept(
-                { onSuccess(it.orEmpty()) },
+                {
+                    onSuccess(it.orEmpty().filter { extension -> extension.id != BRIDGE_ID })
+                },
                 { onError(it ?: IllegalStateException("GeckoView devolvió un error nulo")) }
             )
     }
@@ -319,7 +321,9 @@ object ExtensionManager {
             put("type", "browser_state")
             put("accent", BrowserPrefs.accent(context))
             put("theme", BrowserPrefs.theme(context))
-            put("showBadge", BrowserPrefs.showBridgeBadge(context))
+            put("showBadge", false)
+            put("backgroundMedia", BrowserPrefs.backgroundMedia(context))
+            put("smartPip", BrowserPrefs.smartPip(context))
         }
 
         ports.toList().forEach { port ->
@@ -415,7 +419,9 @@ object ExtensionManager {
                 return GeckoResult.fromValue(
                     JSONObject().apply {
                         put("ok", true)
-                        put("showBadge", BrowserPrefs.showBridgeBadge(context))
+                        put("showBadge", false)
+                        put("backgroundMedia", BrowserPrefs.backgroundMedia(context))
+                        put("smartPip", BrowserPrefs.smartPip(context))
                         put("theme", BrowserPrefs.theme(context))
                         put("accent", BrowserPrefs.accent(context))
                         put("tabId", tab?.id ?: "")
@@ -434,14 +440,25 @@ object ExtensionManager {
                             message: Any,
                             port: WebExtension.Port
                         ) {
+                            val json = message as? JSONObject
+                            if (json?.optString("type") == "video_state" && port.sender.isTopLevel()) {
+                                val tab = port.sender.session?.let { TabManager.tabForSession(it) }
+                                if (tab != null) {
+                                    BrowserMediaController.onVideoState(
+                                        tab.id,
+                                        json.optBoolean("playing", false),
+                                        json.optInt("width", 0),
+                                        json.optInt("height", 0)
+                                    )
+                                }
+                                return
+                            }
                             port.postMessage(
                                 JSONObject().apply {
                                     put("type", "native_ack")
                                     put("received", message.toString())
-                                    put(
-                                        "showBadge",
-                                        BrowserPrefs.showBridgeBadge(AppContext.get())
-                                    )
+                                    put("showBadge", false)
+                                    put("backgroundMedia", BrowserPrefs.backgroundMedia(AppContext.get()))
                                 }
                             )
                         }

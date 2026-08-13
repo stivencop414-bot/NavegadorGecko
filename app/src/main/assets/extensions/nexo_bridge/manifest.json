@@ -1,12 +1,10 @@
 {
   "manifest_version": 2,
-  "name": "Nexo Native Bridge",
-  "version": "1.1.0",
-  "description": "Puente interno entre las páginas y Nexo Browser.",
+  "name": "Nexo Browser Core",
+  "version": "1.2.0",
+  "description": "Funciones internas de Nexo Browser.",
   "browser_specific_settings": {
-    "gecko": {
-      "id": "nexo_bridge@com.ejemplo.navegador"
-    }
+    "gecko": { "id": "nexo_bridge@com.ejemplo.navegador" }
   },
   "permissions": [
     "nativeMessaging",
@@ -17,7 +15,7 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content_script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ]
 }

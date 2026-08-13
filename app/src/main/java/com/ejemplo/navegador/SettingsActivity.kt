@@ -6,7 +6,6 @@ import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
-import android.widget.EditText
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
@@ -17,7 +16,6 @@ class SettingsActivity : Activity() {
     private lateinit var theme: Spinner
     private lateinit var accent: Spinner
     private lateinit var search: Spinner
-    private lateinit var home: EditText
     private lateinit var liveTabs: Spinner
     private lateinit var dns: Spinner
     private lateinit var cookies: Spinner
@@ -26,7 +24,8 @@ class SettingsActivity : Activity() {
     private lateinit var gpc: Switch
     private lateinit var httpsOnly: Switch
     private lateinit var freeSearch: Switch
-    private lateinit var badge: Switch
+    private lateinit var smartPip: Switch
+    private lateinit var backgroundMedia: Switch
 
     private val themes = listOf(
         "Seguir sistema" to BrowserPrefs.THEME_SYSTEM,
@@ -71,7 +70,6 @@ class SettingsActivity : Activity() {
         theme = findViewById(R.id.themeSpinner)
         accent = findViewById(R.id.accentSpinner)
         search = findViewById(R.id.searchSpinner)
-        home = findViewById(R.id.homePageEdit)
         liveTabs = findViewById(R.id.liveTabsSpinner)
         dns = findViewById(R.id.dnsSpinner)
         cookies = findViewById(R.id.cookiesSpinner)
@@ -80,7 +78,8 @@ class SettingsActivity : Activity() {
         gpc = findViewById(R.id.gpcSwitch)
         httpsOnly = findViewById(R.id.httpsOnlySwitch)
         freeSearch = findViewById(R.id.freeSearchSwitch)
-        badge = findViewById(R.id.badgeSwitch)
+        smartPip = findViewById(R.id.smartPipSwitch)
+        backgroundMedia = findViewById(R.id.backgroundMediaSwitch)
 
         populate()
         applyTheme()
@@ -103,13 +102,13 @@ class SettingsActivity : Activity() {
         dns.setSelection(dnsOptions.indexOfFirst { it.second == BrowserPrefs.dnsProvider(this) }.coerceAtLeast(0))
         cookies.setSelection(cookieOptions.indexOfFirst { it.second == BrowserPrefs.cookieMode(this) }.coerceAtLeast(0))
 
-        home.setText(BrowserPrefs.homePage(this))
         restore.isChecked = BrowserPrefs.restoreTabs(this)
         tracking.isChecked = BrowserPrefs.trackingProtection(this)
         gpc.isChecked = BrowserPrefs.globalPrivacyControl(this)
         httpsOnly.isChecked = BrowserPrefs.httpsOnly(this)
         freeSearch.isChecked = BrowserPrefs.freeSearch(this)
-        badge.isChecked = BrowserPrefs.showBridgeBadge(this)
+        smartPip.isChecked = BrowserPrefs.smartPip(this)
+        backgroundMedia.isChecked = BrowserPrefs.backgroundMedia(this)
     }
 
     private fun save() {
@@ -118,18 +117,19 @@ class SettingsActivity : Activity() {
         BrowserPrefs.setSearchEngine(this, engines[search.selectedItemPosition].second)
         BrowserPrefs.setDnsProvider(this, dnsOptions[dns.selectedItemPosition].second)
         BrowserPrefs.setCookieMode(this, cookieOptions[cookies.selectedItemPosition].second)
-        BrowserPrefs.setHomePage(
-            this, home.text.toString().trim().ifBlank { BrowserPrefs.LOCAL_HOME }
-        )
         BrowserPrefs.setMaxLiveTabs(this, liveOptions[liveTabs.selectedItemPosition])
         BrowserPrefs.setRestoreTabs(this, restore.isChecked)
         BrowserPrefs.setTrackingProtection(this, tracking.isChecked)
         BrowserPrefs.setGlobalPrivacyControl(this, gpc.isChecked)
         BrowserPrefs.setHttpsOnly(this, httpsOnly.isChecked)
         BrowserPrefs.setFreeSearch(this, freeSearch.isChecked)
-        BrowserPrefs.setShowBridgeBadge(this, badge.isChecked)
+        BrowserPrefs.setSmartPip(this, smartPip.isChecked)
+        BrowserPrefs.setBackgroundMedia(this, backgroundMedia.isChecked)
+
         GeckoRuntimeHolder.applyRuntimePrefs(this)
+        TabManager.reapplySettings()
         ExtensionManager.sendBrowserState(this)
+        MediaPlaybackService.sync(this)
         Toast.makeText(this, "Configuración guardada", Toast.LENGTH_SHORT).show()
         finish()
     }
@@ -169,7 +169,6 @@ class SettingsActivity : Activity() {
 
     private fun styleReadableTree(view: View) {
         when (view) {
-            is EditText -> Unit
             is Button -> Unit
             is TextView -> ThemeManager.styleText(this, view)
         }
@@ -186,11 +185,10 @@ class SettingsActivity : Activity() {
         listOf(theme, accent, search, liveTabs, dns, cookies).forEach {
             ThemeManager.styleSpinner(this, it)
         }
-        listOf(restore, tracking, gpc, httpsOnly, freeSearch, badge).forEach {
+        listOf(restore, tracking, gpc, httpsOnly, freeSearch, smartPip, backgroundMedia).forEach {
             ThemeManager.styleSwitch(this, it)
         }
         ThemeManager.styleText(this, findViewById(R.id.settingsTitle))
-        ThemeManager.styleEdit(this, home)
         ThemeManager.styleButton(this, findViewById(R.id.saveSettingsButton), primary = true)
         ThemeManager.styleButton(this, findViewById(R.id.clearDataButton))
     }

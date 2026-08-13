@@ -170,6 +170,7 @@ object TabManager {
             }
         }
         removed.session = null
+        BrowserMediaController.removeTab(removed.id)
         tabs.remove(removed)
         if (!removed.isPrivate) TabPreviewStore.remove(requireContext(), removed.id)
 
@@ -297,10 +298,15 @@ object TabManager {
     }
 
     fun reapplySettings() {
-        val tracking = BrowserPrefs.trackingProtection(requireContext())
+        val context = requireContext()
+        val tracking = BrowserPrefs.trackingProtection(context)
+        val suspendMedia = !BrowserPrefs.backgroundMedia(context)
         tabs.forEach {
             it.session?.settings?.setUseTrackingProtection(tracking)
+            it.session?.settings?.setSuspendMediaWhenInactive(suspendMedia)
         }
+        ExtensionManager.sendBrowserState(context)
+        MediaPlaybackService.sync(context)
         trimSessions()
     }
 
@@ -313,7 +319,7 @@ object TabManager {
         val context = requireContext()
         val settings = GeckoSessionSettings.Builder()
             .usePrivateMode(tab.isPrivate)
-            .suspendMediaWhenInactive(true)
+            .suspendMediaWhenInactive(!BrowserPrefs.backgroundMedia(context))
             .useTrackingProtection(BrowserPrefs.trackingProtection(context))
             .userAgentMode(
                 if (tab.desktopMode) GeckoSessionSettings.USER_AGENT_MODE_DESKTOP
@@ -363,6 +369,7 @@ object TabManager {
                 override fun onTitleChange(session: GeckoSession, title: String?) {
                     if (!title.isNullOrBlank()) {
                         tab.title = title
+                        BrowserMediaController.updateTabTitle(tab.id, title)
                         persist()
                         listener?.onTabChanged(tab)
                     }
@@ -391,6 +398,43 @@ object TabManager {
 
                 override fun onCloseRequest(session: GeckoSession) {
                     closeTab(tab.id)
+                }
+            }
+        )
+
+        session.setMediaSessionDelegate(
+            object : org.mozilla.geckoview.MediaSession.Delegate {
+                override fun onActivated(
+                    session: GeckoSession,
+                    mediaSession: org.mozilla.geckoview.MediaSession
+                ) { BrowserMediaController.onActivated(tab, mediaSession) }
+
+                override fun onDeactivated(
+                    session: GeckoSession,
+                    mediaSession: org.mozilla.geckoview.MediaSession
+                ) { BrowserMediaController.onDeactivated(tab.id, mediaSession) }
+
+                override fun onPlay(
+                    session: GeckoSession,
+                    mediaSession: org.mozilla.geckoview.MediaSession
+                ) { BrowserMediaController.onPlay(tab, mediaSession) }
+
+                override fun onPause(
+                    session: GeckoSession,
+                    mediaSession: org.mozilla.geckoview.MediaSession
+                ) { BrowserMediaController.onPause(tab.id, mediaSession) }
+
+                override fun onStop(
+                    session: GeckoSession,
+                    mediaSession: org.mozilla.geckoview.MediaSession
+                ) { BrowserMediaController.onStop(tab.id, mediaSession) }
+
+                override fun onMetadata(
+                    session: GeckoSession,
+                    mediaSession: org.mozilla.geckoview.MediaSession,
+                    meta: org.mozilla.geckoview.MediaSession.Metadata
+                ) {
+                    BrowserMediaController.updateMetadata(tab.id, mediaSession, meta.title)
                 }
             }
         )
@@ -428,6 +472,7 @@ object TabManager {
                 }
 
                 override fun onPageStart(session: GeckoSession, url: String) {
+                    BrowserMediaController.resetVideo(tab.id)
                     tab.url = url
                     tab.lastUsed = System.currentTimeMillis()
                     persist()
@@ -470,6 +515,7 @@ object TabManager {
         if (tab.session !== failedSession) return
 
         tab.session = null
+        BrowserMediaController.removeTab(tab.id)
 
         val now = System.currentTimeMillis()
         val times = crashTimes.getOrPut(tab.id) {
@@ -531,7 +577,10 @@ object TabManager {
     private fun trimSessions() {
         val maxLive = BrowserPrefs.maxLiveTabs(requireContext())
         val background = tabs
-            .filter { it.id != activeId && it.session != null }
+            .filter {
+                it.id != activeId && it.session != null &&
+                    !BrowserMediaController.isPlaying(it.id)
+            }
             .sortedByDescending { it.lastUsed }
 
         background
@@ -564,7 +613,11 @@ object TabManager {
                             url = o.optString(
                                 "url",
                                 BrowserPrefs.homePage(context)
-                            ),
+                            ).let { restoredUrl ->
+                                if (restoredUrl.startsWith("resource://android/assets/home/")) {
+                                    BrowserPrefs.homePage(context)
+                                } else restoredUrl
+                            },
                             title = o.optString("title", "Pestaña"),
                             isPrivate = false,
                             desktopMode = o.optBoolean("desktopMode", false),

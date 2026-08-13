@@ -1,6 +1,13 @@
 package com.ejemplo.navegador
 
 import android.app.Activity
+import android.Manifest
+import android.app.PictureInPictureParams
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.graphics.Rect
+import android.os.Build
+import android.util.Rational
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.ClipData
@@ -28,7 +35,7 @@ import android.widget.Toast
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
 
-class MainActivity : Activity(), TabManager.Listener {
+class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Listener {
     private lateinit var geckoView: GeckoView
     private lateinit var omnibox: EditText
     private lateinit var progress: ProgressBar
@@ -43,6 +50,7 @@ class MainActivity : Activity(), TabManager.Listener {
     private lateinit var viewModel: BrowserViewModel
     private var attachedSession: GeckoSession? = null
     private var settingsFingerprint = ""
+    private var mediaNotificationPermissionAsked = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeManager.applyWindow(this)
@@ -61,6 +69,7 @@ class MainActivity : Activity(), TabManager.Listener {
 
         viewModel = BrowserViewModel(applicationContext)
         bindViews()
+        BrowserMediaController.attach(this)
         applyTheme()
         configureUi()
         TabManager.initialize(this)
@@ -155,7 +164,7 @@ class MainActivity : Activity(), TabManager.Listener {
                     TabManager.setDesktopMode(!(current?.desktopMode ?: false)); true
                 }
                 "Compartir página" -> { shareCurrent(); true }
-                "Extensiones" -> { startActivity(Intent(this, ExtensionsActivity::class.java)); true }
+                "Extensiones" -> { startActivity(Intent(this, ExtensionStoreActivity::class.java)); true }
                 "Historial" -> { startActivity(Intent(this, HistoryActivity::class.java)); true }
                 "Descargas" -> { startActivity(Intent(this, DownloadsActivity::class.java)); true }
                 "Configuración" -> { startActivity(Intent(this, SettingsActivity::class.java)); true }
@@ -214,8 +223,9 @@ class MainActivity : Activity(), TabManager.Listener {
 
             val text = TextView(this).apply {
                 this.text = (if (tab.isPrivate) "◉ Privada · " else "") +
-                    tab.title.take(50) + "\n" + tab.url.take(72)
-                textSize = 13.5f
+                    tab.title.take(70)
+                textSize = 14.5f
+                maxLines = 2
                 setTextColor(p.text)
                 setPadding((10*d).toInt(), 0, (8*d).toInt(), 0)
                 layoutParams = LinearLayout.LayoutParams(
@@ -306,6 +316,10 @@ class MainActivity : Activity(), TabManager.Listener {
             val request = DownloadManager.Request(uri)
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 .setTitle(name)
+                .setDescription(uri.host ?: "Nexo Browser")
+                .setAllowedOverMetered(true)
+                .setAllowedOverRoaming(true)
+                .addRequestHeader("User-Agent", GeckoSession.getDefaultUserAgent())
                 .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
             (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
             Toast.makeText(this, "Descarga iniciada", Toast.LENGTH_SHORT).show()
@@ -355,10 +369,11 @@ class MainActivity : Activity(), TabManager.Listener {
         listOf(
             BrowserPrefs.theme(this), BrowserPrefs.accent(this),
             BrowserPrefs.searchEngine(this), BrowserPrefs.freeSearch(this).toString(),
-            BrowserPrefs.homePage(this), BrowserPrefs.trackingProtection(this).toString(),
-            BrowserPrefs.maxLiveTabs(this).toString(), BrowserPrefs.showBridgeBadge(this).toString(),
+            BrowserPrefs.trackingProtection(this).toString(),
+            BrowserPrefs.maxLiveTabs(this).toString(),
             BrowserPrefs.dnsProvider(this), BrowserPrefs.cookieMode(this),
-            BrowserPrefs.httpsOnly(this).toString(), BrowserPrefs.globalPrivacyControl(this).toString()
+            BrowserPrefs.httpsOnly(this).toString(), BrowserPrefs.globalPrivacyControl(this).toString(),
+            BrowserPrefs.smartPip(this).toString(), BrowserPrefs.backgroundMedia(this).toString()
         ).joinToString("|")
 
     private fun handleNavigationIntent(intent: Intent?) {
@@ -380,6 +395,7 @@ class MainActivity : Activity(), TabManager.Listener {
             attachedSession = session
         }
         renderTab(tab)
+        updatePipParams()
     }
 
     override fun onTabChanged(tab: BrowserTab) {
@@ -401,11 +417,30 @@ class MainActivity : Activity(), TabManager.Listener {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
+    override fun onBrowserMediaStateChanged() {
+        if (
+            Build.VERSION.SDK_INT >= 33 &&
+            BrowserPrefs.backgroundMedia(this) &&
+            BrowserMediaController.isAnyPlaying() &&
+            !mediaNotificationPermissionAsked &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+        ) {
+            mediaNotificationPermissionAsked = true
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                REQUEST_MEDIA_NOTIFICATIONS
+            )
+        }
+        updatePipParams()
+    }
+
     private fun renderTab(tab: BrowserTab) {
         if (!omnibox.hasFocus()) omnibox.setText(tab.url)
         backButton.isEnabled = TabManager.canGoBackOrPrevious()
         forwardButton.isEnabled = tab.canGoForward
-        privateBanner.visibility = if (tab.isPrivate) View.VISIBLE else View.GONE
+        privateBanner.visibility =
+            if (!isInPictureInPictureMode && tab.isPrivate) View.VISIBLE else View.GONE
         title = if (tab.isPrivate) "Privado · ${tab.title}" else tab.title
     }
 
@@ -425,16 +460,101 @@ class MainActivity : Activity(), TabManager.Listener {
             GeckoRuntimeHolder.applyRuntimePrefs(this)
             TabManager.reapplySettings()
             ExtensionManager.sendBrowserState(this)
+            MediaPlaybackService.sync(this)
+            updatePipParams()
         }
     }
 
     override fun onStop() {
         captureCurrentTabPreview()
-        TabManager.prepareForBackground()
+        if (!isInPictureInPictureMode) {
+            TabManager.prepareForBackground()
+        }
         super.onStop()
     }
 
+    private fun updatePipParams() {
+        if (Build.VERSION.SDK_INT < 26) return
+
+        val tab = TabManager.activeTab()
+        val videoPlaying =
+            tab != null &&
+            BrowserPrefs.smartPip(this) &&
+            BrowserMediaController.isVideoPlaying(tab.id)
+
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(pipAspectRatio(tab?.id))
+
+        if (geckoView.width > 0 && geckoView.height > 0) {
+            builder.setSourceRectHint(
+                Rect(geckoView.left, geckoView.top, geckoView.right, geckoView.bottom)
+            )
+        }
+
+        if (Build.VERSION.SDK_INT >= 31) {
+            builder.setAutoEnterEnabled(videoPlaying).setSeamlessResizeEnabled(true)
+        }
+
+        runCatching { setPictureInPictureParams(builder.build()) }
+    }
+
+    private fun pipAspectRatio(tabId: String?): Rational {
+        val (rawWidth, rawHeight) =
+            if (tabId != null) BrowserMediaController.videoAspect(tabId) else 16 to 9
+        val width = rawWidth.coerceAtLeast(1)
+        val height = rawHeight.coerceAtLeast(1)
+        val ratio = width.toDouble() / height.toDouble()
+        return if (ratio in (1.0 / 2.39)..2.39) Rational(width, height)
+        else Rational(16, 9)
+    }
+
+    private fun enterSmartPipLegacy() {
+        if (Build.VERSION.SDK_INT !in 26..30 || isInPictureInPictureMode) return
+        val tab = TabManager.activeTab() ?: return
+        if (!BrowserPrefs.smartPip(this) || !BrowserMediaController.isVideoPlaying(tab.id)) return
+
+        val builder = PictureInPictureParams.Builder().setAspectRatio(pipAspectRatio(tab.id))
+        if (geckoView.width > 0 && geckoView.height > 0) {
+            builder.setSourceRectHint(
+                Rect(geckoView.left, geckoView.top, geckoView.right, geckoView.bottom)
+            )
+        }
+        runCatching { enterPictureInPictureMode(builder.build()) }
+    }
+
+    override fun onUserLeaveHint() {
+        if (Build.VERSION.SDK_INT in 26..30) enterSmartPipLegacy()
+        super.onUserLeaveHint()
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        runCatching {
+            attachedSession?.compositorController?.onPipModeChanged(isInPictureInPictureMode)
+        }
+        topBar.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
+        navBar.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
+        progress.visibility = View.GONE
+        val current = TabManager.activeTab()
+        privateBanner.visibility =
+            if (!isInPictureInPictureMode && current?.isPrivate == true) View.VISIBLE else View.GONE
+        root.requestLayout()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_MEDIA_NOTIFICATIONS) MediaPlaybackService.sync(this)
+    }
+
     override fun onDestroy() {
+        BrowserMediaController.attach(null)
         ExtensionManager.attachPromptActivity(null)
         TabManager.attach(null)
         if (attachedSession != null) {
@@ -453,5 +573,6 @@ class MainActivity : Activity(), TabManager.Listener {
 
     companion object {
         const val EXTRA_OPEN_URL = "nexo.open_url"
+        private const val REQUEST_MEDIA_NOTIFICATIONS = 912
     }
 }

@@ -31,6 +31,10 @@ class ExtensionStoreActivity : Activity() {
         progress = findViewById(R.id.storeProgress)
         status = findViewById(R.id.storeStatus)
 
+        findViewById<Button>(R.id.installedExtensionsButton).setOnClickListener {
+            startActivity(Intent(this, ExtensionsActivity::class.java))
+        }
+
         findViewById<Button>(R.id.storeSearchButton).setOnClickListener { search() }
         findViewById<Button>(R.id.recommendedButton).setOnClickListener {
             query.setText("")
@@ -162,6 +166,7 @@ class ExtensionStoreActivity : Activity() {
         ThemeManager.styleText(this, findViewById(R.id.storeSubtitle), muted = true)
         ThemeManager.styleText(this, status, muted = true)
         ThemeManager.styleEdit(this, query)
+        ThemeManager.styleButton(this, findViewById(R.id.installedExtensionsButton))
         ThemeManager.styleButton(this, findViewById(R.id.storeSearchButton), true)
         ThemeManager.styleButton(this, findViewById(R.id.recommendedButton))
         ThemeManager.styleButton(this, findViewById(R.id.privacyButton))

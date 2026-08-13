@@ -56,7 +56,7 @@ object DownloadStore {
 
                 body.use { input ->
                     FileOutputStream(file).use { output ->
-                        input.copyTo(output)
+                        input.copyTo(output, 256 * 1024)
                     }
                 }
 

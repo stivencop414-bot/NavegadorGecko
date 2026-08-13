@@ -33,8 +33,6 @@ object BrowserPrefs {
     const val COOKIES_ALL = "all"
     const val COOKIES_NONE = "none"
 
-    const val LOCAL_HOME = "resource://android/assets/home/index.html"
-
     private fun p(context: Context) =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -50,8 +48,14 @@ object BrowserPrefs {
     fun freeSearch(c: Context) = p(c).getBoolean("free_search", false)
     fun setFreeSearch(c: Context, v: Boolean) = p(c).edit().putBoolean("free_search", v).apply()
 
-    fun homePage(c: Context) = p(c).getString("home", LOCAL_HOME) ?: LOCAL_HOME
-    fun setHomePage(c: Context, v: String) = p(c).edit().putString("home", v).apply()
+    fun homePage(c: Context): String =
+        when (searchEngine(c)) {
+            ENGINE_DDG -> "https://duckduckgo.com/"
+            ENGINE_BING -> "https://www.bing.com/"
+            ENGINE_BRAVE -> "https://search.brave.com/"
+            ENGINE_STARTPAGE -> "https://www.startpage.com/"
+            else -> "https://www.google.com/"
+        }
 
     fun restoreTabs(c: Context) = p(c).getBoolean("restore_tabs", true)
     fun setRestoreTabs(c: Context, v: Boolean) = p(c).edit().putBoolean("restore_tabs", v).apply()
@@ -71,8 +75,15 @@ object BrowserPrefs {
     fun cookieMode(c: Context) = p(c).getString("cookie_mode", COOKIES_BALANCED) ?: COOKIES_BALANCED
     fun setCookieMode(c: Context, v: String) = p(c).edit().putString("cookie_mode", v).apply()
 
-    fun showBridgeBadge(c: Context) = p(c).getBoolean("bridge_badge", false)
-    fun setShowBridgeBadge(c: Context, v: Boolean) = p(c).edit().putBoolean("bridge_badge", v).apply()
+    // Compatibilidad interna: el bridge ya no se muestra como extensión.
+    fun showBridgeBadge(c: Context) = false
+    fun setShowBridgeBadge(c: Context, v: Boolean) = Unit
+
+    fun smartPip(c: Context) = p(c).getBoolean("smart_pip", true)
+    fun setSmartPip(c: Context, v: Boolean) = p(c).edit().putBoolean("smart_pip", v).apply()
+
+    fun backgroundMedia(c: Context) = p(c).getBoolean("background_media", true)
+    fun setBackgroundMedia(c: Context, v: Boolean) = p(c).edit().putBoolean("background_media", v).apply()
 
     fun maxLiveTabs(c: Context) = p(c).getInt("max_live", 5).coerceIn(1, 8)
     fun setMaxLiveTabs(c: Context, v: Int) = p(c).edit().putInt("max_live", v.coerceIn(1, 8)).apply()
