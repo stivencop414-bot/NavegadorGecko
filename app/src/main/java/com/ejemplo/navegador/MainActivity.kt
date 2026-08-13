@@ -150,6 +150,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         desktop.isCheckable = true
         desktop.isChecked = current?.desktopMode == true
         popup.menu.add("Compartir página")
+        popup.menu.add("Traducir página")
         popup.menu.add("Extensiones")
         popup.menu.add("Historial")
         popup.menu.add("Descargas")
@@ -164,6 +165,30 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
                     TabManager.setDesktopMode(!(current?.desktopMode ?: false)); true
                 }
                 "Compartir página" -> { shareCurrent(); true }
+                "Traducir página" -> {
+                    TranslatorManager.translateActive(this) { ok, message ->
+                        runOnUiThread {
+                            Toast.makeText(
+                                this,
+                                message,
+                                Toast.LENGTH_LONG
+                            ).show()
+
+                            if (
+                                !ok &&
+                                BrowserPrefs.translatorApiKey(this).isBlank()
+                            ) {
+                                startActivity(
+                                    Intent(
+                                        this,
+                                        SettingsActivity::class.java
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    true
+                }
                 "Extensiones" -> { startActivity(Intent(this, ExtensionStoreActivity::class.java)); true }
                 "Historial" -> { startActivity(Intent(this, HistoryActivity::class.java)); true }
                 "Descargas" -> { startActivity(Intent(this, DownloadsActivity::class.java)); true }

@@ -1,0 +1,27 @@
+{
+  "manifest_version": 2,
+  "name": "Nexo Page Translator",
+  "version": "1.0.0",
+  "description": "Traducción interna de páginas de Nexo Browser.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "nexo_translator@com.ejemplo.navegador"
+    }
+  },
+  "permissions": [
+    "nativeMessaging",
+    "nativeMessagingFromContent",
+    "geckoViewAddons"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -85,6 +85,16 @@ object BrowserPrefs {
     fun backgroundMedia(c: Context) = p(c).getBoolean("background_media", true)
     fun setBackgroundMedia(c: Context, v: Boolean) = p(c).edit().putBoolean("background_media", v).apply()
 
+    fun translatorApiKey(c: Context) =
+        p(c).getString("translator_api_key", "") ?: ""
+    fun setTranslatorApiKey(c: Context, v: String) =
+        p(c).edit().putString("translator_api_key", v.trim()).apply()
+
+    fun translatorTarget(c: Context) =
+        p(c).getString("translator_target", "es") ?: "es"
+    fun setTranslatorTarget(c: Context, v: String) =
+        p(c).edit().putString("translator_target", v).apply()
+
     fun maxLiveTabs(c: Context) = p(c).getInt("max_live", 5).coerceIn(1, 8)
     fun setMaxLiveTabs(c: Context, v: Int) = p(c).edit().putInt("max_live", v.coerceIn(1, 8)).apply()
 

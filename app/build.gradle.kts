@@ -9,8 +9,8 @@ android {
         applicationId = "com.ejemplo.navegador"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
-        versionName = "0.10.0"
+        versionCode = 13
+        versionName = "0.11.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -56,4 +56,5 @@ dependencies {
     implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.10"))
     implementation("org.mozilla.geckoview:geckoview-omni:153.0.20260715202819")
     implementation("androidx.core:core:1.13.1")
+    implementation("com.squareup.okhttp3:okhttp:5.3.0")
 }

@@ -36,6 +36,24 @@
             android:text="Búsqueda libre · no forzar SafeSearch cuando el motor lo permita" />
 
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="18dp" android:text="Traducción de páginas"
+            android:textStyle="bold" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="5dp"
+            android:text="Usa Google Cloud Translation Basic. La clave se guarda localmente en el dispositivo."
+            android:textSize="12sp" />
+        <EditText android:id="@+id/translatorApiKeyEdit"
+            android:layout_width="match_parent" android:layout_height="48dp"
+            android:layout_marginTop="9dp"
+            android:hint="Google Translate API key"
+            android:inputType="textPassword"
+            android:singleLine="true" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="10dp" android:text="Traducir a" />
+        <Spinner android:id="@+id/translatorTargetSpinner"
+            android:layout_width="match_parent" android:layout_height="48dp" />
+
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="18dp" android:text="Multimedia" android:textStyle="bold" />
         <Switch android:id="@+id/smartPipSwitch"
             android:layout_width="match_parent" android:layout_height="54dp"

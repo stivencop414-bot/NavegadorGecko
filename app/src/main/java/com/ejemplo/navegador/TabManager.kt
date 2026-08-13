@@ -31,6 +31,7 @@ object TabManager {
         appContext = context.applicationContext
         AppContext.initialize(context)
         ExtensionManager.initialize(context)
+        TranslatorManager.initialize(context)
 
         if (!initialized) {
             initialized = true
@@ -116,9 +117,20 @@ object TabManager {
 
         if (old?.id != target.id) {
             old?.session?.let { session ->
+                val keepMediaAlive =
+                    BrowserPrefs.backgroundMedia(requireContext()) &&
+                    old != null &&
+                    BrowserMediaController.isPlaying(old.id)
+
                 session.setFocused(false)
-                session.setPriorityHint(GeckoSession.PRIORITY_DEFAULT)
-                session.setActive(false)
+                session.setPriorityHint(
+                    if (keepMediaAlive) {
+                        GeckoSession.PRIORITY_HIGH
+                    } else {
+                        GeckoSession.PRIORITY_DEFAULT
+                    }
+                )
+                session.setActive(keepMediaAlive)
             }
 
             if (rememberPrevious && old != null) {
@@ -204,6 +216,10 @@ object TabManager {
         activeSession()?.reload()
     }
 
+    fun notifyMessage(message: String) {
+        listener?.onMessage(message)
+    }
+
     fun canGoBackOrPrevious(): Boolean =
         activeTab()?.canGoBack == true ||
             activationHistory.any { id ->
@@ -262,12 +278,29 @@ object TabManager {
     }
 
     fun prepareForBackground() {
-        activeSession()?.let { session ->
+        val tab = activeTab()
+
+        tab?.session?.let { session ->
+            val keepMediaAlive =
+                BrowserPrefs.backgroundMedia(requireContext()) &&
+                BrowserMediaController.isPlaying(tab.id)
+
             session.flushSessionState()
             session.setFocused(false)
-            session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
-            session.setActive(false)
+            session.setPriorityHint(
+                if (keepMediaAlive) {
+                    GeckoSession.PRIORITY_HIGH
+                } else {
+                    GeckoSession.PRIORITY_DEFAULT
+                }
+            )
+            session.setActive(keepMediaAlive)
+
+            if (keepMediaAlive) {
+                MediaPlaybackService.sync(requireContext())
+            }
         }
+
         persist()
     }
 
@@ -337,6 +370,7 @@ object TabManager {
         configureDelegates(tab, session)
         session.open(GeckoRuntimeHolder.get(context))
         ExtensionManager.bindSession(session)
+        TranslatorManager.bindSession(session)
 
         if (loadUrl) {
             val restored = tab.sessionState

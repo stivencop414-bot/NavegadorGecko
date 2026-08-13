@@ -24,32 +24,63 @@
     if (spoofed) return;
     spoofed = true;
     const pageDoc = pageDocument();
+    let pageProto = null;
 
     try {
-      Reflect.defineProperty(pageDoc, "visibilityState", {
-        configurable: true,
-        get: makePageFunction(() => "visible")
-      });
+      pageProto = Object.getPrototypeOf(pageDoc);
     } catch (_) {}
 
-    try {
-      Reflect.defineProperty(pageDoc, "hidden", {
-        configurable: true,
-        get: makePageFunction(() => false)
-      });
-    } catch (_) {}
+    const defineVisible = target => {
+      if (!target) return;
+
+      try {
+        Reflect.defineProperty(target, "visibilityState", {
+          configurable: true,
+          get: makePageFunction(() => "visible")
+        });
+      } catch (_) {}
+
+      try {
+        Reflect.defineProperty(target, "hidden", {
+          configurable: true,
+          get: makePageFunction(() => false)
+        });
+      } catch (_) {}
+    };
+
+    defineVisible(pageProto);
+    defineVisible(pageDoc);
 
     visibilityHandler = event => {
       if (backgroundMedia) event.stopImmediatePropagation();
     };
-    document.addEventListener("visibilitychange", visibilityHandler, true);
+
+    window.addEventListener(
+      "visibilitychange",
+      visibilityHandler,
+      true
+    );
+    document.addEventListener(
+      "visibilitychange",
+      visibilityHandler,
+      true
+    );
   }
 
   function disableVisibilitySpoof() {
     if (!spoofed) return;
     spoofed = false;
     if (visibilityHandler) {
-      document.removeEventListener("visibilitychange", visibilityHandler, true);
+      window.removeEventListener(
+        "visibilitychange",
+        visibilityHandler,
+        true
+      );
+      document.removeEventListener(
+        "visibilitychange",
+        visibilityHandler,
+        true
+      );
       visibilityHandler = null;
     }
     const pageDoc = pageDocument();

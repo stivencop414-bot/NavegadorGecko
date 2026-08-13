@@ -56,7 +56,10 @@ object ExtensionManager {
         controller.list().accept(
             { extensions ->
                 extensions.orEmpty()
-                    .filter { it.id != BRIDGE_ID }
+                    .filter {
+                        it.id != BRIDGE_ID &&
+                            it.id != TranslatorManager.TRANSLATOR_ID
+                    }
                     .forEach { registerExtension(it) }
             },
             { error ->
@@ -80,7 +83,10 @@ object ExtensionManager {
             .accept(
                 { extensions ->
                     extensions.orEmpty()
-                        .filter { it.id != BRIDGE_ID }
+                        .filter {
+                            it.id != BRIDGE_ID &&
+                                it.id != TranslatorManager.TRANSLATOR_ID
+                        }
                         .forEach { bindExtensionToSession(it, session) }
                 },
                 { error ->
@@ -102,7 +108,12 @@ object ExtensionManager {
             .list()
             .accept(
                 {
-                    onSuccess(it.orEmpty().filter { extension -> extension.id != BRIDGE_ID })
+                    onSuccess(
+                        it.orEmpty().filter { extension ->
+                            extension.id != BRIDGE_ID &&
+                                extension.id != TranslatorManager.TRANSLATOR_ID
+                        }
+                    )
                 },
                 { onError(it ?: IllegalStateException("GeckoView devolvió un error nulo")) }
             )
@@ -352,6 +363,10 @@ object ExtensionManager {
     private fun registerExtension(extension: WebExtension) {
         if (extension.id == BRIDGE_ID) {
             configureBridge(extension)
+            return
+        }
+
+        if (extension.id == TranslatorManager.TRANSLATOR_ID) {
             return
         }
 
