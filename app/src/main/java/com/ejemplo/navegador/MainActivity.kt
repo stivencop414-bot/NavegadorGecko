@@ -199,6 +199,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         if (
             tab.isPrivate ||
             tab.isLoading ||
+            BrowserMediaController.isPlaying(tab.id) ||
             geckoView.width <= 0 ||
             geckoView.height <= 0
         ) return
@@ -510,7 +511,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         val tab = TabManager.activeTab() ?: return false
 
         return BrowserPrefs.smartPip(this) &&
-            BrowserMediaController.isVideoPlaying(tab.id)
+            BrowserMediaController.isVideoPresent(tab.id)
     }
 
     private fun updateMiniPlayerChip() {
@@ -534,7 +535,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         val tab = TabManager.activeTab() ?: return
         val session = tab.session ?: return
 
-        if (!BrowserMediaController.isVideoPlaying(tab.id)) {
+        if (!BrowserMediaController.isVideoPresent(tab.id)) {
             updateMiniPlayerChip()
             return
         }

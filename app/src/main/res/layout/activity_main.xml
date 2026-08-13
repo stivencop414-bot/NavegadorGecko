@@ -110,9 +110,10 @@
             android:layout_marginEnd="12dp"
             android:layout_marginBottom="12dp"
             android:minWidth="0dp"
+            android:elevation="8dp"
             android:paddingStart="14dp"
             android:paddingEnd="14dp"
-            android:text="▣  Mini"
+            android:text="▣  Mini video"
             android:textAllCaps="false"
             android:textSize="13sp"
             android:visibility="gone" />

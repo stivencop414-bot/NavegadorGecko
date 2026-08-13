@@ -484,6 +484,7 @@ object ExtensionManager {
                                 if (tab != null) {
                                     BrowserMediaController.onVideoState(
                                         tab.id,
+                                        json.optBoolean("present", false),
                                         json.optBoolean("playing", false),
                                         json.optInt("width", 0),
                                         json.optInt("height", 0)

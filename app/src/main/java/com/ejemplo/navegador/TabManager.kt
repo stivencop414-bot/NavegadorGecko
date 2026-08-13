@@ -1,8 +1,11 @@
 package com.ejemplo.navegador
 
 import android.content.Context
+import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
+import org.mozilla.geckoview.AllowOrDeny
+import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.WebResponse
@@ -61,6 +64,60 @@ object TabManager {
 
     fun tabForSession(session: GeckoSession): BrowserTab? =
         tabs.firstOrNull { it.session === session }
+
+    private fun normalizeMobileUrl(
+        url: String,
+        desktopMode: Boolean
+    ): String {
+        if (desktopMode) return url
+
+        val parsed =
+            runCatching { Uri.parse(url) }
+                .getOrNull()
+                ?: return url
+
+        val host =
+            parsed.host
+                ?.lowercase()
+                ?: return url
+
+        val youtube =
+            host == "youtube.com" ||
+                host == "www.youtube.com" ||
+                host == "m.youtube.com"
+
+        if (!youtube) return url
+
+        val builder =
+            parsed.buildUpon()
+                .authority("m.youtube.com")
+                .clearQuery()
+
+        parsed.queryParameterNames
+            .forEach { name ->
+                parsed.getQueryParameters(name)
+                    .forEach { value ->
+                        val desktopFlag =
+                            name.equals(
+                                "app",
+                                ignoreCase = true
+                            ) &&
+                            value.equals(
+                                "desktop",
+                                ignoreCase = true
+                            )
+
+                        if (!desktopFlag) {
+                            builder.appendQueryParameter(
+                                name,
+                                value
+                            )
+                        }
+                    }
+            }
+
+        return builder.build().toString()
+    }
 
     fun createTab(
         url: String,
@@ -203,11 +260,20 @@ object TabManager {
 
     fun navigate(url: String) {
         val tab = activeTab() ?: return
-        tab.url = url
+        val target =
+            normalizeMobileUrl(
+                url,
+                tab.desktopMode
+            )
+
+        tab.url = target
         tab.lastUsed = System.currentTimeMillis()
 
-        GeckoRuntimeHolder.speculativeConnect(requireContext(), url)
-        ensureSession(tab).loadUri(url)
+        GeckoRuntimeHolder.speculativeConnect(
+            requireContext(),
+            target
+        )
+        ensureSession(tab).loadUri(target)
         listener?.onTabChanged(tab)
         persist()
     }
@@ -272,7 +338,18 @@ object TabManager {
             )
         }
 
-        tab.session?.reload()
+        val target =
+            normalizeMobileUrl(
+                tab.url,
+                enabled
+            )
+
+        tab.url = target
+
+        if (target.isNotBlank()) {
+            tab.session?.loadUri(target)
+        }
+
         listener?.onTabChanged(tab)
         persist()
     }
@@ -462,7 +539,14 @@ object TabManager {
                 override fun onPlay(
                     session: GeckoSession,
                     mediaSession: org.mozilla.geckoview.MediaSession
-                ) { BrowserMediaController.onPlay(tab, mediaSession) }
+                ) {
+                    tab.sessionState = null
+                    persist()
+                    BrowserMediaController.onPlay(
+                        tab,
+                        mediaSession
+                    )
+                }
 
                 override fun onPause(
                     session: GeckoSession,
@@ -486,6 +570,30 @@ object TabManager {
 
         session.setNavigationDelegate(
             object : GeckoSession.NavigationDelegate {
+                override fun onLoadRequest(
+                    session: GeckoSession,
+                    request: GeckoSession.NavigationDelegate.LoadRequest
+                ): GeckoResult<AllowOrDeny>? {
+                    val target =
+                        normalizeMobileUrl(
+                            request.uri,
+                            tab.desktopMode
+                        )
+
+                    if (target != request.uri) {
+                        tab.url = target
+                        tab.sessionState = null
+                        persist()
+                        session.loadUri(target)
+
+                        return GeckoResult.fromValue(
+                            AllowOrDeny.DENY
+                        )
+                    }
+
+                    return null
+                }
+
                 override fun onCanGoBack(
                     session: GeckoSession,
                     canGoBack: Boolean
@@ -510,8 +618,12 @@ object TabManager {
                     session: GeckoSession,
                     sessionState: GeckoSession.SessionState
                 ) {
-                    if (!tab.isPrivate) {
-                        tab.sessionState = sessionState.toString()
+                    if (
+                        !tab.isPrivate &&
+                        !BrowserMediaController.isPlaying(tab.id)
+                    ) {
+                        tab.sessionState =
+                            sessionState.toString()
                         persist()
                     }
                 }
@@ -562,8 +674,12 @@ object TabManager {
     ) {
         if (tab.session !== failedSession) return
 
+        val currentUrl = tab.url
+
         tab.session = null
         tab.sessionState = null
+        tab.isLoading = false
+
         BrowserMediaController.removeTab(tab.id)
 
         val now = System.currentTimeMillis()
@@ -573,38 +689,52 @@ object TabManager {
 
         while (
             times.isNotEmpty() &&
-            now - times.first() > 15000L
+            now - times.first() > 30000L
         ) {
             times.removeFirst()
         }
 
         times.addLast(now)
 
-        val repeated = times.size >= 2
-
-        if (repeated) {
-            val home = BrowserPrefs.homePage(requireContext())
-            tab.url =
-                if (tab.url != home) home
-                else "about:blank"
-            tab.title = "Recuperación de Nexo"
-        }
-
+        // Nunca mandar al usuario a Inicio por un kill/crash.
+        tab.url = currentUrl
         persist()
 
-        if (tab.id == activeId) {
-            listener?.onMessage(
-                if (repeated) {
-                    "Gecko falló repetidamente; Nexo abrió una página segura."
-                } else {
-                    "El proceso web se reinició automáticamente."
-                }
-            )
+        if (tab.id != activeId) return
 
-            android.os.Handler(
-                android.os.Looper.getMainLooper()
-            ).post {
-                if (tab.id == activeId && tab.session == null) {
+        val attempts = times.size
+
+        if (attempts > 3) {
+            listener?.onMessage(
+                "La página consumió demasiados recursos. " +
+                    "Nexo conservó la URL; toca Recargar para intentarlo otra vez."
+            )
+            return
+        }
+
+        listener?.onMessage(
+            if (reason == "kill") {
+                "Android liberó el proceso web; recuperando esta misma página…"
+            } else {
+                "Gecko reinició el proceso web; recuperando esta misma página…"
+            }
+        )
+
+        val delay =
+            when (attempts) {
+                1 -> 350L
+                2 -> 900L
+                else -> 1600L
+            }
+
+        android.os.Handler(
+            android.os.Looper.getMainLooper()
+        ).postDelayed(
+            {
+                if (
+                    tab.id == activeId &&
+                    tab.session == null
+                ) {
                     runCatching {
                         switchTo(
                             tab.id,
@@ -619,8 +749,9 @@ object TabManager {
                         )
                     }
                 }
-            }
-        }
+            },
+            delay
+        )
     }
 
     private fun trimSessions() {

@@ -5,7 +5,9 @@ import android.os.Looper
 import org.mozilla.geckoview.MediaSession
 
 object BrowserMediaController {
-    interface Listener { fun onBrowserMediaStateChanged() }
+    interface Listener {
+        fun onBrowserMediaStateChanged()
+    }
 
     data class Snapshot(
         val tabId: String,
@@ -20,6 +22,7 @@ object BrowserMediaController {
     )
 
     private data class VideoState(
+        var present: Boolean = false,
         var playing: Boolean = false,
         var width: Int = 0,
         var height: Int = 0
@@ -37,7 +40,10 @@ object BrowserMediaController {
     }
 
     fun onActivated(tab: BrowserTab, media: MediaSession) {
-        entries[tab.id] = Entry(media, tab.title.ifBlank { "Multimedia en Nexo" })
+        entries[tab.id] = Entry(
+            media,
+            tab.title.ifBlank { "Multimedia en Nexo" }
+        )
         currentTabId = tab.id
         notifyChanged()
     }
@@ -47,14 +53,17 @@ object BrowserMediaController {
             entries.remove(tabId)
             if (currentTabId == tabId) currentTabId = null
         }
-        videos.remove(tabId)
         notifyChanged()
     }
 
     fun onPlay(tab: BrowserTab, media: MediaSession) {
         val entry = entries[tab.id]
         if (entry == null || entry.mediaSession !== media) {
-            entries[tab.id] = Entry(media, tab.title.ifBlank { "Multimedia en Nexo" }, true)
+            entries[tab.id] = Entry(
+                media,
+                tab.title.ifBlank { "Multimedia en Nexo" },
+                true
+            )
         } else {
             if (tab.title.isNotBlank()) entry.title = tab.title
             entry.playing = true
@@ -64,18 +73,25 @@ object BrowserMediaController {
     }
 
     fun onPause(tabId: String, media: MediaSession) {
-        entries[tabId]?.takeIf { it.mediaSession === media }?.playing = false
+        entries[tabId]
+            ?.takeIf { it.mediaSession === media }
+            ?.playing = false
         notifyChanged()
     }
 
     fun onStop(tabId: String, media: MediaSession) {
-        if (entries[tabId]?.mediaSession === media) entries.remove(tabId)
-        videos.remove(tabId)
+        if (entries[tabId]?.mediaSession === media) {
+            entries.remove(tabId)
+        }
         if (currentTabId == tabId) currentTabId = null
         notifyChanged()
     }
 
-    fun updateMetadata(tabId: String, media: MediaSession, title: String?) {
+    fun updateMetadata(
+        tabId: String,
+        media: MediaSession,
+        title: String?
+    ) {
         val entry = entries[tabId] ?: return
         if (entry.mediaSession !== media) return
         if (!title.isNullOrBlank()) entry.title = title
@@ -88,8 +104,19 @@ object BrowserMediaController {
         if (entry.playing) notifyChanged()
     }
 
-    fun onVideoState(tabId: String, playing: Boolean, width: Int, height: Int) {
-        videos[tabId] = VideoState(playing, width.coerceAtLeast(0), height.coerceAtLeast(0))
+    fun onVideoState(
+        tabId: String,
+        present: Boolean,
+        playing: Boolean,
+        width: Int,
+        height: Int
+    ) {
+        videos[tabId] = VideoState(
+            present = present,
+            playing = playing,
+            width = width.coerceAtLeast(0),
+            height = height.coerceAtLeast(0)
+        )
         listener?.onBrowserMediaStateChanged()
     }
 
@@ -105,13 +132,24 @@ object BrowserMediaController {
         notifyChanged()
     }
 
-    fun isPlaying(tabId: String) = entries[tabId]?.playing == true
-    fun isAnyPlaying() = entries.values.any { it.playing }
-    fun isVideoPlaying(tabId: String) = isPlaying(tabId) && videos[tabId]?.playing == true
+    fun isPlaying(tabId: String): Boolean =
+        entries[tabId]?.playing == true
+
+    fun isAnyPlaying(): Boolean =
+        entries.values.any { it.playing }
+
+    fun isVideoPresent(tabId: String): Boolean =
+        videos[tabId]?.present == true
+
+    fun isVideoPlaying(tabId: String): Boolean =
+        videos[tabId]?.playing == true
 
     fun videoAspect(tabId: String): Pair<Int, Int> {
         val state = videos[tabId]
-        return if ((state?.width ?: 0) > 0 && (state?.height ?: 0) > 0) {
+        return if (
+            (state?.width ?: 0) > 0 &&
+            (state?.height ?: 0) > 0
+        ) {
             state!!.width to state.height
         } else 16 to 9
     }
@@ -120,10 +158,23 @@ object BrowserMediaController {
         val preferred = currentTabId?.let { id ->
             entries[id]?.takeIf { it.playing }?.let { id to it }
         }
-        val selected = preferred ?: entries.entries.lastOrNull { it.value.playing }
-            ?.let { it.key to it.value } ?: return null
+
+        val selected =
+            preferred
+                ?: entries.entries
+                    .lastOrNull { it.value.playing }
+                    ?.let { it.key to it.value }
+                ?: return null
+
         currentTabId = selected.first
-        return Snapshot(selected.first, selected.second.title.ifBlank { "Multimedia en Nexo" }, true)
+
+        return Snapshot(
+            selected.first,
+            selected.second.title.ifBlank {
+                "Multimedia en Nexo"
+            },
+            true
+        )
     }
 
     fun pauseCurrent() {
@@ -137,11 +188,15 @@ object BrowserMediaController {
     }
 
     private fun currentPlayingSession(): MediaSession? =
-        snapshot()?.tabId?.let { entries[it]?.mediaSession }
+        snapshot()?.tabId?.let {
+            entries[it]?.mediaSession
+        }
 
     private fun notifyChanged() {
         listener?.onBrowserMediaStateChanged()
-        val context = runCatching { AppContext.get() }.getOrNull() ?: return
+        val context =
+            runCatching { AppContext.get() }.getOrNull()
+                ?: return
         MediaPlaybackService.sync(context)
     }
 }

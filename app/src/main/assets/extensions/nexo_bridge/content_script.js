@@ -7,6 +7,7 @@
   let spoofed = false;
   let pipVideo = null;
   let pipAncestors = [];
+  let reportTimer = 0;
 
   function pageDocument() {
     try {
@@ -43,25 +44,17 @@
       if (!target) return;
 
       try {
-        Reflect.defineProperty(
-          target,
-          "visibilityState",
-          {
-            configurable: true,
-            get: makePageFunction(() => "visible")
-          }
-        );
+        Reflect.defineProperty(target, "visibilityState", {
+          configurable: true,
+          get: makePageFunction(() => "visible")
+        });
       } catch (_) {}
 
       try {
-        Reflect.defineProperty(
-          target,
-          "hidden",
-          {
-            configurable: true,
-            get: makePageFunction(() => false)
-          }
-        );
+        Reflect.defineProperty(target, "hidden", {
+          configurable: true,
+          get: makePageFunction(() => false)
+        });
       } catch (_) {}
     };
 
@@ -97,104 +90,96 @@
         visibilityHandler,
         true
       );
-
       document.removeEventListener(
         "visibilitychange",
         visibilityHandler,
         true
       );
-
       visibilityHandler = null;
     }
-
-    const pageDoc = pageDocument();
-
-    try {
-      delete pageDoc.visibilityState;
-    } catch (_) {}
-
-    try {
-      delete pageDoc.hidden;
-    } catch (_) {}
   }
 
   function applyState(state) {
     if (!state) return;
-
-    backgroundMedia =
-      state.backgroundMedia !== false;
-
-    if (backgroundMedia) {
-      enableVisibilitySpoof();
-    } else {
-      disableVisibilitySpoof();
-    }
+    backgroundMedia = state.backgroundMedia !== false;
+    if (backgroundMedia) enableVisibilitySpoof();
+    else disableVisibilitySpoof();
   }
 
   enableVisibilitySpoof();
 
-  function bestPlayingVideo() {
-    const videos =
-      Array.from(
-        document.querySelectorAll("video")
-      );
+  function collectVideos(root, output) {
+    if (!root) return output;
 
-    const playing = videos.filter(video =>
-      !video.paused &&
-      !video.ended &&
-      video.readyState >= 2
+    try {
+      if (root.querySelectorAll) {
+        for (const video of root.querySelectorAll("video")) {
+          if (!output.includes(video)) output.push(video);
+        }
+
+        for (const element of root.querySelectorAll("*")) {
+          if (element.shadowRoot) {
+            collectVideos(element.shadowRoot, output);
+          }
+        }
+      }
+    } catch (_) {}
+
+    return output;
+  }
+
+  function visibleEnough(video) {
+    try {
+      const rect = video.getBoundingClientRect();
+      const style = getComputedStyle(video);
+      return (
+        rect.width >= 80 &&
+        rect.height >= 45 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden"
+      );
+    } catch (_) {
+      return true;
+    }
+  }
+
+  function videoArea(video) {
+    return (
+      Number(video.videoWidth || video.clientWidth || 0) *
+      Number(video.videoHeight || video.clientHeight || 0)
+    );
+  }
+
+  function videoList() {
+    return collectVideos(document, []).filter(visibleEnough);
+  }
+
+  function bestVideo(preferPlaying) {
+    const videos = videoList();
+    if (!videos.length) return null;
+
+    const playing = videos.filter(
+      video => !video.paused && !video.ended
     );
 
-    let best = null;
+    const candidates =
+      preferPlaying && playing.length
+        ? playing
+        : videos;
 
-    for (const video of playing) {
-      const area =
-        Number(
-          video.videoWidth ||
-          video.clientWidth ||
-          0
-        ) *
-        Number(
-          video.videoHeight ||
-          video.clientHeight ||
-          0
-        );
-
-      const bestArea = best
-        ? Number(
-            best.videoWidth ||
-            best.clientWidth ||
-            0
-          ) *
-          Number(
-            best.videoHeight ||
-            best.clientHeight ||
-            0
-          )
-        : -1;
-
-      if (!best || area > bestArea) {
-        best = video;
-      }
-    }
-
-    return best;
+    return candidates
+      .slice()
+      .sort((a, b) => videoArea(b) - videoArea(a))[0]
+      || null;
   }
 
   function ensurePipStyle() {
-    if (
-      document.getElementById(
-        "nexo-pip-style"
-      )
-    ) {
+    if (document.getElementById("nexo-pip-style")) {
       return;
     }
 
-    const style =
-      document.createElement("style");
-
+    const style = document.createElement("style");
     style.id = "nexo-pip-style";
-
     style.textContent = `
       html.nexo-pip-root,
       html.nexo-pip-root body {
@@ -224,51 +209,47 @@
       }
     `;
 
-    (document.head ||
-      document.documentElement)
+    (document.head || document.documentElement)
       .appendChild(style);
+  }
+
+  function clearPipIsolation() {
+    document.documentElement.classList
+      .remove("nexo-pip-root");
+
+    if (pipVideo) {
+      pipVideo.classList.remove("nexo-pip-video");
+    }
+
+    for (const ancestor of pipAncestors) {
+      ancestor.classList.remove("nexo-pip-ancestor");
+    }
+
+    pipVideo = null;
+    pipAncestors = [];
   }
 
   function setPipIsolation(active) {
     if (!active) {
-      document.documentElement.classList
-        .remove("nexo-pip-root");
-
-      if (pipVideo) {
-        pipVideo.classList
-          .remove("nexo-pip-video");
-      }
-
-      for (const ancestor of pipAncestors) {
-        ancestor.classList
-          .remove("nexo-pip-ancestor");
-      }
-
-      pipVideo = null;
-      pipAncestors = [];
+      clearPipIsolation();
       return;
     }
 
-    const video = bestPlayingVideo();
+    const video = bestVideo(true) || bestVideo(false);
     if (!video) return;
 
+    clearPipIsolation();
     ensurePipStyle();
 
     pipVideo = video;
-    pipAncestors = [];
-
-    let current =
-      video.parentElement;
+    let current = video.parentElement;
 
     while (
       current &&
       current !== document.body &&
       current !== document.documentElement
     ) {
-      current.classList.add(
-        "nexo-pip-ancestor"
-      );
-
+      current.classList.add("nexo-pip-ancestor");
       pipAncestors.push(current);
       current = current.parentElement;
     }
@@ -276,36 +257,29 @@
     document.documentElement.classList
       .add("nexo-pip-root");
 
-    video.classList.add(
-      "nexo-pip-video"
-    );
+    video.classList.add("nexo-pip-video");
   }
-
-  let reportTimer = 0;
 
   function reportVideoState() {
     if (!port) return;
 
-    const best =
-      bestPlayingVideo();
+    const anyVideo = bestVideo(false);
+    const playingVideo = bestVideo(true);
+    const best = playingVideo || anyVideo;
 
     try {
       port.postMessage({
         type: "video_state",
-        playing: !!best,
+        present: !!anyVideo,
+        playing:
+          !!playingVideo &&
+          !playingVideo.paused &&
+          !playingVideo.ended,
         width: best
-          ? Number(
-              best.videoWidth ||
-              best.clientWidth ||
-              0
-            )
+          ? Number(best.videoWidth || best.clientWidth || 0)
           : 0,
         height: best
-          ? Number(
-              best.videoHeight ||
-              best.clientHeight ||
-              0
-            )
+          ? Number(best.videoHeight || best.clientHeight || 0)
           : 0
       });
     } catch (_) {}
@@ -313,36 +287,43 @@
 
   function scheduleVideoReport() {
     clearTimeout(reportTimer);
-    reportTimer =
-      setTimeout(
-        reportVideoState,
-        80
-      );
+    reportTimer = setTimeout(reportVideoState, 100);
   }
 
-  document.addEventListener(
+  [
     "play",
-    scheduleVideoReport,
-    true
-  );
-
-  document.addEventListener(
+    "playing",
     "pause",
-    scheduleVideoReport,
-    true
-  );
-
-  document.addEventListener(
     "ended",
-    scheduleVideoReport,
-    true
-  );
-
-  document.addEventListener(
     "emptied",
-    scheduleVideoReport,
-    true
-  );
+    "loadedmetadata",
+    "canplay",
+    "waiting"
+  ].forEach(type => {
+    document.addEventListener(
+      type,
+      scheduleVideoReport,
+      true
+    );
+  });
+
+  try {
+    const observer = new MutationObserver(
+      scheduleVideoReport
+    );
+
+    observer.observe(
+      document.documentElement,
+      {
+        childList: true,
+        subtree: true
+      }
+    );
+  } catch (_) {}
+
+  // YouTube y otras SPA pueden reemplazar el player
+  // sin recargar el documento.
+  setInterval(reportVideoState, 900);
 
   browser.runtime.sendNativeMessage(
     "browser",
@@ -351,36 +332,22 @@
       url: location.href,
       title: document.title
     }
-  ).then(applyState)
-    .catch(() => {});
+  ).then(applyState).catch(() => {});
 
   try {
-    port =
-      browser.runtime.connectNative(
-        "browser"
-      );
+    port = browser.runtime.connectNative("browser");
 
-    port.onMessage.addListener(
-      message => {
-        if (!message) return;
+    port.onMessage.addListener(message => {
+      if (!message) return;
 
-        if (
-          message.type ===
-          "browser_state"
-        ) {
-          applyState(message);
-        }
-
-        if (
-          message.type ===
-          "pip_mode"
-        ) {
-          setPipIsolation(
-            message.active === true
-          );
-        }
+      if (message.type === "browser_state") {
+        applyState(message);
       }
-    );
+
+      if (message.type === "pip_mode") {
+        setPipIsolation(message.active === true);
+      }
+    });
 
     port.postMessage({
       type: "content_script_ready",
