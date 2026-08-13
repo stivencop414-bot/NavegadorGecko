@@ -8,7 +8,7 @@
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="58dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="8dp"
@@ -16,14 +16,12 @@
 
         <TextView
             android:id="@+id/brandText"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:gravity="center"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
             android:background="@drawable/ic_nexo_logo"
             android:contentDescription="Nexo Browser"
-            android:text=""
-            android:textSize="24sp"
-            android:textStyle="bold" />
+            android:gravity="center"
+            android:text="" />
 
         <EditText
             android:id="@+id/omnibox"
@@ -35,16 +33,28 @@
             android:importantForAutofill="no"
             android:inputType="textUri"
             android:maxLines="1"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="10dp"
             android:singleLine="true"
             android:textSize="15sp" />
 
         <Button
+            android:id="@+id/clearOmniboxButton"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_marginStart="4dp"
+            android:minWidth="0dp"
+            android:padding="0dp"
+            android:text="×"
+            android:textAllCaps="false"
+            android:textSize="20sp"
+            android:visibility="gone" />
+
+        <Button
             android:id="@+id/tabButton"
-            android:layout_width="48dp"
-            android:layout_height="44dp"
-            android:layout_marginStart="5dp"
+            android:layout_width="46dp"
+            android:layout_height="42dp"
+            android:layout_marginStart="4dp"
             android:minWidth="0dp"
             android:padding="0dp"
             android:text="1"
@@ -53,57 +63,14 @@
 
         <Button
             android:id="@+id/menuButton"
-            android:layout_width="48dp"
-            android:layout_height="44dp"
+            android:layout_width="44dp"
+            android:layout_height="42dp"
             android:layout_marginStart="4dp"
-            android:minWidth="0dp"
-            android:padding="0dp"
             android:drawableTop="@drawable/ic_nav_menu"
             android:gravity="center"
-            android:text=""
-            android:textAllCaps="false"
-            android:textSize="24sp" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/navBar"
-        android:layout_width="match_parent"
-        android:layout_height="45dp"
-        android:gravity="center"
-        android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp">
-
-        <Button android:id="@+id/backButton"
-            android:layout_width="0dp" android:layout_height="40dp"
-            android:layout_weight="1" android:minWidth="0dp"
-            android:drawableTop="@drawable/ic_nav_back"
-            android:gravity="center"
-            android:text="" android:textSize="25sp" />
-        <Button android:id="@+id/forwardButton"
-            android:layout_width="0dp" android:layout_height="40dp"
-            android:layout_weight="1" android:minWidth="0dp"
-            android:drawableTop="@drawable/ic_nav_forward"
-            android:gravity="center"
-            android:text="" android:textSize="25sp" />
-        <Button android:id="@+id/reloadButton"
-            android:layout_width="0dp" android:layout_height="40dp"
-            android:layout_weight="1" android:minWidth="0dp"
-            android:drawableTop="@drawable/ic_nav_reload"
-            android:gravity="center"
-            android:text="" android:textSize="20sp" />
-        <Button android:id="@+id/homeButton"
-            android:layout_width="0dp" android:layout_height="40dp"
-            android:layout_weight="1" android:minWidth="0dp"
-            android:drawableTop="@drawable/ic_nav_home"
-            android:gravity="center"
-            android:text="" android:textSize="19sp" />
-        <Button android:id="@+id/newTabButton"
-            android:layout_width="0dp" android:layout_height="40dp"
-            android:layout_weight="1" android:minWidth="0dp"
-            android:drawableTop="@drawable/ic_nav_add"
-            android:gravity="center"
-            android:text="" android:textSize="22sp" />
+            android:minWidth="0dp"
+            android:padding="0dp"
+            android:text="" />
     </LinearLayout>
 
     <ProgressBar
@@ -129,4 +96,41 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1" />
+
+    <LinearLayout
+        android:id="@+id/navBar"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="6dp">
+
+        <Button android:id="@+id/backButton"
+            android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_weight="1" android:drawableTop="@drawable/ic_nav_back"
+            android:gravity="center" android:minWidth="0dp" android:text="" />
+        <Button android:id="@+id/forwardButton"
+            android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_marginStart="5dp" android:layout_weight="1"
+            android:drawableTop="@drawable/ic_nav_forward"
+            android:gravity="center" android:minWidth="0dp" android:text="" />
+        <Button android:id="@+id/homeButton"
+            android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_marginStart="5dp" android:layout_weight="1"
+            android:drawableTop="@drawable/ic_nav_home"
+            android:gravity="center" android:minWidth="0dp" android:text="" />
+        <Button android:id="@+id/reloadButton"
+            android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_marginStart="5dp" android:layout_weight="1"
+            android:drawableTop="@drawable/ic_nav_reload"
+            android:gravity="center" android:minWidth="0dp" android:text="" />
+        <Button android:id="@+id/newTabButton"
+            android:layout_width="0dp" android:layout_height="48dp"
+            android:layout_marginStart="5dp" android:layout_weight="1"
+            android:drawableTop="@drawable/ic_nav_add"
+            android:gravity="center" android:minWidth="0dp" android:text="" />
+    </LinearLayout>
 </LinearLayout>

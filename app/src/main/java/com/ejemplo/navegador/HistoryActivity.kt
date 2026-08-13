@@ -6,7 +6,6 @@ import android.content.Intent
 import android.os.Bundle
 import android.text.format.DateFormat
 import android.view.View
-import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.ListView
 import android.widget.TextView
@@ -19,7 +18,6 @@ class HistoryActivity : Activity() {
         ThemeManager.applyWindow(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_list)
-
         listView = findViewById(R.id.listView)
         findViewById<TextView>(R.id.listTitle).text = "Historial"
 
@@ -33,28 +31,24 @@ class HistoryActivity : Activity() {
                     .setPositiveButton("Limpiar") { _, _ ->
                         HistoryStore.clear(this@HistoryActivity)
                         refresh()
-                    }
-                    .show()
+                    }.show()
             }
         }
-
-        listView.setOnItemClickListener { _, _, position, _ ->
-            open(entries[position].url)
-        }
-
+        listView.setOnItemClickListener { _, _, position, _ -> open(entries[position].url) }
         applyTheme()
         refresh()
     }
 
     private fun refresh() {
         entries = HistoryStore.list(this)
-        listView.adapter = ArrayAdapter(
+        listView.adapter = ThemeManager.listAdapter(
             this,
-            android.R.layout.simple_list_item_1,
             entries.map {
-                "${it.title}\n${it.url}\n${DateFormat.format("dd/MM HH:mm", it.timestamp)}"
+                "${it.title.ifBlank { "Página web" }}\n${it.url}\n${DateFormat.format("dd/MM HH:mm", it.timestamp)}"
             }
         )
+        listView.divider = null
+        listView.dividerHeight = (resources.displayMetrics.density * 6).toInt()
     }
 
     private fun open(url: String) {

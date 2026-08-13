@@ -28,13 +28,19 @@ object SearchResolver {
         ) return "https://$input"
 
         val q = URLEncoder.encode(input, "UTF-8")
+        val free = BrowserPrefs.freeSearch(context)
 
         return when (BrowserPrefs.searchEngine(context)) {
-            BrowserPrefs.ENGINE_DDG -> "https://duckduckgo.com/?q=$q"
-            BrowserPrefs.ENGINE_BING -> "https://www.bing.com/search?q=$q"
-            BrowserPrefs.ENGINE_BRAVE -> "https://search.brave.com/search?q=$q"
-            BrowserPrefs.ENGINE_STARTPAGE -> "https://www.startpage.com/sp/search?query=$q"
-            else -> "https://www.google.com/search?q=$q"
+            BrowserPrefs.ENGINE_DDG ->
+                "https://duckduckgo.com/?q=$q" + if (free) "&kp=-2" else ""
+            BrowserPrefs.ENGINE_BING ->
+                "https://www.bing.com/search?q=$q" + if (free) "&adlt=off" else ""
+            BrowserPrefs.ENGINE_BRAVE ->
+                "https://search.brave.com/search?q=$q" + if (free) "&safesearch=off" else ""
+            BrowserPrefs.ENGINE_STARTPAGE ->
+                "https://www.startpage.com/sp/search?query=$q"
+            else ->
+                "https://www.google.com/search?q=$q" + if (free) "&safe=off" else ""
         }
     }
 }

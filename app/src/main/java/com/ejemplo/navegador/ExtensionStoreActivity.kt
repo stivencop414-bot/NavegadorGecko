@@ -69,11 +69,24 @@ class ExtensionStoreActivity : Activity() {
             result.onSuccess { values ->
                 addons = values
 
-                listView.adapter = ThemeManager.listAdapter(this, values.map {
-                        "${it.name}\n${it.summary.take(110)}" +
-                            if (it.users > 0) " · ${it.users} usuarios/día" else ""
+                listView.adapter = ThemeManager.listAdapter(
+                    this,
+                    values.map {
+                        buildString {
+                            append(it.name)
+                            append("\n")
+                            append(it.summary.take(125))
+                            if (it.users > 0) {
+                                append("\n")
+                                append("%,d".format(it.users))
+                                append(" usuarios")
+                            }
+                        }
                     }
                 )
+                listView.divider = null
+                listView.dividerHeight =
+                    (resources.displayMetrics.density * 7).toInt()
 
                 if (values.isEmpty()) {
                     Toast.makeText(
@@ -128,6 +141,11 @@ class ExtensionStoreActivity : Activity() {
         val p = ThemeManager.palette(this)
         findViewById<View>(R.id.storeRoot).setBackgroundColor(p.background)
         ThemeManager.styleText(this, findViewById<TextView>(R.id.storeTitle))
+        ThemeManager.styleText(
+            this,
+            findViewById<TextView>(R.id.storeSubtitle),
+            muted = true
+        )
         ThemeManager.styleEdit(this, query)
         ThemeManager.styleButton(this, findViewById(R.id.storeSearchButton), true)
     }

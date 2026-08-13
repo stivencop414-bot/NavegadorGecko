@@ -16,6 +16,7 @@ object TabManager {
         fun onProgress(tab: BrowserTab, progress: Int, loading: Boolean)
         fun onTabCountChanged(count: Int)
         fun onMessage(message: String)
+        fun onContextElement(element: GeckoSession.ContentDelegate.ContextElement)
     }
 
     private val tabs = CopyOnWriteArrayList<BrowserTab>()
@@ -164,6 +165,7 @@ object TabManager {
         }
         removed.session = null
         tabs.remove(removed)
+        if (!removed.isPrivate) TabPreviewStore.remove(requireContext(), removed.id)
 
         if (tabs.isEmpty()) {
             val c = requireContext()
@@ -309,7 +311,12 @@ object TabManager {
         session.open(GeckoRuntimeHolder.get(context))
         ExtensionManager.bindSession(session)
 
-        if (loadUrl) session.loadUri(tab.url)
+        if (loadUrl) {
+            val restored = tab.sessionState
+                ?.let { GeckoSession.SessionState.fromString(it) }
+            if (restored != null) session.restoreState(restored)
+            else session.loadUri(tab.url)
+        }
         return session
     }
 
@@ -334,6 +341,15 @@ object TabManager {
                         persist()
                         listener?.onTabChanged(tab)
                     }
+                }
+
+                override fun onContextMenu(
+                    session: GeckoSession,
+                    screenX: Int,
+                    screenY: Int,
+                    element: GeckoSession.ContentDelegate.ContextElement
+                ) {
+                    listener?.onContextElement(element)
                 }
 
                 override fun onExternalResponse(
@@ -376,6 +392,16 @@ object TabManager {
 
         session.setProgressDelegate(
             object : GeckoSession.ProgressDelegate {
+                override fun onSessionStateChange(
+                    session: GeckoSession,
+                    sessionState: GeckoSession.SessionState
+                ) {
+                    if (!tab.isPrivate) {
+                        tab.sessionState = sessionState.toString()
+                        persist()
+                    }
+                }
+
                 override fun onPageStart(session: GeckoSession, url: String) {
                     tab.url = url
                     tab.lastUsed = System.currentTimeMillis()
@@ -520,7 +546,9 @@ object TabManager {
                             lastUsed = o.optLong(
                                 "lastUsed",
                                 System.currentTimeMillis()
-                            )
+                            ),
+                            sessionState = o.optString("sessionState")
+                                .takeIf { it.isNotBlank() && it != "null" }
                         )
                     }
 
@@ -554,6 +582,7 @@ object TabManager {
                     put("title", tab.title)
                     put("desktopMode", tab.desktopMode)
                     put("lastUsed", tab.lastUsed)
+                    put("sessionState", tab.sessionState ?: "")
                 }
             )
         }

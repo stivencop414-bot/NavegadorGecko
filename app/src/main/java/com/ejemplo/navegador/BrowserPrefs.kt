@@ -5,6 +5,7 @@ import android.content.Context
 object BrowserPrefs {
     private const val FILE = "nexo_browser_settings"
 
+    const val THEME_SYSTEM = "system"
     const val THEME_MIDNIGHT = "midnight"
     const val THEME_OLED = "oled"
     const val THEME_LIGHT = "light"
@@ -22,12 +23,22 @@ object BrowserPrefs {
     const val ENGINE_BRAVE = "brave"
     const val ENGINE_STARTPAGE = "startpage"
 
+    const val DNS_SYSTEM = "system"
+    const val DNS_CLOUDFLARE = "cloudflare"
+    const val DNS_GOOGLE = "google"
+    const val DNS_QUAD9 = "quad9"
+
+    const val COOKIES_BALANCED = "balanced"
+    const val COOKIES_FIRST_PARTY = "first_party"
+    const val COOKIES_ALL = "all"
+    const val COOKIES_NONE = "none"
+
     const val LOCAL_HOME = "resource://android/assets/home/index.html"
 
     private fun p(context: Context) =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
-    fun theme(c: Context) = p(c).getString("theme", THEME_MIDNIGHT) ?: THEME_MIDNIGHT
+    fun theme(c: Context) = p(c).getString("theme", THEME_SYSTEM) ?: THEME_SYSTEM
     fun setTheme(c: Context, v: String) = p(c).edit().putString("theme", v).apply()
 
     fun accent(c: Context) = p(c).getString("accent", ACCENT_VIOLET) ?: ACCENT_VIOLET
@@ -35,6 +46,9 @@ object BrowserPrefs {
 
     fun searchEngine(c: Context) = p(c).getString("search", ENGINE_GOOGLE) ?: ENGINE_GOOGLE
     fun setSearchEngine(c: Context, v: String) = p(c).edit().putString("search", v).apply()
+
+    fun freeSearch(c: Context) = p(c).getBoolean("free_search", false)
+    fun setFreeSearch(c: Context, v: Boolean) = p(c).edit().putBoolean("free_search", v).apply()
 
     fun homePage(c: Context) = p(c).getString("home", LOCAL_HOME) ?: LOCAL_HOME
     fun setHomePage(c: Context, v: String) = p(c).edit().putString("home", v).apply()
@@ -45,10 +59,22 @@ object BrowserPrefs {
     fun trackingProtection(c: Context) = p(c).getBoolean("tracking", true)
     fun setTrackingProtection(c: Context, v: Boolean) = p(c).edit().putBoolean("tracking", v).apply()
 
+    fun globalPrivacyControl(c: Context) = p(c).getBoolean("gpc", true)
+    fun setGlobalPrivacyControl(c: Context, v: Boolean) = p(c).edit().putBoolean("gpc", v).apply()
+
+    fun httpsOnly(c: Context) = p(c).getBoolean("https_only", false)
+    fun setHttpsOnly(c: Context, v: Boolean) = p(c).edit().putBoolean("https_only", v).apply()
+
+    fun dnsProvider(c: Context) = p(c).getString("dns_provider", DNS_SYSTEM) ?: DNS_SYSTEM
+    fun setDnsProvider(c: Context, v: String) = p(c).edit().putString("dns_provider", v).apply()
+
+    fun cookieMode(c: Context) = p(c).getString("cookie_mode", COOKIES_BALANCED) ?: COOKIES_BALANCED
+    fun setCookieMode(c: Context, v: String) = p(c).edit().putString("cookie_mode", v).apply()
+
     fun showBridgeBadge(c: Context) = p(c).getBoolean("bridge_badge", false)
     fun setShowBridgeBadge(c: Context, v: Boolean) = p(c).edit().putBoolean("bridge_badge", v).apply()
 
-    fun maxLiveTabs(c: Context) = p(c).getInt("max_live", 3).coerceIn(1, 8)
+    fun maxLiveTabs(c: Context) = p(c).getInt("max_live", 5).coerceIn(1, 8)
     fun setMaxLiveTabs(c: Context, v: Int) = p(c).edit().putInt("max_live", v.coerceIn(1, 8)).apply()
 
     fun tabsJson(c: Context) = p(c).getString("tabs_json", null)
