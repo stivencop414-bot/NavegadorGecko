@@ -8,7 +8,7 @@
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
-        android:layout_height="58dp"
+        android:layout_height="52dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="8dp"
@@ -16,8 +16,8 @@
 
         <TextView
             android:id="@+id/brandText"
-            android:layout_width="42dp"
-            android:layout_height="42dp"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:background="@drawable/ic_nexo_logo"
             android:contentDescription="Nexo Browser"
             android:gravity="center"
@@ -26,7 +26,7 @@
         <EditText
             android:id="@+id/omnibox"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="40dp"
             android:layout_weight="1"
             android:hint="@string/omnibox_hint"
             android:imeOptions="actionGo"
@@ -36,7 +36,7 @@
             android:paddingStart="14dp"
             android:paddingEnd="9dp"
             android:singleLine="true"
-            android:textSize="15sp" />
+            android:textSize="14sp" />
 
         <Button
             android:id="@+id/clearOmniboxButton"
@@ -52,8 +52,8 @@
 
         <Button
             android:id="@+id/tabButton"
-            android:layout_width="46dp"
-            android:layout_height="42dp"
+            android:layout_width="40dp"
+            android:layout_height="38dp"
             android:layout_marginStart="4dp"
             android:minWidth="0dp"
             android:padding="0dp"
@@ -63,8 +63,8 @@
 
         <Button
             android:id="@+id/menuButton"
-            android:layout_width="44dp"
-            android:layout_height="42dp"
+            android:layout_width="40dp"
+            android:layout_height="38dp"
             android:layout_marginStart="4dp"
             android:drawableTop="@drawable/ic_nav_menu"
             android:gravity="center"
@@ -100,70 +100,70 @@
     <LinearLayout
         android:id="@+id/navBar"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="50dp"
         android:gravity="center"
         android:orientation="horizontal"
-        android:paddingStart="9dp"
-        android:paddingTop="6dp"
-        android:paddingEnd="10dp"
-        android:paddingBottom="6dp">
+        android:paddingStart="8dp"
+        android:paddingTop="5dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="5dp">
 
         <ImageButton
             android:id="@+id/backButton"
-            android:layout_width="0dp"
-            android:layout_height="42dp"
-            android:layout_weight="1"
+            android:layout_width="44dp"
+            android:layout_height="38dp"
+
             android:background="@android:color/transparent"
             android:contentDescription="Atrás"
-            android:padding="10dp"
+            android:padding="8dp"
             android:scaleType="centerInside"
             android:src="@drawable/ic_nav_back" />
 
         <ImageButton
             android:id="@+id/forwardButton"
-            android:layout_width="0dp"
-            android:layout_height="42dp"
-            android:layout_marginStart="4dp"
-            android:layout_weight="1"
+            android:layout_width="44dp"
+            android:layout_height="38dp"
+            android:layout_marginStart="8dp"
+
             android:background="@android:color/transparent"
             android:contentDescription="Adelante"
-            android:padding="10dp"
+            android:padding="8dp"
             android:scaleType="centerInside"
             android:src="@drawable/ic_nav_forward" />
 
         <ImageButton
             android:id="@+id/homeButton"
-            android:layout_width="0dp"
-            android:layout_height="42dp"
-            android:layout_marginStart="4dp"
-            android:layout_weight="1"
+            android:layout_width="44dp"
+            android:layout_height="38dp"
+            android:layout_marginStart="8dp"
+
             android:background="@android:color/transparent"
             android:contentDescription="Inicio"
-            android:padding="10dp"
+            android:padding="8dp"
             android:scaleType="centerInside"
             android:src="@drawable/ic_nav_home" />
 
         <ImageButton
             android:id="@+id/reloadButton"
-            android:layout_width="0dp"
-            android:layout_height="42dp"
-            android:layout_marginStart="4dp"
-            android:layout_weight="1"
+            android:layout_width="44dp"
+            android:layout_height="38dp"
+            android:layout_marginStart="8dp"
+
             android:background="@android:color/transparent"
             android:contentDescription="Recargar"
-            android:padding="10dp"
+            android:padding="8dp"
             android:scaleType="centerInside"
             android:src="@drawable/ic_nav_reload" />
 
         <ImageButton
             android:id="@+id/newTabButton"
-            android:layout_width="0dp"
-            android:layout_height="42dp"
-            android:layout_marginStart="4dp"
-            android:layout_weight="1"
+            android:layout_width="44dp"
+            android:layout_height="38dp"
+            android:layout_marginStart="8dp"
+
             android:background="@android:color/transparent"
             android:contentDescription="Nueva pestaña"
-            android:padding="10dp"
+            android:padding="8dp"
             android:scaleType="centerInside"
             android:src="@drawable/ic_nav_add" />
     </LinearLayout>

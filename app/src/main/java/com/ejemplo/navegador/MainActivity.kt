@@ -51,6 +51,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     private var attachedSession: GeckoSession? = null
     private var settingsFingerprint = ""
     private var mediaNotificationPermissionAsked = false
+    private var suppressAutoPipOnce = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeManager.applyWindow(this)
@@ -150,6 +151,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         desktop.isCheckable = true
         desktop.isChecked = current?.desktopMode == true
         popup.menu.add("Compartir página")
+        popup.menu.add("Mini reproductor")
         popup.menu.add("Traducir página")
         popup.menu.add("Extensiones")
         popup.menu.add("Historial")
@@ -165,6 +167,16 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
                     TabManager.setDesktopMode(!(current?.desktopMode ?: false)); true
                 }
                 "Compartir página" -> { shareCurrent(); true }
+                "Mini reproductor" -> {
+                    if (!enterSmartPipNow(force = true)) {
+                        Toast.makeText(
+                            this,
+                            "No detecté multimedia activa para mini reproductor",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    true
+                }
                 "Traducir página" -> {
                     TranslatorManager.translateActive(this) { ok, message ->
                         runOnUiThread {
@@ -178,6 +190,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
                                 !ok &&
                                 BrowserPrefs.translatorApiKey(this).isBlank()
                             ) {
+                                suppressAutoPipOnce = true
                                 startActivity(
                                     Intent(
                                         this,
@@ -189,10 +202,10 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
                     }
                     true
                 }
-                "Extensiones" -> { startActivity(Intent(this, ExtensionStoreActivity::class.java)); true }
-                "Historial" -> { startActivity(Intent(this, HistoryActivity::class.java)); true }
-                "Descargas" -> { startActivity(Intent(this, DownloadsActivity::class.java)); true }
-                "Configuración" -> { startActivity(Intent(this, SettingsActivity::class.java)); true }
+                "Extensiones" -> { suppressAutoPipOnce = true; startActivity(Intent(this, ExtensionStoreActivity::class.java)); true }
+                "Historial" -> { suppressAutoPipOnce = true; startActivity(Intent(this, HistoryActivity::class.java)); true }
+                "Descargas" -> { suppressAutoPipOnce = true; startActivity(Intent(this, DownloadsActivity::class.java)); true }
+                "Configuración" -> { suppressAutoPipOnce = true; startActivity(Intent(this, SettingsActivity::class.java)); true }
                 "Cerrar pestaña" -> { viewModel.closeCurrentTab(); true }
                 else -> false
             }
@@ -354,6 +367,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     }
 
     private fun shareCurrent() {
+        suppressAutoPipOnce = true
         val tab = TabManager.activeTab() ?: return
         startActivity(Intent.createChooser(
             Intent(Intent.ACTION_SEND).apply {
@@ -477,6 +491,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     }
 
     override fun onResume() {
+        suppressAutoPipOnce = false
         super.onResume()
         ExtensionManager.attachPromptActivity(this)
         if (settingsFingerprint.isNotBlank() && settingsFingerprint != fingerprint()) {
@@ -490,6 +505,20 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         }
     }
 
+    override fun onPause() {
+        if (
+            Build.VERSION.SDK_INT >= 26 &&
+            !isChangingConfigurations &&
+            !isFinishing &&
+            !suppressAutoPipOnce &&
+            !isInPictureInPictureMode
+        ) {
+            enterSmartPipNow()
+        }
+
+        super.onPause()
+    }
+
     override fun onStop() {
         captureCurrentTabPreview()
         if (!isInPictureInPictureMode) {
@@ -498,14 +527,68 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         super.onStop()
     }
 
+    private fun looksLikeVideoPage(url: String): Boolean {
+        val value = url.lowercase()
+
+        return value.contains("youtube.com/") ||
+            value.contains("youtu.be/") ||
+            value.contains("twitch.tv/") ||
+            value.contains("vimeo.com/") ||
+            value.contains("dailymotion.com/") ||
+            value.contains("bilibili.com/video")
+    }
+
+    private fun shouldEnterSmartPip(): Boolean {
+        if (Build.VERSION.SDK_INT < 26) return false
+        if (suppressAutoPipOnce) return false
+        if (!BrowserPrefs.smartPip(this)) return false
+
+        val tab = TabManager.activeTab() ?: return false
+        if (!BrowserMediaController.isPlaying(tab.id)) return false
+
+        return BrowserMediaController.isVideoPlaying(tab.id) ||
+            looksLikeVideoPage(tab.url)
+    }
+
+    private fun enterSmartPipNow(force: Boolean = false): Boolean {
+        if (Build.VERSION.SDK_INT < 26) return false
+        if (isInPictureInPictureMode) return true
+
+        val tab = TabManager.activeTab() ?: return false
+
+        if (!force && !shouldEnterSmartPip()) return false
+        if (force && !BrowserMediaController.isPlaying(tab.id)) return false
+
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(pipAspectRatio(tab.id))
+
+        if (geckoView.width > 0 && geckoView.height > 0) {
+            builder.setSourceRectHint(
+                Rect(
+                    geckoView.left,
+                    geckoView.top,
+                    geckoView.right,
+                    geckoView.bottom
+                )
+            )
+        }
+
+        if (Build.VERSION.SDK_INT >= 31) {
+            builder
+                .setAutoEnterEnabled(true)
+                .setSeamlessResizeEnabled(true)
+        }
+
+        return runCatching {
+            enterPictureInPictureMode(builder.build())
+        }.getOrDefault(false)
+    }
+
     private fun updatePipParams() {
         if (Build.VERSION.SDK_INT < 26) return
 
         val tab = TabManager.activeTab()
-        val videoPlaying =
-            tab != null &&
-            BrowserPrefs.smartPip(this) &&
-            BrowserMediaController.isVideoPlaying(tab.id)
+        val videoPlaying = shouldEnterSmartPip()
 
         val builder = PictureInPictureParams.Builder()
             .setAspectRatio(pipAspectRatio(tab?.id))
@@ -548,7 +631,9 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     }
 
     override fun onUserLeaveHint() {
-        if (Build.VERSION.SDK_INT in 26..30) enterSmartPipLegacy()
+        if (!suppressAutoPipOnce) {
+            enterSmartPipNow()
+        }
         super.onUserLeaveHint()
     }
 
