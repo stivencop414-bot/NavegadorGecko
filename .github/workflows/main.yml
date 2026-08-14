@@ -1,4 +1,4 @@
-name: Nexo v0.13.1 - AMO Direct Install PiP Stability
+name: Nexo v0.13.2 - YouTube PiP Fix
 
 on:
   workflow_dispatch:
@@ -10,34 +10,994 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: nexo-v0132-youtube-pip
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 80
+
     env:
       COMPILE_SDK: "36"
       BUILD_TOOLS: "36.0.0"
       GRADLE_VERSION: "8.14.4"
 
     steps:
-      - name: Checkout v0.13.0
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
+      - name: Checkout Nexo
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Apply Nexo v0.13.1 runtime fixes
+      # ============================================================
+      # APLICAR FIX YOUTUBE / PIP
+      # ============================================================
+
+      - name: Apply Nexo v0.13.2 YouTube PiP fixes
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s' 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 | base64 -d | gzip -d > /tmp/nexo_v0131.py
-          python3 /tmp/nexo_v0131.py
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          MAIN = Path(
+              "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
+          )
+
+          SCRIPT = Path(
+              "app/src/main/assets/extensions/nexo_bridge/content_script.js"
+          )
+
+          GRADLE = Path(
+              "app/build.gradle.kts"
+          )
+
+          main = MAIN.read_text(encoding="utf-8")
+          js = SCRIPT.read_text(encoding="utf-8")
+          gradle = GRADLE.read_text(encoding="utf-8")
+
+
+          # ========================================================
+          # 1. MAINACTIVITY.KT
+          # ========================================================
+
+          start_marker = (
+              "    private fun isMiniVideoAvailable(): Boolean {"
+          )
+
+          end_marker = (
+              "    override fun onPictureInPictureModeChanged("
+          )
+
+          if start_marker not in main:
+              raise RuntimeError(
+                  "No se encontró isMiniVideoAvailable() en MainActivity.kt"
+              )
+
+          if end_marker not in main:
+              raise RuntimeError(
+                  "No se encontró onPictureInPictureModeChanged()"
+              )
+
+          start = main.index(start_marker)
+          end = main.index(end_marker, start)
+
+          new_pip_block = r'''    private fun isYoutubeVideoPage(
+              url: String
+          ): Boolean {
+              val uri =
+                  runCatching {
+                      Uri.parse(url)
+                  }.getOrNull()
+                      ?: return false
+
+              val host =
+                  uri.host
+                      ?.lowercase()
+                      .orEmpty()
+
+              val path =
+                  uri.path
+                      ?.lowercase()
+                      .orEmpty()
+
+              return when (host) {
+                  "youtu.be" ->
+                      path.length > 1
+
+                  "youtube.com",
+                  "www.youtube.com",
+                  "m.youtube.com" ->
+                      path == "/watch" ||
+                          path.startsWith("/shorts/") ||
+                          path.startsWith("/live/")
+
+                  else ->
+                      false
+              }
+          }
+
+          private fun isMiniPlaybackActive(
+              tab: BrowserTab
+          ): Boolean =
+              BrowserMediaController
+                  .isVideoPlaying(tab.id) ||
+                  BrowserMediaController
+                      .isPlaying(tab.id)
+
+          private fun hasMiniVideo(
+              tab: BrowserTab
+          ): Boolean =
+              BrowserMediaController
+                  .isVideoPresent(tab.id) ||
+                  BrowserMediaController
+                      .isVideoPlaying(tab.id) ||
+                  (
+                      isYoutubeVideoPage(tab.url) &&
+                          BrowserMediaController
+                              .isPlaying(tab.id)
+                  )
+
+          private fun isMiniVideoAvailable(): Boolean {
+              val tab =
+                  TabManager.activeTab()
+                      ?: return false
+
+              return BrowserPrefs
+                  .smartPip(this) &&
+                  hasMiniVideo(tab)
+          }
+
+          private fun updateMiniPlayerChip() {
+              miniPlayerButton.visibility =
+                  if (
+                      !isInPictureInPictureMode &&
+                      isMiniVideoAvailable()
+                  ) {
+                      View.VISIBLE
+                  } else {
+                      View.GONE
+                  }
+          }
+
+          private fun startMiniPlayer(
+              silent: Boolean = false,
+              requirePlayback: Boolean = false,
+              delayMs: Long = 120L
+          ) {
+              if (Build.VERSION.SDK_INT < 26) {
+                  if (!silent) {
+                      Toast.makeText(
+                          this,
+                          "Mini reproductor requiere Android 8 o superior",
+                          Toast.LENGTH_SHORT
+                      ).show()
+                  }
+
+                  return
+              }
+
+              if (isInPictureInPictureMode) {
+                  return
+              }
+
+              val tab =
+                  TabManager.activeTab()
+                      ?: return
+
+              val session =
+                  tab.session
+                      ?: return
+
+              if (!hasMiniVideo(tab)) {
+                  if (!silent) {
+                      Toast.makeText(
+                          this,
+                          "No se detectó un video para abrir Mini.",
+                          Toast.LENGTH_SHORT
+                      ).show()
+                  }
+
+                  updateMiniPlayerChip()
+                  return
+              }
+
+              if (
+                  requirePlayback &&
+                  !isMiniPlaybackActive(tab)
+              ) {
+                  return
+              }
+
+              /*
+               * Mantener GeckoSession activa mientras Android
+               * realiza la transición a Picture-in-Picture.
+               */
+              TabManager.prepareForPictureInPicture()
+
+              /*
+               * Indicar al bridge JS que aisle únicamente
+               * el reproductor HTML5.
+               */
+              ExtensionManager.setPipMode(
+                  session,
+                  true
+              )
+
+              miniPlayerButton.visibility =
+                  View.GONE
+
+              val enterPip =
+                  Runnable {
+                      val builder =
+                          PictureInPictureParams
+                              .Builder()
+                              .setAspectRatio(
+                                  pipAspectRatio(
+                                      tab.id
+                                  )
+                              )
+
+                      if (
+                          geckoView.width > 0 &&
+                          geckoView.height > 0
+                      ) {
+                          builder.setSourceRectHint(
+                              Rect(
+                                  geckoView.left,
+                                  geckoView.top,
+                                  geckoView.right,
+                                  geckoView.bottom
+                              )
+                          )
+                      }
+
+                      if (
+                          Build.VERSION.SDK_INT >= 31
+                      ) {
+                          /*
+                           * La entrada automática del sistema
+                           * permanece desactivada.
+                           *
+                           * Nexo controla la entrada mediante
+                           * onUserLeaveHint(), evitando activar
+                           * PiP cuando se abre Configuración,
+                           * Historial, Descargas, etc.
+                           */
+                          builder
+                              .setAutoEnterEnabled(false)
+                              .setSeamlessResizeEnabled(true)
+                      }
+
+                      val entered =
+                          runCatching {
+                              enterPictureInPictureMode(
+                                  builder.build()
+                              )
+                          }.getOrDefault(false)
+
+                      if (!entered) {
+                          ExtensionManager.setPipMode(
+                              session,
+                              false
+                          )
+
+                          updateMiniPlayerChip()
+                      }
+                  }
+
+              /*
+               * El botón manual da un pequeño margen al bridge
+               * para preparar el CSS.
+               *
+               * onUserLeaveHint usa delayMs = 0 para evitar
+               * la carrera con onStop().
+               */
+              if (delayMs <= 0L) {
+                  enterPip.run()
+              } else {
+                  geckoView.postDelayed(
+                      enterPip,
+                      delayMs
+                  )
+              }
+          }
+
+          private fun updatePipParams() {
+              if (Build.VERSION.SDK_INT < 26) {
+                  return
+              }
+
+              val tab =
+                  TabManager.activeTab()
+
+              val builder =
+                  PictureInPictureParams
+                      .Builder()
+                      .setAspectRatio(
+                          pipAspectRatio(
+                              tab?.id
+                          )
+                      )
+
+              if (
+                  geckoView.width > 0 &&
+                  geckoView.height > 0
+              ) {
+                  builder.setSourceRectHint(
+                      Rect(
+                          geckoView.left,
+                          geckoView.top,
+                          geckoView.right,
+                          geckoView.bottom
+                      )
+                  )
+              }
+
+              if (
+                  Build.VERSION.SDK_INT >= 31
+              ) {
+                  builder
+                      .setAutoEnterEnabled(false)
+                      .setSeamlessResizeEnabled(true)
+              }
+
+              runCatching {
+                  setPictureInPictureParams(
+                      builder.build()
+                  )
+              }
+          }
+
+          private fun pipAspectRatio(
+              tabId: String?
+          ): Rational {
+              val (rawWidth, rawHeight) =
+                  if (tabId != null) {
+                      BrowserMediaController
+                          .videoAspect(tabId)
+                  } else {
+                      16 to 9
+                  }
+
+              val width =
+                  rawWidth.coerceAtLeast(1)
+
+              val height =
+                  rawHeight.coerceAtLeast(1)
+
+              val ratio =
+                  width.toDouble() /
+                      height.toDouble()
+
+              /*
+               * Android PiP admite aproximadamente
+               * ratios entre 1:2.39 y 2.39:1.
+               *
+               * Dejamos un pequeño margen de seguridad.
+               */
+              return when {
+                  ratio < 0.42 ->
+                      Rational(
+                          42,
+                          100
+                      )
+
+                  ratio > 2.38 ->
+                      Rational(
+                          238,
+                          100
+                      )
+
+                  else ->
+                      Rational(
+                          width,
+                          height
+                      )
+              }
+          }
+
+          override fun onUserLeaveHint() {
+              val tab =
+                  TabManager.activeTab()
+
+              /*
+               * No abrir PiP cuando el usuario está entrando
+               * a una Activity interna de Nexo.
+               */
+              if (
+                  !suppressAutoPipOnce &&
+                  !isInPictureInPictureMode &&
+                  BrowserPrefs.smartPip(this) &&
+                  tab != null &&
+                  hasMiniVideo(tab) &&
+                  isMiniPlaybackActive(tab)
+              ) {
+                  startMiniPlayer(
+                      silent = true,
+                      requirePlayback = true,
+                      delayMs = 0L
+                  )
+              }
+
+              super.onUserLeaveHint()
+          }
+
+          '''
+
+          main = (
+              main[:start] +
+              new_pip_block +
+              main[end:]
+          )
+
+
+          # ========================================================
+          # 2. CONTENT_SCRIPT.JS
+          # ========================================================
+
+          if "let pipActive = false;" not in js:
+              anchor = "  let pipAncestors = [];\n"
+
+              if anchor not in js:
+                  raise RuntimeError(
+                      "No se encontró pipAncestors en content_script.js"
+                  )
+
+              js = js.replace(
+                  anchor,
+                  anchor +
+                  "  let pipActive = false;\n",
+                  1
+              )
+
+
+          # --------------------------------------------------------
+          # bestVideo()
+          # --------------------------------------------------------
+
+          best_start_marker = (
+              "  function bestVideo(preferPlaying) {"
+          )
+
+          best_end_marker = (
+              "  function ensurePipStyle() {"
+          )
+
+          if best_start_marker not in js:
+              raise RuntimeError(
+                  "No se encontró bestVideo()"
+              )
+
+          best_start = js.index(
+              best_start_marker
+          )
+
+          best_end = js.index(
+              best_end_marker,
+              best_start
+          )
+
+          best_video = r'''  function bestVideo(preferPlaying) {
+              const videos = videoList();
+
+              if (!videos.length) {
+                return null;
+              }
+
+              const playing =
+                videos.filter(
+                  video =>
+                    !video.paused &&
+                    !video.ended
+                );
+
+              /*
+               * Importante:
+               * antes bestVideo(true) podía terminar
+               * devolviendo un video pausado.
+               *
+               * YouTube cambia de estado constantemente
+               * al navegar como SPA.
+               */
+              if (
+                preferPlaying &&
+                !playing.length
+              ) {
+                return null;
+              }
+
+              const candidates =
+                preferPlaying
+                  ? playing
+                  : videos;
+
+              return candidates
+                .slice()
+                .sort(
+                  (a, b) =>
+                    videoArea(b) -
+                    videoArea(a)
+                )[0] || null;
+            }
+
+          '''
+
+          js = (
+              js[:best_start] +
+              best_video +
+              js[best_end:]
+          )
+
+
+          # --------------------------------------------------------
+          # ensurePipStyle()
+          # --------------------------------------------------------
+
+          style_start_marker = (
+              "  function ensurePipStyle() {"
+          )
+
+          style_end_marker = (
+              "  function clearPipIsolation() {"
+          )
+
+          style_start = js.index(
+              style_start_marker
+          )
+
+          style_end = js.index(
+              style_end_marker,
+              style_start
+          )
+
+          pip_style = r'''  function ensurePipStyle() {
+              if (
+                document.getElementById(
+                  "nexo-pip-style"
+                )
+              ) {
+                return;
+              }
+
+              const style =
+                document.createElement(
+                  "style"
+                );
+
+              style.id =
+                "nexo-pip-style";
+
+              style.textContent = `
+                html.nexo-pip-root,
+                html.nexo-pip-root body {
+                  background: #000 !important;
+                  overflow: hidden !important;
+                }
+
+                /*
+                 * YouTube utiliza transform / contain /
+                 * will-change en varios padres del video.
+                 *
+                 * Eso convierte esos elementos en
+                 * containing blocks y rompe position:fixed.
+                 */
+                html.nexo-pip-root .nexo-pip-ancestor {
+                  position: static !important;
+                  transform: none !important;
+                  contain: none !important;
+                  will-change: auto !important;
+                  filter: none !important;
+                  perspective: none !important;
+                  backdrop-filter: none !important;
+                  z-index: auto !important;
+                  overflow: visible !important;
+                  clip: auto !important;
+                  clip-path: none !important;
+                }
+
+                html.nexo-pip-root video.nexo-pip-video {
+                  position: fixed !important;
+                  top: 0 !important;
+                  left: 0 !important;
+                  right: 0 !important;
+                  bottom: 0 !important;
+                  width: 100vw !important;
+                  height: 100vh !important;
+                  max-width: 100vw !important;
+                  max-height: 100vh !important;
+                  object-fit: contain !important;
+                  object-position: center center !important;
+                  z-index: 2147483647 !important;
+                  background: #000 !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  transform: none !important;
+                }
+              `;
+
+              (
+                document.head ||
+                document.documentElement
+              ).appendChild(style);
+            }
+
+          '''
+
+          js = (
+              js[:style_start] +
+              pip_style +
+              js[style_end:]
+          )
+
+
+          # --------------------------------------------------------
+          # setPipIsolation + refreshPipIsolation
+          # --------------------------------------------------------
+
+          isolation_start_marker = (
+              "  function setPipIsolation(active) {"
+          )
+
+          isolation_end_marker = (
+              "  function reportVideoState() {"
+          )
+
+          isolation_start = js.index(
+              isolation_start_marker
+          )
+
+          isolation_end = js.index(
+              isolation_end_marker,
+              isolation_start
+          )
+
+          isolation = r'''  function setPipIsolation(active) {
+              pipActive =
+                active === true;
+
+              if (!pipActive) {
+                clearPipIsolation();
+                return;
+              }
+
+              const video =
+                bestVideo(true) ||
+                bestVideo(false);
+
+              if (!video) {
+                return;
+              }
+
+              clearPipIsolation();
+              ensurePipStyle();
+
+              pipVideo = video;
+
+              let current =
+                video.parentElement;
+
+              while (
+                current &&
+                current !== document.body &&
+                current !==
+                  document.documentElement
+              ) {
+                current.classList.add(
+                  "nexo-pip-ancestor"
+                );
+
+                pipAncestors.push(
+                  current
+                );
+
+                current =
+                  current.parentElement;
+              }
+
+              document.documentElement
+                .classList.add(
+                  "nexo-pip-root"
+                );
+
+              video.classList.add(
+                "nexo-pip-video"
+              );
+            }
+
+            /*
+             * YouTube es SPA.
+             *
+             * Puede eliminar el <video> actual y crear
+             * uno nuevo sin recargar la página.
+             *
+             * Si eso ocurre durante PiP, volvemos a
+             * encontrar el reproductor y aplicamos
+             * nuevamente el aislamiento.
+             */
+            function refreshPipIsolation() {
+              if (!pipActive) {
+                return;
+              }
+
+              const video =
+                bestVideo(true) ||
+                bestVideo(false);
+
+              if (!video) {
+                return;
+              }
+
+              const currentStillValid =
+                pipVideo === video &&
+                video.isConnected &&
+                pipAncestors.every(
+                  ancestor =>
+                    ancestor.isConnected &&
+                    ancestor.classList.contains(
+                      "nexo-pip-ancestor"
+                    )
+                );
+
+              if (currentStillValid) {
+                return;
+              }
+
+              setPipIsolation(true);
+            }
+
+          '''
+
+          js = (
+              js[:isolation_start] +
+              isolation +
+              js[isolation_end:]
+          )
+
+
+          # --------------------------------------------------------
+          # reportVideoState()
+          # --------------------------------------------------------
+
+          old_report = '''  function reportVideoState() {
+              if (!port) return;
+          '''
+
+          new_report = '''  function reportVideoState() {
+              refreshPipIsolation();
+
+              if (!port) return;
+          '''
+
+          if old_report not in js:
+              raise RuntimeError(
+                  "No se pudo modificar reportVideoState()"
+              )
+
+          js = js.replace(
+              old_report,
+              new_report,
+              1
+          )
+
+
+          # ========================================================
+          # 3. VERSION 0.13.2
+          # ========================================================
+
+          gradle = gradle.replace(
+              'versionCode = 18',
+              'versionCode = 19',
+              1
+          )
+
+          gradle = gradle.replace(
+              'versionName = "0.13.1"',
+              'versionName = "0.13.2"',
+              1
+          )
+
+
+          # ========================================================
+          # GUARDAR
+          # ========================================================
+
+          MAIN.write_text(
+              main,
+              encoding="utf-8"
+          )
+
+          SCRIPT.write_text(
+              js,
+              encoding="utf-8"
+          )
+
+          GRADLE.write_text(
+              gradle,
+              encoding="utf-8"
+          )
+
+          print(
+              "✅ Nexo v0.13.2 YouTube PiP patch aplicado"
+          )
+
+          PY
+
+          echo ""
+          echo "========================================"
+          echo " CAMBIOS"
+          echo "========================================"
           git diff --stat
+          echo ""
+
+          git diff --check
+
+      # ============================================================
+      # VALIDACIONES ESTÁTICAS
+      # ============================================================
+
+      - name: Validate PiP source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path(
+              "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
+          ).read_text(encoding="utf-8")
+
+          js = Path(
+              "app/src/main/assets/extensions/nexo_bridge/content_script.js"
+          ).read_text(encoding="utf-8")
+
+          gradle = Path(
+              "app/build.gradle.kts"
+          ).read_text(encoding="utf-8")
+
+          manifest = Path(
+              "app/src/main/AndroidManifest.xml"
+          ).read_text(encoding="utf-8")
+
+
+          # MainActivity
+          assert "isYoutubeVideoPage" in main
+          assert "isMiniPlaybackActive" in main
+          assert "hasMiniVideo" in main
+
+          assert (
+              "BrowserMediaController"
+              ".isVideoPlaying(tab.id)"
+              in main
+          )
+
+          assert (
+              "BrowserMediaController"
+              ".isPlaying(tab.id)"
+              in main
+          )
+
+          assert (
+              "override fun onUserLeaveHint()"
+              in main
+          )
+
+          assert (
+              "requirePlayback: Boolean = false"
+              in main
+          )
+
+          assert (
+              "delayMs: Long = 120L"
+              in main
+          )
+
+          assert (
+              "setAutoEnterEnabled(false)"
+              in main
+          )
+
+          # La validación estricta vieja debe desaparecer.
+          assert (
+              "Reproduce el video antes de abrir Mini."
+              not in main
+          )
+
+
+          # JavaScript / YouTube SPA
+          assert (
+              "let pipActive = false;"
+              in js
+          )
+
+          assert (
+              "transform: none !important;"
+              in js
+          )
+
+          assert (
+              "contain: none !important;"
+              in js
+          )
+
+          assert (
+              "will-change: auto !important;"
+              in js
+          )
+
+          assert (
+              "refreshPipIsolation()"
+              in js
+          )
+
+          assert (
+              "pipVideo === video"
+              in js
+          )
+
+          assert (
+              "if (preferPlaying &&"
+              in js
+              or
+              (
+                  "preferPlaying &&\n"
+                  "                !playing.length"
+                  in js
+              )
+          )
+
+
+          # Manifest PiP
+          assert (
+              'android:supportsPictureInPicture="true"'
+              in manifest
+          )
+
+
+          # Versión
+          assert (
+              'versionCode = 19'
+              in gradle
+          )
+
+          assert (
+              'versionName = "0.13.2"'
+              in gradle
+          )
+
+
+          # GeckoView que ya usa el proyecto
+          assert (
+              "geckoview-omni:153.0.20260715202819"
+              in gradle
+          )
+
+          print(
+              "✅ Validaciones v0.13.2 correctas"
+          )
+
+          PY
+
+      # ============================================================
+      # JAVA
+      # ============================================================
 
       - name: Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
+
+      # ============================================================
+      # ANDROID SDK
+      # ============================================================
 
       - name: Android SDK
         uses: android-actions/setup-android@v3
@@ -46,100 +1006,192 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platforms;android-${COMPILE_SDK}" "build-tools;${BUILD_TOOLS}" "platform-tools"
+
+          yes | sdkmanager --licenses \
+            >/dev/null 2>&1 || true
+
+          sdkmanager \
+            "platforms;android-${COMPILE_SDK}" \
+            "build-tools;${BUILD_TOOLS}" \
+            "platform-tools"
+
+      # ============================================================
+      # GRADLE
+      # ============================================================
 
       - name: Install Gradle
         shell: bash
         run: |
           set -euo pipefail
-          curl --retry 5 --retry-all-errors --retry-delay 3 -fsSL             "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"             -o gradle.zip
+
+          curl \
+            --retry 5 \
+            --retry-all-errors \
+            --retry-delay 3 \
+            -fsSL \
+            "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+            -o gradle.zip
+
           unzip -q gradle.zip
-          echo "$PWD/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
 
-      - name: Validate runtime fixes
+          echo \
+            "$PWD/gradle-${GRADLE_VERSION}/bin" \
+            >> "$GITHUB_PATH"
+
+      # ============================================================
+      # COMPILACIÓN Y LINT
+      # ============================================================
+
+      - name: Build Debug Release and Lint
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          ext = Path("app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt").read_text()
-          tab = Path("app/src/main/java/com/ejemplo/navegador/TabManager.kt").read_text()
-          main = Path("app/src/main/java/com/ejemplo/navegador/MainActivity.kt").read_text()
-          gradle = Path("app/build.gradle.kts").read_text()
-          assert "isRemoteExtensionPackage" in ext
-          assert "response.uri" in tab
-          assert "prepareForPictureInPicture" in tab
-          assert "Reproduce el video antes de abrir Mini." in main
-          assert "geckoview-omni:153.0.20260715202819" in gradle
-          assert 'versionName = "0.13.1"' in gradle
-          PY
 
-      - name: Build Debug Release and Lint BEFORE commit
+          gradle \
+            :app:assembleDebug \
+            :app:assembleRelease \
+            :app:lintDebug \
+            :app:lintRelease \
+            --stacktrace \
+            --no-daemon \
+            2>&1 | tee full-build.log
+
+      # ============================================================
+      # COMMIT SOLO SI TODO COMPILA
+      # ============================================================
+
+      - name: Save verified Nexo v0.13.2 source
         shell: bash
         run: |
           set -euo pipefail
-          gradle :app:assembleDebug :app:assembleRelease :app:lintDebug :app:lintRelease             --stacktrace --no-daemon 2>&1 | tee full-build.log
 
-      - name: Save verified v0.13.1 source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/
-          if ! git diff --cached --quiet; then
-            git commit -m "Nexo v0.13.1 AMO install and PiP stability [skip ci]"
-            git push origin HEAD:main
+          git config \
+            user.name \
+            "github-actions[bot]"
+
+          git config \
+            user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            app/build.gradle.kts \
+            app/src/main/java/com/ejemplo/navegador/MainActivity.kt \
+            app/src/main/assets/extensions/nexo_bridge/content_script.js
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios nuevos para guardar."
+          else
+            git commit \
+              -m "Nexo v0.13.2 YouTube PiP fix [skip ci]"
+
+            git push \
+              origin \
+              HEAD:main
           fi
+
+      # ============================================================
+      # FIRMAR APK RELEASE
+      # ============================================================
 
       - name: Sign Release APKs
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p artifacts/release
-          keytool -genkeypair -keystore nexo-v0131-ci.jks -storepass android             -alias nexo -keypass android -keyalg RSA -keysize 2048 -validity 10000             -dname "CN=Nexo Browser v0.13.1,O=Nexo,C=CO"
+
+          keytool \
+            -genkeypair \
+            -keystore nexo-v0132-ci.jks \
+            -storepass android \
+            -alias nexo \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Nexo Browser v0.13.2,O=Nexo,C=CO"
 
           APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
-          ARM64="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*arm64-v8a*.apk' | head -n 1)"
-          ARM32="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*armeabi-v7a*.apk' | head -n 1)"
 
-          "$APKSIGNER" sign --ks nexo-v0131-ci.jks --ks-key-alias nexo             --ks-pass pass:android --key-pass pass:android             --out artifacts/release/Nexo-v0.13.1-arm64-v8a.apk "$ARM64"
+          ARM64="$(
+            find \
+              app/build/outputs/apk/release \
+              -maxdepth 1 \
+              -type f \
+              -name '*arm64-v8a*.apk' \
+              | head -n 1
+          )"
 
-          "$APKSIGNER" sign --ks nexo-v0131-ci.jks --ks-key-alias nexo             --ks-pass pass:android --key-pass pass:android             --out artifacts/release/Nexo-v0.13.1-armeabi-v7a.apk "$ARM32"
+          ARM32="$(
+            find \
+              app/build/outputs/apk/release \
+              -maxdepth 1 \
+              -type f \
+              -name '*armeabi-v7a*.apk' \
+              | head -n 1
+          )"
 
-          "$APKSIGNER" verify --verbose artifacts/release/Nexo-v0.13.1-arm64-v8a.apk
-          "$APKSIGNER" verify --verbose artifacts/release/Nexo-v0.13.1-armeabi-v7a.apk
+          if [ -z "$ARM64" ]; then
+            echo "❌ No se encontró APK arm64-v8a"
+            exit 1
+          fi
 
-      - name: Upload APKs
+          if [ -z "$ARM32" ]; then
+            echo "❌ No se encontró APK armeabi-v7a"
+            exit 1
+          fi
+
+          "$APKSIGNER" sign \
+            --ks nexo-v0132-ci.jks \
+            --ks-key-alias nexo \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out \
+            artifacts/release/Nexo-v0.13.2-arm64-v8a.apk \
+            "$ARM64"
+
+          "$APKSIGNER" sign \
+            --ks nexo-v0132-ci.jks \
+            --ks-key-alias nexo \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out \
+            artifacts/release/Nexo-v0.13.2-armeabi-v7a.apk \
+            "$ARM32"
+
+          "$APKSIGNER" verify \
+            --verbose \
+            artifacts/release/Nexo-v0.13.2-arm64-v8a.apk
+
+          "$APKSIGNER" verify \
+            --verbose \
+            artifacts/release/Nexo-v0.13.2-armeabi-v7a.apk
+
+      # ============================================================
+      # ARTIFACTOS
+      # ============================================================
+
+      - name: Upload Nexo v0.13.2 APKs
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-v0131-Release-APKs
+          name: Nexo-v0132-YouTube-PiP-Release-APKs
           path: artifacts/release/*.apk
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
 
+      # ============================================================
+      # DIAGNÓSTICOS SI ALGO FALLA
+      # ============================================================
+
       - name: Upload diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-v0131-diagnostics
+          name: Nexo-v0132-PiP-build-diagnostics
           path: |
             full-build.log
-            app/build/reports/lint-results-debug.html
-            app/build/reports/lint-results-release.html
+            app/build/reports/
+            app/build/outputs/logs/
           if-no-files-found: ignore
           retention-days: 14
-
-      - name: Publish GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          TARGET_SHA="$(git rev-parse HEAD)"
-          if ! gh release view v0.13.1 >/dev/null 2>&1; then
-            gh release create v0.13.1 --target "$TARGET_SHA"               --title "Nexo Browser v0.13.1"               --notes "GeckoView 153 Stable Omni. XPI HTTPS y Mozilla Add-ons pasan al instalador de GeckoView; ZIP/carpetas fuente muestran una explicación correcta; PiP conserva la sesión multimedia activa y en alta prioridad."
-          fi
-          gh release upload v0.13.1             artifacts/release/Nexo-v0.13.1-arm64-v8a.apk             artifacts/release/Nexo-v0.13.1-armeabi-v7a.apk             --clobber
