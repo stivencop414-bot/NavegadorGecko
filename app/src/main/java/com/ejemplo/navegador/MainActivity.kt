@@ -511,6 +511,13 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     override fun onResume() {
         suppressAutoPipOnce = false
         backgroundPlaybackWasActive = false
+
+        if (!isInPictureInPictureMode) {
+            TabManager.activeTab()?.let { tab ->
+                BrowserMediaController.clearPlaybackHold(tab.id)
+            }
+        }
+
         super.onResume()
         ExtensionManager.attachPromptActivity(this)
         if (settingsFingerprint.isNotBlank() && settingsFingerprint != fingerprint()) {
@@ -683,6 +690,15 @@ private fun startMiniPlayer(
      */
     pipPlaybackWasActive =
         isMiniPlaybackActive(tab)
+
+    if (pipPlaybackWasActive) {
+        BrowserMediaController.holdPlayback(
+            tab.id,
+            10_000L
+        )
+
+        MediaPlaybackService.sync(this)
+    }
 
     if (!hasMiniVideo(tab)) {
         if (!silent) {
@@ -938,6 +954,24 @@ override fun onUserLeaveHint() {
         BrowserPrefs.backgroundMedia(this) &&
         BrowserMediaController
             .isPlaybackActive(tab.id)
+
+    if (
+        backgroundPlaybackWasActive &&
+        tab != null
+    ) {
+        BrowserMediaController.holdPlayback(
+            tab.id,
+            10_000L
+        )
+
+        /*
+         * Arrancar/refrescar el foreground service mientras
+         * la Activity aún está visible. Así evitamos las
+         * restricciones de inicio desde background y la pausa
+         * transitoria de YouTube no lo apaga.
+         */
+        MediaPlaybackService.sync(this)
+    }
 
     if (
         !suppressAutoPipOnce &&
