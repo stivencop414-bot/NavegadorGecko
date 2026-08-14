@@ -572,9 +572,16 @@ class ExtensionsActivity :
             }
         )
 
+                if (meta.enabled) {
         popup.menu.add(
-            "Buscar actualización"
+            "Ejecutar en esta pestaña"
         )
+    }
+
+    popup.menu.add(
+        "Buscar actualización"
+    )
+
 
         if (
             !meta
@@ -633,12 +640,20 @@ class ExtensionsActivity :
                         true
                     }
 
-                    "Buscar actualización" -> {
-                        updateOne(
-                            extension
-                        )
-                        true
-                    }
+                                    "Ejecutar en esta pestaña" -> {
+                runExtensionAction(
+                    extension
+                )
+                true
+            }
+
+            "Buscar actualización" -> {
+                updateOne(
+                    extension
+                )
+                true
+            }
+
 
                     "Opciones de la extensión" -> {
                         meta
@@ -668,6 +683,25 @@ class ExtensionsActivity :
             }
 
         popup.show()
+    }
+
+    private fun runExtensionAction(
+        extension: WebExtension
+    ) {
+        ExtensionManager.runAction(
+            extension
+        ) {
+                ok,
+                message ->
+
+            runOnUiThread {
+                toast(message)
+
+                if (ok) {
+                    load()
+                }
+            }
+        }
     }
 
     private fun setEnabled(

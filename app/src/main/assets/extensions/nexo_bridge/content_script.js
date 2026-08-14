@@ -7,8 +7,11 @@
   let spoofed = false;
   let pipVideo = null;
   let pipAncestors = [];
-  let pipActive = false;
-  let reportTimer = 0;
+    let pipActive = false;
+    let pipKeepPlaying = false;
+    let pipRecoveryUntil = 0;
+    let reportTimer = 0;
+
 
   function pageDocument() {
     try {
@@ -63,10 +66,34 @@
     defineVisible(pageDoc);
 
     visibilityHandler = event => {
-      if (backgroundMedia) {
-        event.stopImmediatePropagation();
-      }
-    };
+    if (backgroundMedia) {
+          /*
+           * Guardar el elemento que estaba reproduciendo ANTES
+           * de que la página procese el cambio de visibilidad.
+           */
+          const playingBefore =
+            playingMediaElement();
+
+          event.stopImmediatePropagation();
+
+          if (playingBefore) {
+            setTimeout(() => {
+              try {
+                if (
+                  backgroundMedia &&
+                  playingBefore.isConnected &&
+                  playingBefore.paused &&
+                  !playingBefore.ended
+                ) {
+                  Promise.resolve(
+                    playingBefore.play()
+                  ).catch(() => {});
+                }
+              } catch (_) {}
+            }, 140);
+          }
+        }
+      };
 
     window.addEventListener(
       "visibilitychange",
@@ -154,6 +181,30 @@
   function videoList() {
     return collectVideos(document, []).filter(visibleEnough);
   }
+
+  function playingMediaElement() {
+        const video =
+          bestVideo(true);
+
+        if (video) {
+          return video;
+        }
+
+        try {
+          const audio =
+            Array.from(
+              document.querySelectorAll("audio")
+            ).find(
+              item =>
+                !item.paused &&
+                !item.ended
+            );
+
+          return audio || null;
+        } catch (_) {
+          return null;
+        }
+      }
 
   function bestVideo(preferPlaying) {
     const videos = videoList();
@@ -284,101 +335,155 @@
   }
 
   function setPipIsolation(active) {
-    pipActive =
-      active === true;
+        const nextActive =
+          active === true;
 
-    if (!pipActive) {
-      clearPipIsolation();
-      return;
-    }
+        const activating =
+          nextActive &&
+          !pipActive;
 
-    const video =
-      bestVideo(true) ||
-      bestVideo(false);
+        pipActive =
+          nextActive;
 
-    if (!video) {
-      return;
-    }
+        if (!pipActive) {
+          pipKeepPlaying = false;
+          pipRecoveryUntil = 0;
+          clearPipIsolation();
+          return;
+        }
 
-    clearPipIsolation();
-    ensurePipStyle();
+        const video =
+          bestVideo(true) ||
+          bestVideo(false);
 
-    pipVideo = video;
+        if (!video) {
+          return;
+        }
 
-    let current =
-      video.parentElement;
+        /*
+         * Recordar intención de reproducción únicamente
+         * en el primer momento de entrada a PiP.
+         */
+        if (activating) {
+          pipKeepPlaying =
+            !video.paused &&
+            !video.ended;
 
-    while (
-      current &&
-      current !== document.body &&
-      current !==
-        document.documentElement
-    ) {
-      current.classList.add(
-        "nexo-pip-ancestor"
-      );
+          pipRecoveryUntil =
+            pipKeepPlaying
+              ? Date.now() + 5_000
+              : 0;
+        }
 
-      pipAncestors.push(
-        current
-      );
+        clearPipIsolation();
+        ensurePipStyle();
 
-      current =
-        current.parentElement;
-    }
+        pipVideo = video;
 
-    document.documentElement
-      .classList.add(
-        "nexo-pip-root"
-      );
+        let current =
+          video.parentElement;
 
-    video.classList.add(
-      "nexo-pip-video"
-    );
-  }
-
-  /*
-   * YouTube funciona como SPA y puede
-   * reemplazar o mover el <video> sin
-   * recargar la página.
-   *
-   * Mientras PiP esté activo comprobamos
-   * si seguimos aislando el video correcto.
-   */
-  function refreshPipIsolation() {
-    if (!pipActive) {
-      return;
-    }
-
-    const video =
-      bestVideo(true) ||
-      bestVideo(false);
-
-    if (!video) {
-      return;
-    }
-
-    const currentStillValid =
-      pipVideo === video &&
-      video.isConnected &&
-      pipAncestors.every(
-        ancestor =>
-          ancestor.isConnected &&
-          ancestor.classList.contains(
+        while (
+          current &&
+          current !== document.body &&
+          current !==
+            document.documentElement
+        ) {
+          current.classList.add(
             "nexo-pip-ancestor"
-          )
-      );
+          );
 
-    if (currentStillValid) {
-      return;
-    }
+          pipAncestors.push(
+            current
+          );
 
-    setPipIsolation(true);
-  }
+          current =
+            current.parentElement;
+        }
 
-  function reportVideoState() {
-    refreshPipIsolation();
+        document.documentElement
+          .classList.add(
+            "nexo-pip-root"
+          );
 
-    if (!port) return;
+        video.classList.add(
+          "nexo-pip-video"
+        );
+
+        recoverPipPlayback();
+      }
+
+      function recoverPipPlayback() {
+        if (
+          !pipActive ||
+          !pipKeepPlaying ||
+          Date.now() >
+            pipRecoveryUntil
+        ) {
+          return;
+        }
+
+        const video =
+          pipVideo ||
+          bestVideo(false);
+
+        if (
+          !video ||
+          video.ended ||
+          !video.paused
+        ) {
+          return;
+        }
+
+        try {
+          Promise.resolve(
+            video.play()
+          ).catch(() => {});
+        } catch (_) {}
+      }
+
+      /*
+       * YouTube funciona como SPA y puede reemplazar
+       * o mover el <video> sin recargar la página.
+       */
+      function refreshPipIsolation() {
+        if (!pipActive) {
+          return;
+        }
+
+        const video =
+          bestVideo(true) ||
+          bestVideo(false);
+
+        if (!video) {
+          recoverPipPlayback();
+          return;
+        }
+
+        const currentStillValid =
+          pipVideo === video &&
+          video.isConnected &&
+          pipAncestors.every(
+            ancestor =>
+              ancestor.isConnected &&
+              ancestor.classList.contains(
+                "nexo-pip-ancestor"
+              )
+          );
+
+        if (!currentStillValid) {
+          setPipIsolation(true);
+        }
+
+        recoverPipPlayback();
+      }
+
+    function reportVideoState() {
+        refreshPipIsolation();
+        recoverPipPlayback();
+
+        if (!port) return;
+
 
     const anyVideo = bestVideo(false);
     const playingVideo = bestVideo(true);

@@ -158,6 +158,11 @@ object TabManager {
             switchTo(tab.id, loadUrl = false)
         } else {
             session.setActive(false)
+
+            ExtensionManager.setTabActive(
+                session,
+                false
+            )
         }
 
         persist()
@@ -174,21 +179,42 @@ object TabManager {
 
         if (old?.id != target.id) {
             old?.session?.let { session ->
-                val keepMediaAlive =
-                    BrowserPrefs.backgroundMedia(requireContext()) &&
-                    old != null &&
-                    BrowserMediaController.isPlaying(old.id)
-
-                session.setFocused(false)
-                session.setPriorityHint(
-                    if (keepMediaAlive) {
-                        GeckoSession.PRIORITY_HIGH
-                    } else {
-                        GeckoSession.PRIORITY_DEFAULT
-                    }
+                val backgroundEnabled =
+                BrowserPrefs.backgroundMedia(
+                    requireContext()
                 )
-                session.setActive(keepMediaAlive)
-            }
+
+            val keepMediaAlive =
+                backgroundEnabled &&
+                BrowserMediaController
+                    .shouldKeepAlive(
+                        old.id,
+                        8_000L
+                    )
+
+            session.settings
+                .setSuspendMediaWhenInactive(
+                    !backgroundEnabled
+                )
+
+            session.setFocused(false)
+            ExtensionManager.setTabActive(
+                session,
+                false
+            )
+
+            session.setPriorityHint(
+                if (keepMediaAlive) {
+                    GeckoSession.PRIORITY_HIGH
+                } else {
+                    GeckoSession.PRIORITY_DEFAULT
+                }
+            )
+
+            session.setActive(
+                keepMediaAlive
+            )
+        }
 
             if (rememberPrevious && old != null) {
                 activationHistory.remove(old.id)
@@ -207,6 +233,11 @@ object TabManager {
         session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
         session.setActive(true)
         session.setFocused(true)
+
+        ExtensionManager.setTabActive(
+            session,
+            true
+        )
 
         listener?.onActiveTabChanged(target, session)
         listener?.onTabChanged(target)
@@ -234,6 +265,10 @@ object TabManager {
 
         removed.session?.let { session ->
             runCatching {
+                ExtensionManager.setTabActive(
+                    session,
+                    false
+                )
                 session.setActive(false)
                 session.close()
             }
@@ -355,24 +390,86 @@ object TabManager {
     }
 
     fun prepareForPictureInPicture() {
-        val tab = activeTab() ?: return
-        tab.session?.let { session ->
-            session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
+        val tab =
+            activeTab()
+                ?: return
+
+        tab.session?.let {
+            session ->
+
+            /*
+             * PiP sigue siendo contenido visible.
+             * Nunca suspender multimedia durante esta transición.
+             */
+            session.settings
+                .setSuspendMediaWhenInactive(
+                    false
+                )
+
+            session.setPriorityHint(
+                GeckoSession.PRIORITY_HIGH
+            )
+
             session.setActive(true)
+
+            ExtensionManager.setTabActive(
+                session,
+                true
+            )
         }
-        MediaPlaybackService.sync(requireContext())
+
+        BrowserMediaController
+            .resumeIfRecent(
+                tab.id,
+                8_000L
+            )
+
+        MediaPlaybackService.sync(
+            requireContext()
+        )
     }
 
     fun prepareForBackground() {
-        val tab = activeTab()
+        val tab =
+            activeTab()
+                ?: return
 
-        tab?.session?.let { session ->
-            val keepMediaAlive =
-                BrowserPrefs.backgroundMedia(requireContext()) &&
-                BrowserMediaController.isPlaying(tab.id)
+        val context =
+            requireContext()
+
+        val backgroundEnabled =
+            BrowserPrefs.backgroundMedia(
+                context
+            )
+
+        val keepMediaAlive =
+            backgroundEnabled &&
+            BrowserMediaController
+                .shouldKeepAlive(
+                    tab.id,
+                    8_000L
+                )
+
+        tab.session?.let {
+            session ->
 
             session.flushSessionState()
             session.setFocused(false)
+
+            /*
+             * Si el usuario habilitó reproducción en segundo
+             * plano no permitimos que Gecko suspenda media.
+             */
+            session.settings
+                .setSuspendMediaWhenInactive(
+                    !backgroundEnabled
+                )
+
+            ExtensionManager.setTabActive(
+                session,
+                false
+            )
+
             session.setPriorityHint(
                 if (keepMediaAlive) {
                     GeckoSession.PRIORITY_HIGH
@@ -380,11 +477,16 @@ object TabManager {
                     GeckoSession.PRIORITY_DEFAULT
                 }
             )
-            session.setActive(keepMediaAlive)
 
-            if (keepMediaAlive) {
-                MediaPlaybackService.sync(requireContext())
-            }
+            session.setActive(
+                keepMediaAlive
+            )
+        }
+
+        if (keepMediaAlive) {
+            MediaPlaybackService.sync(
+                context
+            )
         }
 
         persist()
@@ -395,10 +497,20 @@ object TabManager {
     }
 
     fun resumeActive() {
-        activeSession()?.let { session ->
-            session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
+        activeSession()?.let {
+            session ->
+
+            session.setPriorityHint(
+                GeckoSession.PRIORITY_HIGH
+            )
+
             session.setActive(true)
             session.setFocused(true)
+
+            ExtensionManager.setTabActive(
+                session,
+                true
+            )
         }
     }
 

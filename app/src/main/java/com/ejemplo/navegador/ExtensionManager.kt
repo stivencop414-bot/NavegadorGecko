@@ -28,6 +28,27 @@ object ExtensionManager {
     private val ports = mutableSetOf<WebExtension.Port>()
     private var initialized = false
 
+    /*
+     * GeckoView entrega acciones de extensiones a través de
+     * ActionDelegate. Nexo antes no guardaba esas acciones,
+     * por eso muchas extensiones podían instalarse pero no
+     * tenían ninguna forma de ejecutarse desde la interfaz.
+     */
+    private val defaultActions =
+        mutableMapOf<
+            String,
+            WebExtension.Action
+            >()
+
+    private val sessionActions =
+        java.util.WeakHashMap<
+            GeckoSession,
+            MutableMap<
+                String,
+                WebExtension.Action
+                >
+            >()
+
     fun initialize(context: Context) {
         if (initialized) return
         initialized = true
@@ -70,6 +91,115 @@ object ExtensionManager {
 
     fun attachPromptActivity(activity: Activity?) {
         promptActivity = WeakReference(activity)
+    }
+
+    fun setTabActive(
+        session: GeckoSession,
+        active: Boolean
+    ) {
+        runCatching {
+            GeckoRuntimeHolder
+                .get(AppContext.get())
+                .webExtensionController
+                .setTabActive(
+                    session,
+                    active
+                )
+        }.onFailure {
+            error ->
+
+            android.util.Log.w(
+                "NexoExtensions",
+                "No se pudo notificar pestaña activa",
+                error
+            )
+        }
+    }
+
+    fun runAction(
+        extension: WebExtension,
+        onDone:
+            (Boolean, String) -> Unit
+    ) {
+        val session =
+            TabManager.activeSession()
+
+        val sessionAction =
+            session
+                ?.let {
+                    sessionActions[it]
+                        ?.get(
+                            extension.id
+                        )
+                }
+
+        val defaultAction =
+            defaultActions[
+                extension.id
+            ]
+
+        val action =
+            when {
+                sessionAction != null &&
+                    defaultAction != null ->
+                    runCatching {
+                        sessionAction
+                            .withDefault(
+                                defaultAction
+                            )
+                    }.getOrDefault(
+                        sessionAction
+                    )
+
+                sessionAction != null ->
+                    sessionAction
+
+                else ->
+                    defaultAction
+            }
+
+        if (action == null) {
+            onDone(
+                false,
+                "La extensión no expone una acción para esta pestaña."
+            )
+            return
+        }
+
+        if (action.enabled == false) {
+            onDone(
+                false,
+                "La acción de la extensión está deshabilitada en esta página."
+            )
+            return
+        }
+
+        runCatching {
+            action.click()
+        }.fold(
+            onSuccess = {
+                onDone(
+                    true,
+                    action.title
+                        ?.takeIf {
+                            it.isNotBlank()
+                        }
+                        ?: "Acción de extensión ejecutada"
+                )
+            },
+            onFailure = {
+                error ->
+
+                onDone(
+                    false,
+                    "No se pudo ejecutar: " +
+                        (
+                            error.message
+                                ?: "error desconocido"
+                            )
+                )
+            }
+        )
     }
 
     fun bindSession(session: GeckoSession) {
@@ -988,64 +1118,212 @@ object ExtensionManager {
         )
     }
 
-    private fun registerExtension(extension: WebExtension) {
+    private fun registerExtension(
+        extension: WebExtension
+    ) {
         if (extension.id == BRIDGE_ID) {
-            configureBridge(extension)
+            configureBridge(
+                extension
+            )
             return
         }
 
-        if (extension.id == TranslatorManager.TRANSLATOR_ID) {
+        if (
+            extension.id ==
+            TranslatorManager
+                .TRANSLATOR_ID
+        ) {
             return
         }
+
+        extension.setActionDelegate(
+            extensionActionDelegate
+        )
 
         extension.setTabDelegate(
-            object : WebExtension.TabDelegate {
+            object :
+                WebExtension.TabDelegate {
+
                 override fun onNewTab(
                     source: WebExtension,
-                    createDetails: WebExtension.CreateTabDetails
+                    createDetails:
+                        WebExtension
+                            .CreateTabDetails
                 ): GeckoResult<GeckoSession>? {
-                    val session = TabManager.createSessionForExtension(
-                        createDetails.url ?: "about:blank",
-                        createDetails.active != false
-                    )
-                    return GeckoResult.fromValue(session)
+                    val session =
+                        TabManager
+                            .createSessionForExtension(
+                                createDetails.url
+                                    ?: "about:blank",
+                                createDetails.active !=
+                                    false
+                            )
+
+                    return GeckoResult
+                        .fromValue(
+                            session
+                        )
+                }
+
+                override fun onOpenOptionsPage(
+                    source: WebExtension
+                ) {
+                    val url =
+                        source
+                            .metaData
+                            ?.optionsPageUrl
+
+                    if (
+                        !url.isNullOrBlank()
+                    ) {
+                        TabManager.createTab(
+                            url = url,
+                            activate = true
+                        )
+                    }
                 }
             }
         )
 
-        TabManager.liveSessions().forEach {
-            bindExtensionToSession(extension, it)
-        }
+        TabManager.liveSessions()
+            .forEach {
+                bindExtensionToSession(
+                    extension,
+                    it
+                )
+            }
     }
 
     private fun bindExtensionToSession(
         extension: WebExtension,
         session: GeckoSession
     ) {
-        session.webExtensionController.setTabDelegate(
-            extension,
-            object : WebExtension.SessionTabDelegate {
-                override fun onCloseTab(
-                    source: WebExtension?,
-                    session: GeckoSession
-                ): GeckoResult<AllowOrDeny> {
-                    TabManager.closeBySession(session)
-                    return GeckoResult.allow()
-                }
+        /*
+         * Recibir browser_action/page_action específicos
+         * de esta pestaña.
+         */
+        session.webExtensionController
+            .setActionDelegate(
+                extension,
+                extensionActionDelegate
+            )
 
-                override fun onUpdateTab(
-                    extension: WebExtension,
-                    session: GeckoSession,
-                    details: WebExtension.UpdateTabDetails
-                ): GeckoResult<AllowOrDeny> {
-                    if (details.active == true) {
-                        TabManager.activateBySession(session)
+        session.webExtensionController
+            .setTabDelegate(
+                extension,
+                object :
+                    WebExtension
+                        .SessionTabDelegate {
+
+                    override fun onCloseTab(
+                        source: WebExtension?,
+                        session: GeckoSession
+                    ): GeckoResult<AllowOrDeny> {
+                        TabManager
+                            .closeBySession(
+                                session
+                            )
+
+                        return GeckoResult.allow()
                     }
-                    return GeckoResult.allow()
+
+                    override fun onUpdateTab(
+                        extension: WebExtension,
+                        session: GeckoSession,
+                        details:
+                            WebExtension
+                                .UpdateTabDetails
+                    ): GeckoResult<AllowOrDeny> {
+                        if (
+                            details.active == true
+                        ) {
+                            TabManager
+                                .activateBySession(
+                                    session
+                                )
+                        }
+
+                        return GeckoResult.allow()
+                    }
                 }
-            }
+            )
+    }
+
+    private fun rememberAction(
+        extension: WebExtension,
+        session: GeckoSession?,
+        action: WebExtension.Action
+    ) {
+        if (session == null) {
+            defaultActions[
+                extension.id
+            ] = action
+        } else {
+            sessionActions
+                .getOrPut(
+                    session
+                ) {
+                    mutableMapOf()
+                }[
+                    extension.id
+                ] = action
+        }
+    }
+
+    private fun createExtensionPopupSession():
+        GeckoResult<GeckoSession> {
+        val session =
+            TabManager
+                .createSessionForExtension(
+                    "about:blank",
+                    true
+                )
+
+        return GeckoResult.fromValue(
+            session
         )
     }
+
+    private val extensionActionDelegate =
+        object :
+            WebExtension.ActionDelegate {
+
+            override fun onBrowserAction(
+                extension: WebExtension,
+                session: GeckoSession?,
+                action: WebExtension.Action
+            ) {
+                rememberAction(
+                    extension,
+                    session,
+                    action
+                )
+            }
+
+            override fun onPageAction(
+                extension: WebExtension,
+                session: GeckoSession?,
+                action: WebExtension.Action
+            ) {
+                rememberAction(
+                    extension,
+                    session,
+                    action
+                )
+            }
+
+            override fun onOpenPopup(
+                extension: WebExtension,
+                action: WebExtension.Action
+            ): GeckoResult<GeckoSession>? =
+                createExtensionPopupSession()
+
+            override fun onTogglePopup(
+                extension: WebExtension,
+                action: WebExtension.Action
+            ): GeckoResult<GeckoSession>? =
+                createExtensionPopupSession()
+        }
 
     private val bridgeMessageDelegate =
         object : WebExtension.MessageDelegate {
@@ -1133,13 +1411,37 @@ object ExtensionManager {
                     dataCollectionPermissions
                 )
 
-            override fun onUpdatePrompt(
-                extension: WebExtension,
-                newPermissions: Array<out String>,
-                newOrigins: Array<out String>,
-                newDataCollectionPermissions: Array<out String>
-            ): GeckoResult<AllowOrDeny>? =
-                showPermissionPrompt(extension, "Actualizar extensión")
+                    override fun onUpdatePrompt(
+            extension: WebExtension,
+            newPermissions: Array<out String>,
+            newOrigins: Array<out String>,
+            newDataCollectionPermissions: Array<out String>
+        ): GeckoResult<AllowOrDeny>? =
+            showPermissionPrompt(
+                extension = extension,
+                title = "Actualizar extensión",
+                permissions = newPermissions,
+                origins = newOrigins,
+                dataCollectionPermissions =
+                    newDataCollectionPermissions
+            )
+
+        override fun onOptionalPrompt(
+            extension: WebExtension,
+            permissions: Array<out String>,
+            origins: Array<out String>,
+            dataCollectionPermissions:
+                Array<out String>
+        ): GeckoResult<AllowOrDeny>? =
+            showPermissionPrompt(
+                extension = extension,
+                title = "Permisos adicionales",
+                permissions = permissions,
+                origins = origins,
+                dataCollectionPermissions =
+                    dataCollectionPermissions
+            )
+
         }
 
     private fun showInstallPermissionPrompt(
@@ -1205,36 +1507,141 @@ object ExtensionManager {
 
     private fun showPermissionPrompt(
         extension: WebExtension,
-        title: String
+        title: String,
+        permissions:
+            Array<out String> =
+            emptyArray<String>(),
+        origins:
+            Array<out String> =
+            emptyArray<String>(),
+        dataCollectionPermissions:
+            Array<out String> =
+            emptyArray<String>()
     ): GeckoResult<AllowOrDeny> {
-        val result = GeckoResult<AllowOrDeny>()
-        val activity = promptActivity.get()
+        val result =
+            GeckoResult<AllowOrDeny>()
 
-        if (activity == null || activity.isFinishing) {
-            result.complete(AllowOrDeny.DENY)
+        val activity =
+            promptActivity.get()
+
+        if (
+            activity == null ||
+            activity.isFinishing
+        ) {
+            result.complete(
+                AllowOrDeny.DENY
+            )
             return result
         }
 
-        activity.runOnUiThread {
-            AlertDialog.Builder(activity)
-                .setTitle(title)
-                .setMessage(
-                    "${extension.metaData?.name ?: extension.id}\n" +
-                        "Versión: ${extension.metaData?.version ?: "?"}\n\n" +
-                        "Instala únicamente extensiones de fuentes confiables."
+        val details =
+            buildString {
+                append(
+                    extension
+                        .metaData
+                        ?.name
+                        ?: extension.id
                 )
-                .setNegativeButton("Cancelar") { _, _ ->
-                    result.complete(AllowOrDeny.DENY)
+
+                append(
+                    "\nVersión: "
+                )
+
+                append(
+                    extension
+                        .metaData
+                        ?.version
+                        ?: "?"
+                )
+
+                if (
+                    permissions
+                        .isNotEmpty()
+                ) {
+                    append(
+                        "\n\nPermisos: "
+                    )
+
+                    append(
+                        permissions
+                            .joinToString(
+                                ", "
+                            )
+                    )
                 }
-                .setPositiveButton("Permitir") { _, _ ->
-                    result.complete(AllowOrDeny.ALLOW)
+
+                if (
+                    origins
+                        .isNotEmpty()
+                ) {
+                    append(
+                        "\n\nSitios: "
+                    )
+
+                    append(
+                        origins
+                            .joinToString(
+                                ", "
+                            )
+                    )
+                }
+
+                if (
+                    dataCollectionPermissions
+                        .isNotEmpty()
+                ) {
+                    append(
+                        "\n\nDatos solicitados: "
+                    )
+
+                    append(
+                        dataCollectionPermissions
+                            .joinToString(
+                                ", "
+                            )
+                    )
+                }
+
+                append(
+                    "\n\nPermite únicamente si confías en la extensión."
+                )
+            }
+
+        activity.runOnUiThread {
+            AlertDialog.Builder(
+                activity
+            )
+                .setTitle(title)
+                .setMessage(details)
+                .setNegativeButton(
+                    "Cancelar"
+                ) {
+                        _,
+                        _ ->
+
+                    result.complete(
+                        AllowOrDeny.DENY
+                    )
+                }
+                .setPositiveButton(
+                    "Permitir"
+                ) {
+                        _,
+                        _ ->
+
+                    result.complete(
+                        AllowOrDeny.ALLOW
+                    )
                 }
                 .setOnCancelListener {
-                    result.complete(AllowOrDeny.DENY)
+                    result.complete(
+                        AllowOrDeny.DENY
+                    )
                 }
                 .show()
         }
 
         return result
     }
+
 }

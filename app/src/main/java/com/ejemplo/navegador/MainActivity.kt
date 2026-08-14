@@ -54,6 +54,11 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     private var mediaNotificationPermissionAsked = false
     private var suppressAutoPipOnce = false
 
+    // Estado capturado ANTES de que Android/YouTube cambien
+    // la Activity de foreground a PiP/background.
+    private var pipPlaybackWasActive = false
+    private var backgroundPlaybackWasActive = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeManager.applyWindow(this)
         super.onCreate(savedInstanceState)
@@ -505,6 +510,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
     override fun onResume() {
         suppressAutoPipOnce = false
+        backgroundPlaybackWasActive = false
         super.onResume()
         ExtensionManager.attachPromptActivity(this)
         if (settingsFingerprint.isNotBlank() && settingsFingerprint != fingerprint()) {
@@ -520,9 +526,47 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
     override fun onStop() {
         captureCurrentTabPreview()
+
         if (!isInPictureInPictureMode) {
+            val tab =
+                TabManager.activeTab()
+
             TabManager.prepareForBackground()
+
+            /*
+             * Si el usuario salió mientras multimedia estaba
+             * reproduciéndose, damos a Gecko una segunda
+             * oportunidad de continuar después de la transición.
+             */
+            if (
+                backgroundPlaybackWasActive &&
+                BrowserPrefs.backgroundMedia(this) &&
+                tab != null
+            ) {
+                geckoView.postDelayed(
+                    {
+                        BrowserMediaController
+                            .resumeIfRecent(
+                                tab.id,
+                                8_000L
+                            )
+                    },
+                    180L
+                )
+
+                geckoView.postDelayed(
+                    {
+                        BrowserMediaController
+                            .resumeIfRecent(
+                                tab.id,
+                                8_000L
+                            )
+                    },
+                    650L
+                )
+            }
         }
+
         super.onStop()
     }
 
@@ -633,6 +677,13 @@ private fun startMiniPlayer(
         tab.session
             ?: return
 
+    /*
+     * Capturar el estado antes de tocar CSS, GeckoSession
+     * o Picture-in-Picture.
+     */
+    pipPlaybackWasActive =
+        isMiniPlaybackActive(tab)
+
     if (!hasMiniVideo(tab)) {
         if (!silent) {
             Toast.makeText(
@@ -720,12 +771,44 @@ private fun startMiniPlayer(
                 }.getOrDefault(false)
 
             if (!entered) {
+                pipPlaybackWasActive = false
+
                 ExtensionManager.setPipMode(
                     session,
                     false
                 )
 
                 updateMiniPlayerChip()
+            } else if (
+                pipPlaybackWasActive
+            ) {
+                /*
+                 * Algunos sitios (especialmente YouTube) envían
+                 * una pausa transitoria al cambiar de ventana.
+                 * Reanudamos únicamente porque sabemos que
+                 * estaba reproduciéndose antes de entrar a PiP.
+                 */
+                geckoView.postDelayed(
+                    {
+                        BrowserMediaController
+                            .resumeIfRecent(
+                                tab.id,
+                                8_000L
+                            )
+                    },
+                    180L
+                )
+
+                geckoView.postDelayed(
+                    {
+                        BrowserMediaController
+                            .resumeIfRecent(
+                                tab.id,
+                                8_000L
+                            )
+                    },
+                    650L
+                )
             }
         }
 
@@ -845,6 +928,17 @@ override fun onUserLeaveHint() {
     val tab =
         TabManager.activeTab()
 
+    /*
+     * También cubre modo solo audio / segundo plano.
+     * Se captura antes de que el sitio reciba eventos de
+     * lifecycle y pueda marcarse temporalmente como pausado.
+     */
+    backgroundPlaybackWasActive =
+        tab != null &&
+        BrowserPrefs.backgroundMedia(this) &&
+        BrowserMediaController
+            .isPlaybackActive(tab.id)
+
     if (
         !suppressAutoPipOnce &&
         !isInPictureInPictureMode &&
@@ -875,7 +969,27 @@ override fun onUserLeaveHint() {
 
         if (isInPictureInPictureMode) {
             TabManager.prepareForPictureInPicture()
+
+            val tab =
+                TabManager.activeTab()
+
+            if (
+                pipPlaybackWasActive &&
+                tab != null
+            ) {
+                geckoView.postDelayed(
+                    {
+                        BrowserMediaController
+                            .resumeIfRecent(
+                                tab.id,
+                                8_000L
+                            )
+                    },
+                    140L
+                )
+            }
         } else {
+            pipPlaybackWasActive = false
             TabManager.resumeActive()
         }
 
