@@ -330,6 +330,25 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     }
 
     private fun downloadUrl(url: String) {
+        if (ExtensionManager.isRemoteExtensionPackage(url)) {
+            Toast.makeText(
+                this,
+                "Abriendo instalador de extensión…",
+                Toast.LENGTH_SHORT
+            ).show()
+
+            ExtensionManager.installUrl(this, url) { _, message ->
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        message,
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+            return
+        }
+
         if (!url.startsWith("http://") && !url.startsWith("https://")) {
             Toast.makeText(this, "Este recurso no se puede descargar directamente", Toast.LENGTH_LONG).show()
             return
@@ -540,6 +559,16 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             return
         }
 
+        if (!BrowserMediaController.isVideoPlaying(tab.id)) {
+            Toast.makeText(
+                this,
+                "Reproduce el video antes de abrir Mini.",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        TabManager.prepareForPictureInPicture()
         ExtensionManager.setPipMode(session, true)
         miniPlayerButton.visibility = View.GONE
 
@@ -630,6 +659,12 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             attachedSession,
             isInPictureInPictureMode
         )
+
+        if (isInPictureInPictureMode) {
+            TabManager.prepareForPictureInPicture()
+        } else {
+            TabManager.resumeActive()
+        }
 
         runCatching {
             attachedSession

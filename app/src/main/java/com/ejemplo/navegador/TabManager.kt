@@ -354,6 +354,15 @@ object TabManager {
         persist()
     }
 
+    fun prepareForPictureInPicture() {
+        val tab = activeTab() ?: return
+        tab.session?.let { session ->
+            session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
+            session.setActive(true)
+        }
+        MediaPlaybackService.sync(requireContext())
+    }
+
     fun prepareForBackground() {
         val tab = activeTab()
 
@@ -510,6 +519,18 @@ object TabManager {
                     session: GeckoSession,
                     response: WebResponse
                 ) {
+                    if (ExtensionManager.isRemoteExtensionPackage(response.uri)) {
+                        runCatching { response.body?.close() }
+                        listener?.onMessage("Preparando instalación de extensión…")
+                        ExtensionManager.installUrl(
+                            requireContext(),
+                            response.uri
+                        ) { _, message ->
+                            listener?.onMessage(message)
+                        }
+                        return
+                    }
+
                     DownloadStore.saveResponse(
                         requireContext(),
                         response
@@ -574,6 +595,17 @@ object TabManager {
                     session: GeckoSession,
                     request: GeckoSession.NavigationDelegate.LoadRequest
                 ): GeckoResult<AllowOrDeny>? {
+                    if (ExtensionManager.isRemoteExtensionPackage(request.uri)) {
+                        listener?.onMessage("Abriendo instalador de extensión…")
+                        ExtensionManager.installUrl(
+                            requireContext(),
+                            request.uri
+                        ) { _, message ->
+                            listener?.onMessage(message)
+                        }
+                        return GeckoResult.fromValue(AllowOrDeny.DENY)
+                    }
+
                     val target =
                         normalizeMobileUrl(
                             request.uri,

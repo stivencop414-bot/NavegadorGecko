@@ -119,6 +119,19 @@ object ExtensionManager {
             )
     }
 
+    fun isRemoteExtensionPackage(
+        url: String
+    ): Boolean {
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+        if (!uri.scheme.equals("https", ignoreCase = true)) return false
+
+        val host = uri.host?.lowercase().orEmpty()
+        val path = uri.path?.lowercase().orEmpty()
+
+        return path.endsWith(".xpi") ||
+            (host.endsWith("addons.mozilla.org") && path.contains("/downloads/"))
+    }
+
     fun installUrl(
         context: Context,
         url: String,
@@ -168,7 +181,7 @@ object ExtensionManager {
 
         val detail = when (install.code) {
             WebExtension.InstallException.ErrorCodes.ERROR_SIGNEDSTATE_REQUIRED ->
-                "El paquete no está firmado por Mozilla. Las extensiones locales normales deben conservar una firma válida para que GeckoView permita instalarlas."
+                "El paquete no tiene una firma válida de Mozilla. Si lo obtuviste desde Mozilla Add-ons, usa “Agregar a Firefox” dentro de Nexo para conservar la descarga oficial. Las carpetas o ZIP de código fuente no se pueden instalar como extensión normal hasta estar firmados."
             WebExtension.InstallException.ErrorCodes.ERROR_CORRUPT_FILE ->
                 "El archivo XPI está corrupto o no es un paquete válido."
             WebExtension.InstallException.ErrorCodes.ERROR_FILE_ACCESS ->
@@ -348,10 +361,9 @@ object ExtensionManager {
             (Boolean, String) -> Unit
     ) {
         if (candidate.isFolder) {
-            importFolder(
-                context,
-                candidate.document,
-                onDone
+            onDone(
+                false,
+                "Esta carpeta contiene código fuente. GeckoView solo instala extensiones normales con firma válida de Mozilla. Busca un XPI firmado dentro de la carpeta o instálalo directamente desde Mozilla Add-ons."
             )
         } else {
             importXpi(
@@ -576,142 +588,18 @@ object ExtensionManager {
         input: File
     ): File {
         val rootManifest =
-            java.util.zip.ZipFile(
-                input
-            ).use {
-                zip ->
-
-                zip.getEntry(
-                    "manifest.json"
-                ) != null
+            java.util.zip.ZipFile(input).use { zip ->
+                zip.getEntry("manifest.json") != null
             }
 
-        if (rootManifest) {
-            validateArchive(
-                input
+        if (!rootManifest) {
+            error(
+                "Este ZIP parece ser código fuente o contiene una carpeta raíz. Nexo no lo reempaqueta porque eso no crea una firma válida de Mozilla. Selecciona el XPI firmado oficial o instálalo desde Mozilla Add-ons."
             )
-
-            return input
         }
 
-        val prefix =
-            java.util.zip.ZipFile(
-                input
-            ).use {
-                zip ->
-
-                zip.entries()
-                    .asSequence()
-                    .filter {
-                        !it.isDirectory &&
-                            it.name
-                                .endsWith(
-                                    "/manifest.json"
-                                )
-                    }
-                    .map {
-                        it.name
-                            .removeSuffix(
-                                "manifest.json"
-                            )
-                    }
-                    .sortedBy {
-                        it.count {
-                            char ->
-                            char == '/'
-                        }
-                    }
-                    .firstOrNull()
-            }
-                ?: error(
-                    "El ZIP no contiene manifest.json."
-                )
-
-        val repacked =
-            File(
-                input.parentFile,
-                "normalized-" +
-                    System.currentTimeMillis() +
-                    ".xpi"
-            )
-
-        java.util.zip.ZipFile(
-            input
-        ).use {
-            zip ->
-
-            java.util.zip.ZipOutputStream(
-                FileOutputStream(
-                    repacked
-                )
-            ).use {
-                output ->
-
-                var entries = 0
-
-                zip.entries()
-                    .asSequence()
-                    .filter {
-                        !it.isDirectory &&
-                            it.name
-                                .startsWith(
-                                    prefix
-                                )
-                    }
-                    .forEach {
-                        entry ->
-
-                        val relative =
-                            entry.name
-                                .removePrefix(
-                                    prefix
-                                )
-
-                        if (
-                            relative.isBlank()
-                        ) {
-                            return@forEach
-                        }
-
-                        entries += 1
-
-                        if (
-                            entries > 5000
-                        ) {
-                            error(
-                                "El ZIP contiene demasiados archivos."
-                            )
-                        }
-
-                        output.putNextEntry(
-                            java.util.zip.ZipEntry(
-                                relative
-                            )
-                        )
-
-                        zip.getInputStream(
-                            entry
-                        ).use {
-                            stream ->
-
-                            stream.copyTo(
-                                output,
-                                128 * 1024
-                            )
-                        }
-
-                        output.closeEntry()
-                    }
-            }
-        }
-
-        input.delete()
-
-        validateArchive(
-            repacked
-        )
-
-        return repacked
+        validateArchive(input)
+        return input
     }
 
     private fun packageDocumentFolder(
