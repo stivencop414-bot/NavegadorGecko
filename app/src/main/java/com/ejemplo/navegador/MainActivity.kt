@@ -526,129 +526,342 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         super.onStop()
     }
 
-    private fun isMiniVideoAvailable(): Boolean {
-        val tab = TabManager.activeTab() ?: return false
+    private fun isYoutubeVideoPage(
+    url: String
+): Boolean {
+    val uri =
+        runCatching {
+            Uri.parse(url)
+        }.getOrNull()
+            ?: return false
 
-        return BrowserPrefs.smartPip(this) &&
-            BrowserMediaController.isVideoPresent(tab.id)
+    val host =
+        uri.host
+            ?.lowercase()
+            .orEmpty()
+
+    val path =
+        uri.path
+            ?.lowercase()
+            .orEmpty()
+
+    return when (host) {
+        "youtu.be" ->
+            path.length > 1
+
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com" ->
+            path == "/watch" ||
+                path.startsWith("/shorts/") ||
+                path.startsWith("/live/")
+
+        else ->
+            false
     }
+}
 
-    private fun updateMiniPlayerChip() {
-        miniPlayerButton.visibility =
-            if (
-                !isInPictureInPictureMode &&
-                isMiniVideoAvailable()
-            ) View.VISIBLE else View.GONE
-    }
+private fun isMiniPlaybackActive(
+    tab: BrowserTab
+): Boolean =
+    BrowserMediaController
+        .isVideoPlaying(tab.id) ||
+        BrowserMediaController
+            .isPlaying(tab.id)
 
-    private fun startMiniPlayer() {
-        if (Build.VERSION.SDK_INT < 26) {
+private fun hasMiniVideo(
+    tab: BrowserTab
+): Boolean =
+    BrowserMediaController
+        .isVideoPresent(tab.id) ||
+        BrowserMediaController
+            .isVideoPlaying(tab.id) ||
+        (
+            isYoutubeVideoPage(tab.url) &&
+                BrowserMediaController
+                    .isPlaying(tab.id)
+        )
+
+private fun isMiniVideoAvailable(): Boolean {
+    val tab =
+        TabManager.activeTab()
+            ?: return false
+
+    return BrowserPrefs
+        .smartPip(this) &&
+        hasMiniVideo(tab)
+}
+
+private fun updateMiniPlayerChip() {
+    miniPlayerButton.visibility =
+        if (
+            !isInPictureInPictureMode &&
+            isMiniVideoAvailable()
+        ) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
+}
+
+private fun startMiniPlayer(
+    silent: Boolean = false,
+    requirePlayback: Boolean = false,
+    delayMs: Long = 120L
+) {
+    if (Build.VERSION.SDK_INT < 26) {
+        if (!silent) {
             Toast.makeText(
                 this,
                 "Mini reproductor requiere Android 8 o superior",
                 Toast.LENGTH_SHORT
             ).show()
-            return
         }
 
-        val tab = TabManager.activeTab() ?: return
-        val session = tab.session ?: return
+        return
+    }
 
-        if (!BrowserMediaController.isVideoPresent(tab.id)) {
-            updateMiniPlayerChip()
-            return
-        }
+    if (isInPictureInPictureMode) {
+        return
+    }
 
-        if (!BrowserMediaController.isVideoPlaying(tab.id)) {
+    val tab =
+        TabManager.activeTab()
+            ?: return
+
+    val session =
+        tab.session
+            ?: return
+
+    if (!hasMiniVideo(tab)) {
+        if (!silent) {
             Toast.makeText(
                 this,
-                "Reproduce el video antes de abrir Mini.",
+                "No se detectó un video para abrir Mini.",
                 Toast.LENGTH_SHORT
             ).show()
-            return
         }
 
-        TabManager.prepareForPictureInPicture()
-        ExtensionManager.setPipMode(session, true)
-        miniPlayerButton.visibility = View.GONE
+        updateMiniPlayerChip()
+        return
+    }
 
-        geckoView.postDelayed(
-            {
-                val builder = PictureInPictureParams.Builder()
-                    .setAspectRatio(pipAspectRatio(tab.id))
+    if (
+        requirePlayback &&
+        !isMiniPlaybackActive(tab)
+    ) {
+        return
+    }
 
-                if (geckoView.width > 0 && geckoView.height > 0) {
-                    builder.setSourceRectHint(
-                        Rect(
-                            geckoView.left,
-                            geckoView.top,
-                            geckoView.right,
-                            geckoView.bottom
+    /*
+     * Mantener GeckoSession activa durante
+     * la transición a Android PiP.
+     */
+    TabManager.prepareForPictureInPicture()
+
+    /*
+     * Pedir al bridge JS que aisle
+     * únicamente el video HTML5.
+     */
+    ExtensionManager.setPipMode(
+        session,
+        true
+    )
+
+    miniPlayerButton.visibility =
+        View.GONE
+
+    val enterPip =
+        Runnable {
+            val builder =
+                PictureInPictureParams
+                    .Builder()
+                    .setAspectRatio(
+                        pipAspectRatio(
+                            tab.id
                         )
                     )
-                }
 
-                if (Build.VERSION.SDK_INT >= 31) {
-                    builder
-                        .setAutoEnterEnabled(false)
-                        .setSeamlessResizeEnabled(true)
-                }
+            if (
+                geckoView.width > 0 &&
+                geckoView.height > 0
+            ) {
+                builder.setSourceRectHint(
+                    Rect(
+                        geckoView.left,
+                        geckoView.top,
+                        geckoView.right,
+                        geckoView.bottom
+                    )
+                )
+            }
 
-                val entered = runCatching {
-                    enterPictureInPictureMode(builder.build())
+            if (
+                Build.VERSION.SDK_INT >= 31
+            ) {
+                /*
+                 * Nexo controla manualmente el PiP
+                 * desde onUserLeaveHint().
+                 *
+                 * Se mantiene autoEnter desactivado
+                 * para no activar PiP al entrar en
+                 * Configuración, Historial, etc.
+                 */
+                builder
+                    .setAutoEnterEnabled(false)
+                    .setSeamlessResizeEnabled(true)
+            }
+
+            val entered =
+                runCatching {
+                    enterPictureInPictureMode(
+                        builder.build()
+                    )
                 }.getOrDefault(false)
 
-                if (!entered) {
-                    ExtensionManager.setPipMode(session, false)
-                    updateMiniPlayerChip()
-                }
-            },
-            120L
+            if (!entered) {
+                ExtensionManager.setPipMode(
+                    session,
+                    false
+                )
+
+                updateMiniPlayerChip()
+            }
+        }
+
+    /*
+     * Botón manual:
+     * 120 ms para permitir que JS prepare
+     * el aislamiento.
+     *
+     * Home / cambio de app:
+     * delay 0 para evitar carrera con onStop().
+     */
+    if (delayMs <= 0L) {
+        enterPip.run()
+    } else {
+        geckoView.postDelayed(
+            enterPip,
+            delayMs
+        )
+    }
+}
+
+private fun updatePipParams() {
+    if (Build.VERSION.SDK_INT < 26) {
+        return
+    }
+
+    val tab =
+        TabManager.activeTab()
+
+    val builder =
+        PictureInPictureParams
+            .Builder()
+            .setAspectRatio(
+                pipAspectRatio(
+                    tab?.id
+                )
+            )
+
+    if (
+        geckoView.width > 0 &&
+        geckoView.height > 0
+    ) {
+        builder.setSourceRectHint(
+            Rect(
+                geckoView.left,
+                geckoView.top,
+                geckoView.right,
+                geckoView.bottom
+            )
         )
     }
 
-    private fun updatePipParams() {
-        if (Build.VERSION.SDK_INT < 26) return
+    if (
+        Build.VERSION.SDK_INT >= 31
+    ) {
+        builder
+            .setAutoEnterEnabled(false)
+            .setSeamlessResizeEnabled(true)
+    }
 
-        val tab = TabManager.activeTab()
-        val builder = PictureInPictureParams.Builder()
-            .setAspectRatio(pipAspectRatio(tab?.id))
+    runCatching {
+        setPictureInPictureParams(
+            builder.build()
+        )
+    }
+}
 
-        if (geckoView.width > 0 && geckoView.height > 0) {
-            builder.setSourceRectHint(
-                Rect(
-                    geckoView.left,
-                    geckoView.top,
-                    geckoView.right,
-                    geckoView.bottom
-                )
+private fun pipAspectRatio(
+    tabId: String?
+): Rational {
+    val (rawWidth, rawHeight) =
+        if (tabId != null) {
+            BrowserMediaController
+                .videoAspect(tabId)
+        } else {
+            16 to 9
+        }
+
+    val width =
+        rawWidth.coerceAtLeast(1)
+
+    val height =
+        rawHeight.coerceAtLeast(1)
+
+    val ratio =
+        width.toDouble() /
+            height.toDouble()
+
+    /*
+     * Android PiP acepta aproximadamente
+     * ratios entre 1:2.39 y 2.39:1.
+     *
+     * Dejamos margen de seguridad.
+     */
+    return when {
+        ratio < 0.42 ->
+            Rational(
+                42,
+                100
             )
-        }
 
-        if (Build.VERSION.SDK_INT >= 31) {
-            builder
-                .setAutoEnterEnabled(false)
-                .setSeamlessResizeEnabled(true)
-        }
+        ratio > 2.38 ->
+            Rational(
+                238,
+                100
+            )
 
-        runCatching {
-            setPictureInPictureParams(builder.build())
-        }
+        else ->
+            Rational(
+                width,
+                height
+            )
+    }
+}
+
+override fun onUserLeaveHint() {
+    val tab =
+        TabManager.activeTab()
+
+    if (
+        !suppressAutoPipOnce &&
+        !isInPictureInPictureMode &&
+        BrowserPrefs.smartPip(this) &&
+        tab != null &&
+        hasMiniVideo(tab) &&
+        isMiniPlaybackActive(tab)
+    ) {
+        startMiniPlayer(
+            silent = true,
+            requirePlayback = true,
+            delayMs = 0L
+        )
     }
 
-    private fun pipAspectRatio(tabId: String?): Rational {
-        val (rawWidth, rawHeight) =
-            if (tabId != null) BrowserMediaController.videoAspect(tabId) else 16 to 9
-        val width = rawWidth.coerceAtLeast(1)
-        val height = rawHeight.coerceAtLeast(1)
-        val ratio = width.toDouble() / height.toDouble()
-        return if (ratio in (1.0 / 2.39)..2.39) Rational(width, height)
-        else Rational(16, 9)
-    }
-
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-    }
+    super.onUserLeaveHint()
+}
 
     override fun onPictureInPictureModeChanged(
         isInPictureInPictureMode: Boolean,

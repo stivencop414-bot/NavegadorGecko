@@ -7,6 +7,7 @@
   let spoofed = false;
   let pipVideo = null;
   let pipAncestors = [];
+  let pipActive = false;
   let reportTimer = 0;
 
   function pageDocument() {
@@ -156,30 +157,60 @@
 
   function bestVideo(preferPlaying) {
     const videos = videoList();
-    if (!videos.length) return null;
 
-    const playing = videos.filter(
-      video => !video.paused && !video.ended
-    );
+    if (!videos.length) {
+      return null;
+    }
+
+    const playing =
+      videos.filter(
+        video =>
+          !video.paused &&
+          !video.ended
+      );
+
+    /*
+     * Si solicitamos un video reproduciendo,
+     * no devolver uno pausado como fallback.
+     */
+    if (
+      preferPlaying &&
+      !playing.length
+    ) {
+      return null;
+    }
 
     const candidates =
-      preferPlaying && playing.length
+      preferPlaying
         ? playing
         : videos;
 
     return candidates
       .slice()
-      .sort((a, b) => videoArea(b) - videoArea(a))[0]
-      || null;
+      .sort(
+        (a, b) =>
+          videoArea(b) -
+          videoArea(a)
+      )[0] || null;
   }
 
   function ensurePipStyle() {
-    if (document.getElementById("nexo-pip-style")) {
+    if (
+      document.getElementById(
+        "nexo-pip-style"
+      )
+    ) {
       return;
     }
 
-    const style = document.createElement("style");
-    style.id = "nexo-pip-style";
+    const style =
+      document.createElement(
+        "style"
+      );
+
+    style.id =
+      "nexo-pip-style";
+
     style.textContent = `
       html.nexo-pip-root,
       html.nexo-pip-root body {
@@ -187,30 +218,53 @@
         overflow: hidden !important;
       }
 
+      /*
+       * YouTube utiliza transform,
+       * contain y will-change en padres
+       * del reproductor.
+       *
+       * Eso puede convertir esos elementos
+       * en containing blocks y romper
+       * position: fixed.
+       */
       html.nexo-pip-root .nexo-pip-ancestor {
-        position: relative !important;
-        z-index: 2147483646 !important;
+        position: static !important;
+        transform: none !important;
+        contain: none !important;
+        will-change: auto !important;
+        filter: none !important;
+        perspective: none !important;
+        backdrop-filter: none !important;
+        z-index: auto !important;
         overflow: visible !important;
         clip: auto !important;
+        clip-path: none !important;
       }
 
       html.nexo-pip-root video.nexo-pip-video {
         position: fixed !important;
-        inset: 0 !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
         width: 100vw !important;
         height: 100vh !important;
-        max-width: none !important;
-        max-height: none !important;
+        max-width: 100vw !important;
+        max-height: 100vh !important;
         object-fit: contain !important;
+        object-position: center center !important;
         z-index: 2147483647 !important;
         background: #000 !important;
         margin: 0 !important;
         padding: 0 !important;
+        transform: none !important;
       }
     `;
 
-    (document.head || document.documentElement)
-      .appendChild(style);
+    (
+      document.head ||
+      document.documentElement
+    ).appendChild(style);
   }
 
   function clearPipIsolation() {
@@ -230,37 +284,100 @@
   }
 
   function setPipIsolation(active) {
-    if (!active) {
+    pipActive =
+      active === true;
+
+    if (!pipActive) {
       clearPipIsolation();
       return;
     }
 
-    const video = bestVideo(true) || bestVideo(false);
-    if (!video) return;
+    const video =
+      bestVideo(true) ||
+      bestVideo(false);
+
+    if (!video) {
+      return;
+    }
 
     clearPipIsolation();
     ensurePipStyle();
 
     pipVideo = video;
-    let current = video.parentElement;
+
+    let current =
+      video.parentElement;
 
     while (
       current &&
       current !== document.body &&
-      current !== document.documentElement
+      current !==
+        document.documentElement
     ) {
-      current.classList.add("nexo-pip-ancestor");
-      pipAncestors.push(current);
-      current = current.parentElement;
+      current.classList.add(
+        "nexo-pip-ancestor"
+      );
+
+      pipAncestors.push(
+        current
+      );
+
+      current =
+        current.parentElement;
     }
 
-    document.documentElement.classList
-      .add("nexo-pip-root");
+    document.documentElement
+      .classList.add(
+        "nexo-pip-root"
+      );
 
-    video.classList.add("nexo-pip-video");
+    video.classList.add(
+      "nexo-pip-video"
+    );
+  }
+
+  /*
+   * YouTube funciona como SPA y puede
+   * reemplazar o mover el <video> sin
+   * recargar la página.
+   *
+   * Mientras PiP esté activo comprobamos
+   * si seguimos aislando el video correcto.
+   */
+  function refreshPipIsolation() {
+    if (!pipActive) {
+      return;
+    }
+
+    const video =
+      bestVideo(true) ||
+      bestVideo(false);
+
+    if (!video) {
+      return;
+    }
+
+    const currentStillValid =
+      pipVideo === video &&
+      video.isConnected &&
+      pipAncestors.every(
+        ancestor =>
+          ancestor.isConnected &&
+          ancestor.classList.contains(
+            "nexo-pip-ancestor"
+          )
+      );
+
+    if (currentStillValid) {
+      return;
+    }
+
+    setPipIsolation(true);
   }
 
   function reportVideoState() {
+    refreshPipIsolation();
+
     if (!port) return;
 
     const anyVideo = bestVideo(false);
