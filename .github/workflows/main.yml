@@ -38,6 +38,7 @@ jobs:
 
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           ROOT = Path(".")
           MAIN = ROOT / "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
@@ -56,9 +57,37 @@ jobs:
           gradle = GRADLE.read_text(encoding="utf-8")
 
           def must_replace(text, old, new, label, count=1):
-              if old not in text:
-                  raise RuntimeError(f"No se encontró bloque para: {label}")
-              return text.replace(old, new, count)
+              # 1) Intento exacto: rápido y seguro.
+              if old in text:
+                  return text.replace(old, new, count)
+
+              # 2) Fallback tolerante a formato/sangría.
+              # Convierte cualquier grupo de espacios/saltos de línea
+              # del bloque esperado en \s+, manteniendo intactos los
+              # tokens reales del código. Evita falsos fallos por
+              # reformatos de Kotlin/JS sin hacer reemplazos ciegos.
+              tokens = re.split(r"\s+", old.strip())
+              pattern = r"\s+".join(
+                  re.escape(token)
+                  for token in tokens
+                  if token
+              )
+
+              updated, replaced = re.subn(
+                  pattern,
+                  lambda _: new.strip("\n") + "\n",
+                  text,
+                  count=count,
+                  flags=re.MULTILINE,
+              )
+
+              if replaced != count:
+                  raise RuntimeError(
+                      f"No se encontró bloque para: {label} "
+                      f"(exacto ni flexible; encontrados={replaced})"
+                  )
+
+              return updated
 
           def replace_between(text, start_marker, end_marker, replacement, label):
               if start_marker not in text:
