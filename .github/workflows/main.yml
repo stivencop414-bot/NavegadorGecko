@@ -1149,6 +1149,30 @@ jobs:
           compression-level: 0
           retention-days: 30
 
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.13.4
+          name: Nexo Browser v0.13.4
+          target_commitish: main
+          draft: false
+          prerelease: false
+          make_latest: true
+          fail_on_unmatched_files: true
+          body: |
+            Nexo Browser v0.13.4
+
+            Descargas:
+            - Nexo-v0.13.4-arm64-v8a.apk (Android 64 bits, recomendado)
+            - Nexo-v0.13.4-armeabi-v7a.apk (Android 32 bits)
+            - SHA256SUMS.txt
+          files: |
+            artifacts/release/Nexo-v0.13.4-arm64-v8a.apk
+            artifacts/release/Nexo-v0.13.4-armeabi-v7a.apk
+            artifacts/release/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Upload diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
