@@ -1,0 +1,145 @@
+name: Nexo v0.13.1 - AMO Direct Install PiP Stability
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/main.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    env:
+      COMPILE_SDK: "36"
+      BUILD_TOOLS: "36.0.0"
+      GRADLE_VERSION: "8.14.4"
+
+    steps:
+      - name: Checkout v0.13.0
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Apply Nexo v0.13.1 runtime fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' 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 | base64 -d | gzip -d > /tmp/nexo_v0131.py
+          python3 /tmp/nexo_v0131.py
+          git diff --stat
+
+      - name: Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-${COMPILE_SDK}" "build-tools;${BUILD_TOOLS}" "platform-tools"
+
+      - name: Install Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --retry 5 --retry-all-errors --retry-delay 3 -fsSL             "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"             -o gradle.zip
+          unzip -q gradle.zip
+          echo "$PWD/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Validate runtime fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          ext = Path("app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt").read_text()
+          tab = Path("app/src/main/java/com/ejemplo/navegador/TabManager.kt").read_text()
+          main = Path("app/src/main/java/com/ejemplo/navegador/MainActivity.kt").read_text()
+          gradle = Path("app/build.gradle.kts").read_text()
+          assert "isRemoteExtensionPackage" in ext
+          assert "response.uri" in tab
+          assert "prepareForPictureInPicture" in tab
+          assert "Reproduce el video antes de abrir Mini." in main
+          assert "geckoview-omni:153.0.20260715202819" in gradle
+          assert 'versionName = "0.13.1"' in gradle
+          PY
+
+      - name: Build Debug Release and Lint BEFORE commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug :app:assembleRelease :app:lintDebug :app:lintRelease             --stacktrace --no-daemon 2>&1 | tee full-build.log
+
+      - name: Save verified v0.13.1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/
+          if ! git diff --cached --quiet; then
+            git commit -m "Nexo v0.13.1 AMO install and PiP stability [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      - name: Sign Release APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/release
+          keytool -genkeypair -keystore nexo-v0131-ci.jks -storepass android             -alias nexo -keypass android -keyalg RSA -keysize 2048 -validity 10000             -dname "CN=Nexo Browser v0.13.1,O=Nexo,C=CO"
+
+          APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
+          ARM64="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*arm64-v8a*.apk' | head -n 1)"
+          ARM32="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*armeabi-v7a*.apk' | head -n 1)"
+
+          "$APKSIGNER" sign --ks nexo-v0131-ci.jks --ks-key-alias nexo             --ks-pass pass:android --key-pass pass:android             --out artifacts/release/Nexo-v0.13.1-arm64-v8a.apk "$ARM64"
+
+          "$APKSIGNER" sign --ks nexo-v0131-ci.jks --ks-key-alias nexo             --ks-pass pass:android --key-pass pass:android             --out artifacts/release/Nexo-v0.13.1-armeabi-v7a.apk "$ARM32"
+
+          "$APKSIGNER" verify --verbose artifacts/release/Nexo-v0.13.1-arm64-v8a.apk
+          "$APKSIGNER" verify --verbose artifacts/release/Nexo-v0.13.1-armeabi-v7a.apk
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-v0131-Release-APKs
+          path: artifacts/release/*.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-v0131-diagnostics
+          path: |
+            full-build.log
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-release.html
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_SHA="$(git rev-parse HEAD)"
+          if ! gh release view v0.13.1 >/dev/null 2>&1; then
+            gh release create v0.13.1 --target "$TARGET_SHA"               --title "Nexo Browser v0.13.1"               --notes "GeckoView 153 Stable Omni. XPI HTTPS y Mozilla Add-ons pasan al instalador de GeckoView; ZIP/carpetas fuente muestran una explicación correcta; PiP conserva la sesión multimedia activa y en alta prioridad."
+          fi
+          gh release upload v0.13.1             artifacts/release/Nexo-v0.13.1-arm64-v8a.apk             artifacts/release/Nexo-v0.13.1-armeabi-v7a.apk             --clobber
