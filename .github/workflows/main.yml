@@ -889,6 +889,25 @@ jobs:
           print("✅ Nexo v0.13.5 patch aplicado")
           PY
 
+          # Normalizar espacios finales generados por reemplazos multilínea.
+          python3 - <<'PY_CLEAN'
+          from pathlib import Path
+          for raw in [
+              "app/src/main/java/com/ejemplo/navegador/MainActivity.kt",
+              "app/src/main/java/com/ejemplo/navegador/TabManager.kt",
+              "app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt",
+              "app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt",
+              "app/src/main/assets/extensions/nexo_bridge/content_script.js",
+              "app/src/main/res/layout/activity_extensions.xml",
+              "app/build.gradle.kts",
+          ]:
+              path = Path(raw)
+              text = path.read_text(encoding="utf-8")
+              cleaned = "\n".join(line.rstrip() for line in text.splitlines()) + "\n"
+              path.write_text(cleaned, encoding="utf-8")
+          print("✅ Espacios finales normalizados")
+          PY_CLEAN
+
           echo ""
           echo "========================================"
           echo " CAMBIOS GENERADOS"
