@@ -1,4 +1,4 @@
-name: Nexo v0.13.4 - Foreground Audio Stability Fix
+name: Nexo v0.13.5 - Stable PiP and Local Extensions
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: nexo-v0134-foreground-audio-stability
+  group: nexo-v0135-stable-pip-local-extensions
   cancel-in-progress: true
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply Nexo v0.13.4 foreground audio fixes
+      - name: Apply Nexo v0.13.5 fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -42,15 +42,22 @@ jobs:
 
           ROOT = Path(".")
           MAIN = ROOT / "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
-          MEDIA = ROOT / "app/src/main/java/com/ejemplo/navegador/BrowserMediaController.kt"
-          SERVICE = ROOT / "app/src/main/java/com/ejemplo/navegador/MediaPlaybackService.kt"
+          TABS = ROOT / "app/src/main/java/com/ejemplo/navegador/TabManager.kt"
+          EXT = ROOT / "app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt"
+          EXT_ACTIVITY = ROOT / "app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt"
+          EXT_LAYOUT = ROOT / "app/src/main/res/layout/activity_extensions.xml"
+          BRIDGE_JS = ROOT / "app/src/main/assets/extensions/nexo_bridge/content_script.js"
           GRADLE = ROOT / "app/build.gradle.kts"
 
           main = MAIN.read_text(encoding="utf-8")
+          tabs = TABS.read_text(encoding="utf-8")
+          ext = EXT.read_text(encoding="utf-8")
+          ext_activity = EXT_ACTIVITY.read_text(encoding="utf-8")
+          ext_layout = EXT_LAYOUT.read_text(encoding="utf-8")
           gradle = GRADLE.read_text(encoding="utf-8")
 
           def must_replace(text, old, new, label, count=1):
-              if old in text:
+              if text.count(old) >= count:
                   return text.replace(old, new, count)
 
               tokens = re.split(r"\s+", old.strip())
@@ -76,784 +83,13 @@ jobs:
 
               return updated
 
-          MEDIA.write_text(r'''package com.ejemplo.navegador
-          
-          import android.os.Handler
-          import android.os.Looper
-          import android.os.SystemClock
-          import org.mozilla.geckoview.MediaSession
-          
-          object BrowserMediaController {
-              interface Listener {
-                  fun onBrowserMediaStateChanged()
-              }
-          
-              data class Snapshot(
-                  val tabId: String,
-                  val title: String,
-                  val playing: Boolean
-              )
-          
-              private data class Entry(
-                  val mediaSession: MediaSession,
-                  var title: String,
-                  var playing: Boolean = false
-              )
-          
-              private data class VideoState(
-                  var present: Boolean = false,
-                  var playing: Boolean = false,
-                  var width: Int = 0,
-                  var height: Int = 0
-              )
-          
-              private val entries = linkedMapOf<String, Entry>()
-              private val videos = mutableMapOf<String, VideoState>()
-              private val recentPlayback = mutableMapOf<String, Long>()
-          
-              /*
-               * Ventana de protección para Home/PiP.
-               * Durante esta ventana una pausa transitoria emitida por el sitio
-               * no debe apagar GeckoSession ni el foreground service.
-               */
-              private val playbackHoldUntil = mutableMapOf<String, Long>()
-          
-              private val main = Handler(Looper.getMainLooper())
-          
-              private var listener: Listener? = null
-              private var currentTabId: String? = null
-          
-              private fun now(): Long = SystemClock.elapsedRealtime()
-          
-              private fun markRecentlyPlaying(tabId: String) {
-                  recentPlayback[tabId] = now()
-              }
-          
-              private fun hasActiveHold(tabId: String): Boolean {
-                  val until = playbackHoldUntil[tabId] ?: return false
-                  if (now() >= until) {
-                      playbackHoldUntil.remove(tabId)
-                      return false
-                  }
-                  return true
-              }
-          
-              private fun cleanupExpiredHold(tabId: String) {
-                  if (hasActiveHold(tabId)) return
-          
-                  playbackHoldUntil.remove(tabId)
-          
-                  val entry = entries[tabId]
-                  if (
-                      entry != null &&
-                      !entry.playing &&
-                      videos[tabId]?.playing != true &&
-                      !entry.mediaSession.isActive
-                  ) {
-                      entries.remove(tabId)
-                      if (currentTabId == tabId) {
-                          currentTabId = null
-                      }
-                  }
-          
-                  notifyChanged()
-              }
-          
-              fun holdPlayback(
-                  tabId: String,
-                  durationMs: Long = 10_000L
-              ) {
-                  val duration = durationMs.coerceAtLeast(1_000L)
-                  val until = now() + duration
-                  val previous = playbackHoldUntil[tabId] ?: 0L
-                  playbackHoldUntil[tabId] = maxOf(previous, until)
-          
-                  main.postDelayed(
-                      { cleanupExpiredHold(tabId) },
-                      duration + 100L
-                  )
-          
-                  notifyChanged()
-              }
-          
-              fun clearPlaybackHold(tabId: String) {
-                  if (playbackHoldUntil.remove(tabId) != null) {
-                      notifyChanged()
-                  }
-              }
-          
-              fun isPlaybackHoldActive(tabId: String): Boolean =
-                  hasActiveHold(tabId)
-          
-              fun attach(value: Listener?) {
-                  listener = value
-                  listener?.onBrowserMediaStateChanged()
-              }
-          
-              fun onActivated(
-                  tab: BrowserTab,
-                  media: MediaSession
-              ) {
-                  val previous = entries[tab.id]
-          
-                  entries[tab.id] = Entry(
-                      mediaSession = media,
-                      title = tab.title.ifBlank {
-                          previous?.title ?: "Multimedia en Nexo"
-                      },
-                      playing = previous?.playing == true
-                  )
-          
-                  currentTabId = tab.id
-                  notifyChanged()
-              }
-          
-              fun onDeactivated(
-                  tabId: String,
-                  media: MediaSession
-              ) {
-                  val entry = entries[tabId]
-          
-                  if (entry?.mediaSession === media) {
-                      if (hasActiveHold(tabId)) {
-                          entry.playing = false
-                      } else {
-                          entries.remove(tabId)
-                          if (currentTabId == tabId) {
-                              currentTabId = null
-                          }
-                      }
-                  }
-          
-                  notifyChanged()
-              }
-          
-              fun onPlay(
-                  tab: BrowserTab,
-                  media: MediaSession
-              ) {
-                  val entry = entries[tab.id]
-          
-                  if (entry == null || entry.mediaSession !== media) {
-                      entries[tab.id] = Entry(
-                          mediaSession = media,
-                          title = tab.title.ifBlank {
-                              "Multimedia en Nexo"
-                          },
-                          playing = true
-                      )
-                  } else {
-                      if (tab.title.isNotBlank()) {
-                          entry.title = tab.title
-                      }
-                      entry.playing = true
-                  }
-          
-                  currentTabId = tab.id
-                  markRecentlyPlaying(tab.id)
-                  notifyChanged()
-              }
-          
-              fun onPause(
-                  tabId: String,
-                  media: MediaSession
-              ) {
-                  entries[tabId]
-                      ?.takeIf { it.mediaSession === media }
-                      ?.playing = false
-          
-                  notifyChanged()
-              }
-          
-              fun onStop(
-                  tabId: String,
-                  media: MediaSession
-              ) {
-                  val entry = entries[tabId]
-          
-                  if (entry?.mediaSession === media) {
-                      if (hasActiveHold(tabId)) {
-                          entry.playing = false
-                      } else {
-                          entries.remove(tabId)
-                          recentPlayback.remove(tabId)
-                          if (currentTabId == tabId) {
-                              currentTabId = null
-                          }
-                      }
-                  }
-          
-                  notifyChanged()
-              }
-          
-              fun updateMetadata(
-                  tabId: String,
-                  media: MediaSession,
-                  title: String?
-              ) {
-                  val entry = entries[tabId] ?: return
-                  if (entry.mediaSession !== media) return
-          
-                  if (!title.isNullOrBlank()) {
-                      entry.title = title
-                  }
-          
-                  notifyChanged()
-              }
-          
-              fun updateTabTitle(
-                  tabId: String,
-                  title: String
-              ) {
-                  val entry = entries[tabId] ?: return
-          
-                  if (title.isNotBlank()) {
-                      entry.title = title
-                  }
-          
-                  if (entry.playing || hasActiveHold(tabId)) {
-                      notifyChanged()
-                  }
-              }
-          
-              fun onVideoState(
-                  tabId: String,
-                  present: Boolean,
-                  playing: Boolean,
-                  width: Int,
-                  height: Int
-              ) {
-                  videos[tabId] = VideoState(
-                      present = present,
-                      playing = playing,
-                      width = width.coerceAtLeast(0),
-                      height = height.coerceAtLeast(0)
-                  )
-          
-                  if (playing) {
-                      markRecentlyPlaying(tabId)
-                  }
-          
-                  listener?.onBrowserMediaStateChanged()
-              }
-          
-              fun resetVideo(tabId: String) {
-                  videos.remove(tabId)
-                  listener?.onBrowserMediaStateChanged()
-              }
-          
-              fun removeTab(tabId: String) {
-                  entries.remove(tabId)
-                  videos.remove(tabId)
-                  recentPlayback.remove(tabId)
-                  playbackHoldUntil.remove(tabId)
-          
-                  if (currentTabId == tabId) {
-                      currentTabId = null
-                  }
-          
-                  notifyChanged()
-              }
-          
-              fun isPlaying(tabId: String): Boolean =
-                  entries[tabId]?.playing == true
-          
-              fun isAnyPlaying(): Boolean =
-                  entries.values.any { it.playing }
-          
-              fun isVideoPresent(tabId: String): Boolean =
-                  videos[tabId]?.present == true
-          
-              fun isVideoPlaying(tabId: String): Boolean =
-                  videos[tabId]?.playing == true
-          
-              fun isPlaybackActive(tabId: String): Boolean =
-                  isPlaying(tabId) || isVideoPlaying(tabId)
-          
-              fun wasRecentlyPlaying(
-                  tabId: String,
-                  windowMs: Long = 6_000L
-              ): Boolean {
-                  val last = recentPlayback[tabId] ?: return false
-                  return now() - last <= windowMs.coerceAtLeast(0L)
-              }
-          
-              fun shouldKeepAlive(
-                  tabId: String,
-                  windowMs: Long = 6_000L
-              ): Boolean =
-                  isPlaybackActive(tabId) ||
-                      hasActiveHold(tabId) ||
-                      wasRecentlyPlaying(tabId, windowMs)
-          
-              fun videoAspect(tabId: String): Pair<Int, Int> {
-                  val state = videos[tabId]
-                  return if (
-                      (state?.width ?: 0) > 0 &&
-                      (state?.height ?: 0) > 0
-                  ) {
-                      state!!.width to state.height
-                  } else {
-                      16 to 9
-                  }
-              }
-          
-              /*
-               * Solo reanuda automáticamente cuando existe una transición
-               * explícitamente protegida por MainActivity.
-               * Esto evita reactivar un contenido que el usuario pausó a mano.
-               */
-              fun resumeIfRecent(
-                  tabId: String,
-                  @Suppress("UNUSED_PARAMETER") windowMs: Long = 6_000L
-              ): Boolean {
-                  if (!hasActiveHold(tabId)) {
-                      return false
-                  }
-          
-                  val media = entries[tabId]?.mediaSession ?: return false
-          
-                  main.post {
-                      runCatching {
-                          if (media.isActive) {
-                              media.play()
-                          }
-                      }
-                  }
-          
-                  return true
-              }
-          
-              private fun snapshotFor(
-                  allowHold: Boolean
-              ): Snapshot? {
-                  fun usable(id: String): Boolean =
-                      isPlaybackActive(id) ||
-                          (allowHold && hasActiveHold(id))
-          
-                  val preferredId =
-                      currentTabId?.takeIf { id ->
-                          entries[id] != null && usable(id)
-                      }
-          
-                  val selectedId =
-                      preferredId
-                          ?: entries.keys.lastOrNull { usable(it) }
-                          ?: return null
-          
-                  val entry = entries[selectedId] ?: return null
-                  currentTabId = selectedId
-          
-                  return Snapshot(
-                      tabId = selectedId,
-                      title = entry.title.ifBlank {
-                          "Multimedia en Nexo"
-                      },
-                      playing = isPlaybackActive(selectedId)
-                  )
-              }
-          
-              fun snapshot(): Snapshot? =
-                  snapshotFor(allowHold = false)
-          
-              fun snapshotForService(): Snapshot? =
-                  snapshotFor(allowHold = true)
-          
-              fun pauseCurrent() {
-                  val id = currentTabId ?: entries.keys.lastOrNull() ?: return
-                  val entry = entries[id] ?: return
-          
-                  playbackHoldUntil.remove(id)
-                  recentPlayback.remove(id)
-                  entry.playing = false
-                  notifyChanged()
-          
-                  main.post {
-                      runCatching {
-                          entry.mediaSession.pause()
-                      }
-                  }
-              }
-          
-              fun stopCurrent() {
-                  val id = currentTabId ?: entries.keys.lastOrNull() ?: return
-                  val entry = entries[id] ?: return
-          
-                  playbackHoldUntil.remove(id)
-                  recentPlayback.remove(id)
-                  entry.playing = false
-                  notifyChanged()
-          
-                  main.post {
-                      runCatching {
-                          entry.mediaSession.stop()
-                      }
-                  }
-              }
-          
-              private fun notifyChanged() {
-                  listener?.onBrowserMediaStateChanged()
-          
-                  val context = runCatching {
-                      AppContext.get()
-                  }.getOrNull() ?: return
-          
-                  MediaPlaybackService.sync(context)
-              }
-          }
-          ''', encoding="utf-8")
-          SERVICE.write_text(r'''package com.ejemplo.navegador
-          
-          import android.app.Notification
-          import android.app.NotificationChannel
-          import android.app.NotificationManager
-          import android.app.PendingIntent
-          import android.app.Service
-          import android.content.Context
-          import android.content.Intent
-          import android.content.pm.ServiceInfo
-          import android.os.Build
-          import android.os.Handler
-          import android.os.IBinder
-          import android.os.Looper
-          
-          class MediaPlaybackService : Service() {
-              override fun onCreate() {
-                  super.onCreate()
-                  createChannel()
-                  instance = this
-                  startRequested = false
-          
-                  /*
-                   * IMPORTANTE:
-                   * Android exige que cualquier Service iniciado mediante
-                   * startForegroundService() se promocione a foreground casi
-                   * inmediatamente. No esperamos a consultar de nuevo el estado
-                   * de YouTube porque puede cambiar durante Home/PiP.
-                   */
-                  promoteToForeground(
-                      buildBootstrapNotification()
-                  )
-              }
-          
-              override fun onStartCommand(
-                  intent: Intent?,
-                  flags: Int,
-                  startId: Int
-              ): Int {
-                  when (intent?.action) {
-                      ACTION_PAUSE ->
-                          BrowserMediaController.pauseCurrent()
-          
-                      ACTION_STOP ->
-                          BrowserMediaController.stopCurrent()
-                  }
-          
-                  refreshFromController()
-                  return START_NOT_STICKY
-              }
-          
-              override fun onDestroy() {
-                  if (instance === this) {
-                      instance = null
-                  }
-                  startRequested = false
-                  super.onDestroy()
-              }
-          
-              override fun onBind(intent: Intent?): IBinder? = null
-          
-              private fun refreshFromController() {
-                  val state =
-                      BrowserMediaController.snapshotForService()
-          
-                  if (
-                      state == null ||
-                      !BrowserPrefs.backgroundMedia(this)
-                  ) {
-                      stopForeground(Service.STOP_FOREGROUND_REMOVE)
-                      stopSelf()
-                      return
-                  }
-          
-                  promoteToForeground(
-                      buildNotification(state)
-                  )
-              }
-          
-              private fun promoteToForeground(
-                  notification: Notification
-              ) {
-                  if (Build.VERSION.SDK_INT >= 29) {
-                      startForeground(
-                          NOTIFICATION_ID,
-                          notification,
-                          ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-                      )
-                  } else {
-                      startForeground(
-                          NOTIFICATION_ID,
-                          notification
-                      )
-                  }
-              }
-          
-              private fun buildBootstrapNotification(): Notification =
-                  Notification.Builder(this, CHANNEL_ID)
-                      .setSmallIcon(R.drawable.ic_nexo_logo)
-                      .setContentTitle("Nexo Browser")
-                      .setContentText("Preparando reproducción multimedia…")
-                      .setCategory(Notification.CATEGORY_TRANSPORT)
-                      .setVisibility(Notification.VISIBILITY_PUBLIC)
-                      .setOngoing(true)
-                      .setOnlyAlertOnce(true)
-                      .build()
-          
-              private fun buildNotification(
-                  state: BrowserMediaController.Snapshot
-              ): Notification {
-                  val open = PendingIntent.getActivity(
-                      this,
-                      200,
-                      Intent(this, MainActivity::class.java).apply {
-                          addFlags(
-                              Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                                  Intent.FLAG_ACTIVITY_SINGLE_TOP
-                          )
-                      },
-                      PendingIntent.FLAG_UPDATE_CURRENT or
-                          PendingIntent.FLAG_IMMUTABLE
-                  )
-          
-                  val pause = PendingIntent.getService(
-                      this,
-                      201,
-                      Intent(
-                          this,
-                          MediaPlaybackService::class.java
-                      ).setAction(ACTION_PAUSE),
-                      PendingIntent.FLAG_UPDATE_CURRENT or
-                          PendingIntent.FLAG_IMMUTABLE
-                  )
-          
-                  val stop = PendingIntent.getService(
-                      this,
-                      202,
-                      Intent(
-                          this,
-                          MediaPlaybackService::class.java
-                      ).setAction(ACTION_STOP),
-                      PendingIntent.FLAG_UPDATE_CURRENT or
-                          PendingIntent.FLAG_IMMUTABLE
-                  )
-          
-                  val statusText =
-                      if (state.playing) {
-                          "Reproduciendo desde Nexo Browser"
-                      } else {
-                          "Manteniendo reproducción en segundo plano"
-                      }
-          
-                  return Notification.Builder(this, CHANNEL_ID)
-                      .setSmallIcon(R.drawable.ic_nexo_logo)
-                      .setContentTitle(state.title)
-                      .setContentText(statusText)
-                      .setContentIntent(open)
-                      .setCategory(Notification.CATEGORY_TRANSPORT)
-                      .setVisibility(Notification.VISIBILITY_PUBLIC)
-                      .setOngoing(true)
-                      .setOnlyAlertOnce(true)
-                      .addAction(
-                          Notification.Action.Builder(
-                              android.R.drawable.ic_media_pause,
-                              "Pausar",
-                              pause
-                          ).build()
-                      )
-                      .addAction(
-                          Notification.Action.Builder(
-                              android.R.drawable.ic_menu_close_clear_cancel,
-                              "Detener",
-                              stop
-                          ).build()
-                      )
-                      .setStyle(
-                          Notification.MediaStyle()
-                              .setShowActionsInCompactView(0, 1)
-                      )
-                      .build()
-              }
-          
-              private fun createChannel() {
-                  getSystemService(NotificationManager::class.java)
-                      .createNotificationChannel(
-                          NotificationChannel(
-                              CHANNEL_ID,
-                              "Reproducción multimedia",
-                              NotificationManager.IMPORTANCE_LOW
-                          ).apply {
-                              description =
-                                  "Controles de audio y video de Nexo Browser"
-                              setShowBadge(false)
-                          }
-                      )
-              }
-          
-              companion object {
-                  private const val CHANNEL_ID = "nexo_media_playback"
-                  private const val NOTIFICATION_ID = 1907
-                  private const val ACTION_REFRESH = "nexo.media.REFRESH"
-                  private const val ACTION_PAUSE = "nexo.media.PAUSE"
-                  private const val ACTION_STOP = "nexo.media.STOP"
-          
-                  private val main = Handler(Looper.getMainLooper())
-          
-                  @Volatile
-                  private var instance: MediaPlaybackService? = null
-          
-                  @Volatile
-                  private var startRequested = false
-          
-                  fun sync(context: Context) {
-                      val app = context.applicationContext
-                      val state =
-                          BrowserMediaController.snapshotForService()
-          
-                      val enabled =
-                          BrowserPrefs.backgroundMedia(app)
-          
-                      val current = instance
-          
-                      if (state == null || !enabled) {
-                          if (current != null) {
-                              main.post {
-                                  if (instance === current) {
-                                      current.refreshFromController()
-                                  }
-                              }
-                          } else if (!startRequested) {
-                              runCatching {
-                                  app.stopService(
-                                      Intent(
-                                          app,
-                                          MediaPlaybackService::class.java
-                                      )
-                                  )
-                              }
-                          }
-                          return
-                      }
-          
-                      if (current != null) {
-                          main.post {
-                              if (instance === current) {
-                                  current.refreshFromController()
-                              }
-                          }
-                          return
-                      }
-          
-                      if (startRequested) {
-                          return
-                      }
-          
-                      val intent = Intent(
-                          app,
-                          MediaPlaybackService::class.java
-                      ).setAction(ACTION_REFRESH)
-          
-                      startRequested = true
-          
-                      runCatching {
-                          if (Build.VERSION.SDK_INT >= 26) {
-                              app.startForegroundService(intent)
-                          } else {
-                              app.startService(intent)
-                          }
-                      }.onFailure { error ->
-                          startRequested = false
-                          android.util.Log.w(
-                              "NexoMedia",
-                              "No se pudo iniciar servicio multimedia",
-                              error
-                          )
-                      }
-          
-                      /*
-                       * Si el sistema rechazara silenciosamente la creación,
-                       * permitir un nuevo intento más adelante.
-                       */
-                      main.postDelayed(
-                          {
-                              if (instance == null) {
-                                  startRequested = false
-                              }
-                          },
-                          6_000L
-                      )
-                  }
-          
-                  fun stop(context: Context) {
-                      val app = context.applicationContext
-                      val current = instance
-          
-                      if (current != null) {
-                          main.post {
-                              if (instance === current) {
-                                  current.stopForeground(
-                                      Service.STOP_FOREGROUND_REMOVE
-                                  )
-                                  current.stopSelf()
-                              }
-                          }
-                      } else if (!startRequested) {
-                          runCatching {
-                              app.stopService(
-                                  Intent(
-                                      app,
-                                      MediaPlaybackService::class.java
-                                  )
-                              )
-                          }
-                      }
-                  }
-              }
-          }
-          ''', encoding="utf-8")
-
+          # ============================================================
+          # PiP: separar completamente PiP de la recuperación de audio.
+          # No llamar MediaSession.play() repetidamente durante PiP.
+          # ============================================================
           main = must_replace(
               main,
-              '''    override fun onResume() {
-                  suppressAutoPipOnce = false
-                  backgroundPlaybackWasActive = false
-                  super.onResume()
-              ''',
-              '''    override fun onResume() {
-                  suppressAutoPipOnce = false
-                  backgroundPlaybackWasActive = false
-
-                  if (!isInPictureInPictureMode) {
-                      TabManager.activeTab()?.let { tab ->
-                          BrowserMediaController.clearPlaybackHold(tab.id)
-                      }
-                  }
-
-                  super.onResume()
-              ''',
-              "onResume clear playback hold"
-          )
-
-          main = must_replace(
-              main,
-              '''    pipPlaybackWasActive =
-                  isMiniPlaybackActive(tab)
-
-              if (!hasMiniVideo(tab)) {
-              ''',
-              '''    pipPlaybackWasActive =
-                  isMiniPlaybackActive(tab)
-
-              if (pipPlaybackWasActive) {
+              '''    if (pipPlaybackWasActive) {
                   BrowserMediaController.holdPlayback(
                       tab.id,
                       10_000L
@@ -862,22 +98,62 @@ jobs:
                   MediaPlaybackService.sync(this)
               }
 
-              if (!hasMiniVideo(tab)) {
-              ''',
-              "hold playback before PiP"
+          ''',
+              '''''',
+              "quitar hold/service del inicio PiP"
           )
 
           main = must_replace(
               main,
-              '''    backgroundPlaybackWasActive =
-                  tab != null &&
-                  BrowserPrefs.backgroundMedia(this) &&
-                  BrowserMediaController
-                      .isPlaybackActive(tab.id)
+              '''            } else if (
+                  pipPlaybackWasActive
+              ) {
+                  /*
+                   * Algunos sitios (especialmente YouTube) envían
+                   * una pausa transitoria al cambiar de ventana.
+                   * Reanudamos únicamente porque sabemos que
+                   * estaba reproduciéndose antes de entrar a PiP.
+                   */
+                  geckoView.postDelayed(
+                      {
+                          BrowserMediaController
+                              .resumeIfRecent(
+                                  tab.id,
+                                  8_000L
+                              )
+                      },
+                      180L
+                  )
 
-              if (
-              ''',
-              '''    backgroundPlaybackWasActive =
+                  geckoView.postDelayed(
+                      {
+                          BrowserMediaController
+                              .resumeIfRecent(
+                                  tab.id,
+                                  8_000L
+                              )
+                      },
+                      650L
+                  )
+              }
+          ''',
+              '''            }
+          ''',
+              "quitar reintentos play después de entrar a PiP"
+          )
+
+          main = must_replace(
+              main,
+              '''override fun onUserLeaveHint() {
+              val tab =
+                  TabManager.activeTab()
+
+              /*
+               * También cubre modo solo audio / segundo plano.
+               * Se captura antes de que el sitio reciba eventos de
+               * lifecycle y pueda marcarse temporalmente como pausado.
+               */
+              backgroundPlaybackWasActive =
                   tab != null &&
                   BrowserPrefs.backgroundMedia(this) &&
                   BrowserMediaController
@@ -902,33 +178,715 @@ jobs:
               }
 
               if (
-              ''',
-              "hold playback before leaving app"
+                  !suppressAutoPipOnce &&
+                  !isInPictureInPictureMode &&
+                  BrowserPrefs.smartPip(this) &&
+                  tab != null &&
+                  hasMiniVideo(tab) &&
+                  isMiniPlaybackActive(tab)
+              ) {
+                  startMiniPlayer(
+                      silent = true,
+                      requirePlayback = true,
+                      delayMs = 0L
+                  )
+              }
+
+              super.onUserLeaveHint()
+          }
+          ''',
+              '''override fun onUserLeaveHint() {
+              val tab =
+                  TabManager.activeTab()
+
+              /*
+               * Decidir ANTES de tocar el estado multimedia si vamos
+               * realmente a Android PiP. PiP permanece visible y no
+               * necesita foreground service ni reintentos de play().
+               */
+              val willEnterPip =
+                  !suppressAutoPipOnce &&
+                  !isInPictureInPictureMode &&
+                  BrowserPrefs.smartPip(this) &&
+                  tab != null &&
+                  hasMiniVideo(tab) &&
+                  isMiniPlaybackActive(tab)
+
+              /*
+               * El hold queda reservado exclusivamente para segundo
+               * plano real (audio/video sin PiP).
+               */
+              backgroundPlaybackWasActive =
+                  !willEnterPip &&
+                  tab != null &&
+                  BrowserPrefs.backgroundMedia(this) &&
+                  BrowserMediaController
+                      .isPlaybackActive(tab.id)
+
+              if (
+                  backgroundPlaybackWasActive &&
+                  tab != null
+              ) {
+                  BrowserMediaController.holdPlayback(
+                      tab.id,
+                      10_000L
+                  )
+
+                  MediaPlaybackService.sync(this)
+              }
+
+              if (willEnterPip) {
+                  startMiniPlayer(
+                      silent = true,
+                      requirePlayback = true,
+                      delayMs = 0L
+                  )
+              }
+
+              super.onUserLeaveHint()
+          }
+          ''',
+              "separar PiP de background audio"
+          )
+
+          main = must_replace(
+              main,
+              '''        if (isInPictureInPictureMode) {
+                  TabManager.prepareForPictureInPicture()
+
+                  val tab =
+                      TabManager.activeTab()
+
+                  if (
+                      pipPlaybackWasActive &&
+                      tab != null
+                  ) {
+                      geckoView.postDelayed(
+                          {
+                              BrowserMediaController
+                                  .resumeIfRecent(
+                                      tab.id,
+                                      8_000L
+                                  )
+                          },
+                          140L
+                      )
+                  }
+              } else {
+          ''',
+              '''        if (isInPictureInPictureMode) {
+                  /*
+                   * GeckoView mantiene la sesión/compositor activos.
+                   * No forzar MediaSession.play(): en YouTube puede
+                   * reiniciar el decoder y producir frames negros.
+                   */
+                  TabManager.prepareForPictureInPicture()
+              } else {
+          ''',
+              "quitar reintento play del callback PiP"
+          )
+
+          # ============================================================
+          # TabManager: PiP solo mantiene GeckoSession activa.
+          # El foreground service sigue reservado para background real.
+          # ============================================================
+          tabs = must_replace(
+              tabs,
+              '''        BrowserMediaController
+                  .resumeIfRecent(
+                      tab.id,
+                      8_000L
+                  )
+
+              MediaPlaybackService.sync(
+                  requireContext()
+              )
+          ''',
+              '''''',
+              "quitar play/service de prepareForPictureInPicture"
+          )
+
+          # ============================================================
+          # Bridge JS: aislamiento visual mínimo y estable.
+          # - Sin video.play() automático.
+          # - Sin position:static en todos los ancestros.
+          # - Sin reescribir document.hidden/visibilityState.
+          # ============================================================
+          BRIDGE_JS.write_text(r'''(() => {
+            "use strict";
+
+            let port = null;
+            let backgroundMedia = true;
+            let visibilityHandler = null;
+            let pipVideo = null;
+            let pipAncestors = [];
+            let pipActive = false;
+            let reportTimer = 0;
+
+            function installVisibilityGuard() {
+              if (visibilityHandler) return;
+
+              visibilityHandler = event => {
+                /*
+                 * PiP continúa visible para el usuario. Segundo plano
+                 * solo se protege si la opción correspondiente está activa.
+                 *
+                 * No llamamos play() aquí: dejamos al decoder/MediaSession
+                 * de Gecko mantener su estado sin carreras.
+                 */
+                if (pipActive || backgroundMedia) {
+                  event.stopImmediatePropagation();
+                }
+              };
+
+              window.addEventListener(
+                "visibilitychange",
+                visibilityHandler,
+                true
+              );
+
+              document.addEventListener(
+                "visibilitychange",
+                visibilityHandler,
+                true
+              );
+            }
+
+            function applyState(state) {
+              if (!state) return;
+              backgroundMedia = state.backgroundMedia !== false;
+              installVisibilityGuard();
+            }
+
+            installVisibilityGuard();
+
+            function collectVideos(root, output) {
+              if (!root) return output;
+
+              try {
+                if (root.querySelectorAll) {
+                  for (const video of root.querySelectorAll("video")) {
+                    if (!output.includes(video)) output.push(video);
+                  }
+
+                  for (const element of root.querySelectorAll("*")) {
+                    if (element.shadowRoot) {
+                      collectVideos(element.shadowRoot, output);
+                    }
+                  }
+                }
+              } catch (_) {}
+
+              return output;
+            }
+
+            function visibleEnough(video) {
+              try {
+                const rect = video.getBoundingClientRect();
+                const style = getComputedStyle(video);
+
+                return (
+                  rect.width >= 80 &&
+                  rect.height >= 45 &&
+                  style.display !== "none" &&
+                  style.visibility !== "hidden"
+                );
+              } catch (_) {
+                return true;
+              }
+            }
+
+            function videoArea(video) {
+              return (
+                Number(video.videoWidth || video.clientWidth || 0) *
+                Number(video.videoHeight || video.clientHeight || 0)
+              );
+            }
+
+            function videoList() {
+              return collectVideos(document, []).filter(visibleEnough);
+            }
+
+            function bestVideo(preferPlaying) {
+              const videos = videoList();
+              if (!videos.length) return null;
+
+              const playing = videos.filter(
+                video =>
+                  !video.paused &&
+                  !video.ended
+              );
+
+              if (preferPlaying && !playing.length) {
+                return null;
+              }
+
+              const candidates =
+                preferPlaying
+                  ? playing
+                  : videos;
+
+              return (
+                candidates
+                  .slice()
+                  .sort(
+                    (a, b) =>
+                      videoArea(b) -
+                      videoArea(a)
+                  )[0] || null
+              );
+            }
+
+            function ensurePipStyle() {
+              if (document.getElementById("nexo-pip-style")) {
+                return;
+              }
+
+              const style = document.createElement("style");
+              style.id = "nexo-pip-style";
+
+              style.textContent = `
+                html.nexo-pip-root,
+                html.nexo-pip-root body {
+                  background: #000 !important;
+                  overflow: hidden !important;
+                }
+
+                /*
+                 * Solo neutralizamos propiedades que pueden crear
+                 * containing blocks. No cambiamos position/z-index
+                 * de la jerarquía de YouTube porque eso puede romper
+                 * su compositor de video.
+                 */
+                html.nexo-pip-root .nexo-pip-ancestor {
+                  transform: none !important;
+                  contain: none !important;
+                  will-change: auto !important;
+                  filter: none !important;
+                  perspective: none !important;
+                  backdrop-filter: none !important;
+                  overflow: visible !important;
+                }
+
+                html.nexo-pip-root video.nexo-pip-video {
+                  position: fixed !important;
+                  inset: 0 !important;
+                  width: 100vw !important;
+                  height: 100vh !important;
+                  max-width: 100vw !important;
+                  max-height: 100vh !important;
+                  object-fit: contain !important;
+                  object-position: center center !important;
+                  z-index: 2147483647 !important;
+                  background: #000 !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  transform: none !important;
+                  opacity: 1 !important;
+                  visibility: visible !important;
+                }
+              `;
+
+              (
+                document.head ||
+                document.documentElement
+              ).appendChild(style);
+            }
+
+            function clearPipIsolation() {
+              document.documentElement.classList
+                .remove("nexo-pip-root");
+
+              if (pipVideo) {
+                pipVideo.classList.remove("nexo-pip-video");
+              }
+
+              for (const ancestor of pipAncestors) {
+                ancestor.classList.remove("nexo-pip-ancestor");
+              }
+
+              pipVideo = null;
+              pipAncestors = [];
+            }
+
+            function setPipIsolation(active) {
+              pipActive = active === true;
+
+              if (!pipActive) {
+                clearPipIsolation();
+                return;
+              }
+
+              const video =
+                bestVideo(true) ||
+                bestVideo(false);
+
+              if (!video) return;
+
+              clearPipIsolation();
+              ensurePipStyle();
+
+              pipVideo = video;
+
+              let current = video.parentElement;
+
+              while (
+                current &&
+                current !== document.body &&
+                current !== document.documentElement
+              ) {
+                current.classList.add("nexo-pip-ancestor");
+                pipAncestors.push(current);
+                current = current.parentElement;
+              }
+
+              document.documentElement.classList
+                .add("nexo-pip-root");
+
+              video.classList.add("nexo-pip-video");
+            }
+
+            function refreshPipIsolation() {
+              if (!pipActive) return;
+
+              const video =
+                bestVideo(true) ||
+                bestVideo(false);
+
+              if (!video) return;
+
+              const currentStillValid =
+                pipVideo === video &&
+                video.isConnected &&
+                pipAncestors.every(
+                  ancestor =>
+                    ancestor.isConnected &&
+                    ancestor.classList.contains(
+                      "nexo-pip-ancestor"
+                    )
+                );
+
+              if (!currentStillValid) {
+                setPipIsolation(true);
+              }
+            }
+
+            function reportVideoState() {
+              refreshPipIsolation();
+
+              if (!port) return;
+
+              const anyVideo = bestVideo(false);
+              const playingVideo = bestVideo(true);
+              const best = playingVideo || anyVideo;
+
+              try {
+                port.postMessage({
+                  type: "video_state",
+                  present: !!anyVideo,
+                  playing:
+                    !!playingVideo &&
+                    !playingVideo.paused &&
+                    !playingVideo.ended,
+                  width: best
+                    ? Number(
+                        best.videoWidth ||
+                        best.clientWidth ||
+                        0
+                      )
+                    : 0,
+                  height: best
+                    ? Number(
+                        best.videoHeight ||
+                        best.clientHeight ||
+                        0
+                      )
+                    : 0
+                });
+              } catch (_) {}
+            }
+
+            function scheduleVideoReport() {
+              clearTimeout(reportTimer);
+              reportTimer =
+                setTimeout(
+                  reportVideoState,
+                  120
+                );
+            }
+
+            [
+              "play",
+              "playing",
+              "pause",
+              "ended",
+              "emptied",
+              "loadedmetadata",
+              "canplay",
+              "waiting"
+            ].forEach(type => {
+              document.addEventListener(
+                type,
+                scheduleVideoReport,
+                true
+              );
+            });
+
+            try {
+              const observer =
+                new MutationObserver(
+                  scheduleVideoReport
+                );
+
+              observer.observe(
+                document.documentElement,
+                {
+                  childList: true,
+                  subtree: true
+                }
+              );
+            } catch (_) {}
+
+            setInterval(
+              reportVideoState,
+              1200
+            );
+
+            browser.runtime.sendNativeMessage(
+              "browser",
+              {
+                type: "page_loaded",
+                url: location.href,
+                title: document.title
+              }
+            ).then(applyState).catch(() => {});
+
+            try {
+              port =
+                browser.runtime
+                  .connectNative("browser");
+
+              port.onMessage.addListener(
+                message => {
+                  if (!message) return;
+
+                  if (
+                    message.type ===
+                    "browser_state"
+                  ) {
+                    applyState(message);
+                  }
+
+                  if (
+                    message.type ===
+                    "pip_mode"
+                  ) {
+                    setPipIsolation(
+                      message.active === true
+                    );
+                  }
+                }
+              );
+
+              port.postMessage({
+                type: "content_script_ready",
+                url: location.href
+              });
+
+              scheduleVideoReport();
+            } catch (_) {}
+          })();
+          ''', encoding="utf-8")
+
+          # ============================================================
+          # Extensiones locales:
+          # 1) Registrar de nuevo cuando Gecko diga onReady.
+          # 2) Conservar el XPI local en filesDir (no borrar al aceptar).
+          # 3) No ofrecer carpeta de código fuente como instalable.
+          # ============================================================
+          ext = must_replace(
+              ext,
+              '''        controller.setPromptDelegate(promptDelegate)
+          ''',
+              '''        controller.setPromptDelegate(promptDelegate)
+              controller.setAddonManagerDelegate(addonManagerDelegate)
+          ''',
+              "registrar AddonManagerDelegate"
+          )
+
+          ext = must_replace(
+              ext,
+              '''                    val cache =
+                          File(
+                              context.cacheDir,
+                              "extensions"
+                          )
+          ''',
+              '''                    val cache =
+                          File(
+                              context.filesDir,
+                              "imported_extensions"
+                          )
+          ''',
+              "guardar XPI local persistentemente"
+          )
+
+          ext = must_replace(
+              ext,
+              '''                        onDone,
+                          cleanup = {
+                              runCatching {
+                                  target.delete()
+                              }
+                          }
+          ''',
+              '''                        onDone
+          ''',
+              "no borrar XPI local al completar install"
+          )
+
+          ext = must_replace(
+              ext,
+              '''                    if (hasManifest) {
+                          candidates +=
+                              LocalExtensionCandidate(
+                                  label =
+                                      "Carpeta · " +
+                                          (
+                                              directory.name
+                                                  ?: "Extensión"
+                                              ),
+                                  document =
+                                      directory,
+                                  isFolder = true
+                              )
+                      }
+          ''',
+              '''                    /*
+                       * Una carpeta con manifest.json es código fuente,
+                       * no un paquete instalable normal en GeckoView
+                       * release. Seguimos recorriéndola para encontrar
+                       * XPI/ZIP firmados en subcarpetas, pero no la
+                       * mostramos como candidato instalable.
+                       */
+                      if (hasManifest) {
+                          android.util.Log.d(
+                              "NexoExtensions",
+                              "Carpeta de código fuente omitida: " +
+                                  (directory.name ?: "Extensión")
+                          )
+                      }
+          ''',
+              "no ofrecer carpetas fuente como instalables"
+          )
+
+          ext = must_replace(
+              ext,
+              '''    /* GeckoView 153 PromptDelegate */
+              private val promptDelegate =
+          ''',
+              '''    /*
+               * Esperar también onReady es importante para extensiones
+               * importadas desde archivo: en ese punto Gecko terminó
+               * de iniciar el add-on y ya puede resolver popup/opciones.
+               */
+              private val addonManagerDelegate =
+                  object :
+                      WebExtensionController.AddonManagerDelegate {
+
+                      override fun onInstalled(
+                          extension: WebExtension
+                      ) {
+                          registerExtension(extension)
+                      }
+
+                      override fun onReady(
+                          extension: WebExtension
+                      ) {
+                          registerExtension(extension)
+                      }
+
+                      override fun onEnabled(
+                          extension: WebExtension
+                      ) {
+                          registerExtension(extension)
+                      }
+                  }
+
+              /* GeckoView 153 PromptDelegate */
+              private val promptDelegate =
+          ''',
+              "AddonManagerDelegate onReady"
+          )
+
+          ext = must_replace(
+              ext,
+              '''        return "No se pudo instalar: $detail"
+          ''',
+              '''        return "No se pudo instalar [código ${install.code}]: $detail"
+          ''',
+              "mostrar código de error de instalación"
+          )
+
+          EXT.write_text(ext, encoding="utf-8")
+
+          ext_activity = ext_activity.replace(
+              '"Analizando XPI o ZIP…"',
+              '"Analizando XPI/ZIP firmado…"'
+          )
+          ext_activity = ext_activity.replace(
+              '"No encontré XPI, ZIP ni una carpeta con manifest.json."',
+              '"No encontré ningún XPI/ZIP instalable en esta carpeta."'
+          )
+          ext_activity = ext_activity.replace(
+              '"Prueba seleccionando la carpeta que contiene la extensión o su archivo XPI/ZIP."',
+              '"Busca un XPI firmado por Mozilla. Una carpeta/ZIP de código fuente sin firma no puede instalarse como extensión normal en GeckoView."'
+          )
+          EXT_ACTIVITY.write_text(
+              ext_activity,
+              encoding="utf-8"
+          )
+
+          ext_layout = ext_layout.replace(
+              'android:text="Archivo XPI / ZIP"',
+              'android:text="Importar XPI firmado"'
+          )
+          ext_layout = ext_layout.replace(
+              'android:text="Buscar en carpeta"',
+              'android:text="Buscar XPI en carpeta"'
+          )
+          EXT_LAYOUT.write_text(
+              ext_layout,
+              encoding="utf-8"
+          )
+
+          if 'versionCode = 21' in gradle:
+              gradle = gradle.replace(
+                  'versionCode = 21',
+                  'versionCode = 22',
+                  1
+              )
+          elif 'versionCode = 22' not in gradle:
+              raise RuntimeError("VersionCode base inesperado")
+
+          if 'versionName = "0.13.4"' in gradle:
+              gradle = gradle.replace(
+                  'versionName = "0.13.4"',
+                  'versionName = "0.13.5"',
+                  1
+              )
+          elif 'versionName = "0.13.5"' not in gradle:
+              raise RuntimeError("VersionName base inesperado")
+
+          GRADLE.write_text(
+              gradle,
+              encoding="utf-8"
           )
 
           MAIN.write_text(main, encoding="utf-8")
+          TABS.write_text(tabs, encoding="utf-8")
 
-          if 'versionCode = 20' in gradle:
-              gradle = gradle.replace(
-                  'versionCode = 20',
-                  'versionCode = 21',
-                  1
-              )
-          elif 'versionCode = 21' not in gradle:
-              raise RuntimeError("VersionCode base inesperado")
-
-          if 'versionName = "0.13.3"' in gradle:
-              gradle = gradle.replace(
-                  'versionName = "0.13.3"',
-                  'versionName = "0.13.4"',
-                  1
-              )
-          elif 'versionName = "0.13.4"' not in gradle:
-              raise RuntimeError("VersionName base inesperado")
-
-          GRADLE.write_text(gradle, encoding="utf-8")
-
-          print("✅ Nexo v0.13.4 foreground/audio patch aplicado")
+          print("✅ Nexo v0.13.5 patch aplicado")
           PY
 
           echo ""
@@ -939,7 +897,7 @@ jobs:
           echo ""
           git diff --check
 
-      - name: Validate Nexo v0.13.4 source
+      - name: Validate Nexo v0.13.5 source
         shell: bash
         run: |
           set -euo pipefail
@@ -951,16 +909,28 @@ jobs:
               "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
           ).read_text(encoding="utf-8")
 
-          media = Path(
-              "app/src/main/java/com/ejemplo/navegador/BrowserMediaController.kt"
+          tabs = Path(
+              "app/src/main/java/com/ejemplo/navegador/TabManager.kt"
+          ).read_text(encoding="utf-8")
+
+          ext = Path(
+              "app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt"
+          ).read_text(encoding="utf-8")
+
+          ext_activity = Path(
+              "app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt"
+          ).read_text(encoding="utf-8")
+
+          ext_layout = Path(
+              "app/src/main/res/layout/activity_extensions.xml"
+          ).read_text(encoding="utf-8")
+
+          bridge = Path(
+              "app/src/main/assets/extensions/nexo_bridge/content_script.js"
           ).read_text(encoding="utf-8")
 
           service = Path(
               "app/src/main/java/com/ejemplo/navegador/MediaPlaybackService.kt"
-          ).read_text(encoding="utf-8")
-
-          manifest = Path(
-              "app/src/main/AndroidManifest.xml"
           ).read_text(encoding="utf-8")
 
           gradle = Path(
@@ -968,37 +938,61 @@ jobs:
           ).read_text(encoding="utf-8")
 
           compact_main = "".join(main.split())
-          compact_media = "".join(media.split())
-          compact_service = "".join(service.split())
+          compact_ext = "".join(ext.split())
 
-          assert "holdPlayback(tab.id,10_000L)" in compact_main
-          assert "clearPlaybackHold(tab.id)" in compact_main
-          assert "MediaPlaybackService.sync(this)" in compact_main
+          assert "valwillEnterPip=" in compact_main
+          assert main.count("resumeIfRecent") == 2, (
+              "MainActivity debe conservar solo los 2 reintentos "
+              "de segundo plano real"
+          )
 
-          assert "playbackHoldUntil" in media
-          assert "snapshotForService()" in compact_media
-          assert "isPlaybackHoldActive" in media
-          assert "resumeIfRecent" in media
-          assert "if(!hasActiveHold(tabId))" in compact_media
+          prepare_start = tabs.index(
+              "fun prepareForPictureInPicture()"
+          )
+          prepare_end = tabs.index(
+              "fun prepareForBackground()",
+              prepare_start
+          )
+          prepare = tabs[prepare_start:prepare_end]
+          assert "resumeIfRecent" not in prepare
+          assert "MediaPlaybackService.sync" not in prepare
+          assert "setSuspendMediaWhenInactive" in prepare
+          assert "session.setActive(true)" in prepare
 
-          # La promoción ocurre en onCreate, ANTES de onStartCommand.
-          create_pos = service.index("override fun onCreate()")
-          promote_pos = service.index("promoteToForeground(", create_pos)
-          start_cmd_pos = service.index("override fun onStartCommand(")
-          assert create_pos < promote_pos < start_cmd_pos
+          assert "pipKeepPlaying" not in bridge
+          assert "pipRecoveryUntil" not in bridge
+          assert ".play()" not in bridge
+          assert "position: static" not in bridge
+          assert "nexo-pip-ancestor" in bridge
+          assert "position: fixed" in bridge
 
-          assert "buildBootstrapNotification()" in compact_service
-          assert "snapshotForService()" in compact_service
+          assert "buildBootstrapNotification()" in service
+          assert "snapshotForService()" in service
           assert "startRequested" in service
-          assert "FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK" in service
 
-          assert 'android:foregroundServiceType="mediaPlayback"' in manifest
-          assert 'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK' in manifest
-          assert 'versionCode = 21' in gradle
-          assert 'versionName = "0.13.4"' in gradle
+          assert (
+              "setAddonManagerDelegate(addonManagerDelegate)"
+              in compact_ext
+          )
+          assert "overridefunonReady(" in compact_ext
+          assert 'context.filesDir' in ext
+          assert '"imported_extensions"' in ext
+          import_slice = ext[
+              ext.index("fun importXpi("):
+              ext.index("private fun importFolder(")
+          ]
+          assert "target.delete()" not in import_slice
+          assert "código ${install.code}" in ext
+
+          assert "Analizando XPI/ZIP firmado" in ext_activity
+          assert "Importar XPI firmado" in ext_layout
+          assert "Buscar XPI en carpeta" in ext_layout
+
+          assert 'versionCode = 22' in gradle
+          assert 'versionName = "0.13.5"' in gradle
           assert "geckoview-omni:153.0.20260715202819" in gradle
 
-          print("✅ Validaciones v0.13.4 correctas")
+          print("✅ Validaciones v0.13.5 correctas")
           PY
 
       - name: Java 17
@@ -1058,12 +1052,19 @@ jobs:
           ARM64="$(find app/build/outputs/apk/release -type f -name '*arm64-v8a*.apk' | head -n 1)"
           ARM32="$(find app/build/outputs/apk/release -type f -name '*armeabi-v7a*.apk' | head -n 1)"
 
-          test -n "$ARM64" || { echo "❌ No se generó APK arm64-v8a"; exit 1; }
-          test -n "$ARM32" || { echo "❌ No se generó APK armeabi-v7a"; exit 1; }
+          test -n "$ARM64" || {
+            echo "❌ No se generó APK arm64-v8a"
+            exit 1
+          }
+
+          test -n "$ARM32" || {
+            echo "❌ No se generó APK armeabi-v7a"
+            exit 1
+          }
 
           echo "✅ Ambos APK fueron generados"
 
-      - name: Save verified Nexo v0.13.4 source
+      - name: Save verified Nexo v0.13.5 source
         shell: bash
         run: |
           set -euo pipefail
@@ -1074,15 +1075,18 @@ jobs:
           git add \
             app/build.gradle.kts \
             app/src/main/java/com/ejemplo/navegador/MainActivity.kt \
-            app/src/main/java/com/ejemplo/navegador/BrowserMediaController.kt \
-            app/src/main/java/com/ejemplo/navegador/MediaPlaybackService.kt
+            app/src/main/java/com/ejemplo/navegador/TabManager.kt \
+            app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt \
+            app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt \
+            app/src/main/res/layout/activity_extensions.xml \
+            app/src/main/assets/extensions/nexo_bridge/content_script.js
 
           if git diff --cached --quiet; then
             echo "ℹ️ No hay cambios nuevos para guardar."
           else
-            git commit -m "Nexo v0.13.4 foreground audio stability fix [skip ci]"
+            git commit -m "Nexo v0.13.5 stable PiP and local extensions [skip ci]"
             git push origin HEAD:main
-            echo "✅ Código v0.13.4 guardado en main"
+            echo "✅ Código v0.13.5 guardado en main"
           fi
 
       - name: Sign Release APKs
@@ -1094,56 +1098,61 @@ jobs:
 
           keytool \
             -genkeypair \
-            -keystore nexo-v0134-ci.jks \
+            -keystore nexo-v0135-ci.jks \
             -storepass android \
             -alias nexo \
             -keypass android \
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000 \
-            -dname "CN=Nexo Browser v0.13.4,O=Nexo,C=CO"
+            -dname "CN=Nexo Browser v0.13.5,O=Nexo,C=CO"
 
           APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
           ARM64="$(find app/build/outputs/apk/release -type f -name '*arm64-v8a*.apk' | head -n 1)"
           ARM32="$(find app/build/outputs/apk/release -type f -name '*armeabi-v7a*.apk' | head -n 1)"
 
           "$APKSIGNER" sign \
-            --ks nexo-v0134-ci.jks \
+            --ks nexo-v0135-ci.jks \
             --ks-key-alias nexo \
             --ks-pass pass:android \
             --key-pass pass:android \
-            --out artifacts/release/Nexo-v0.13.4-arm64-v8a.apk \
+            --out artifacts/release/Nexo-v0.13.5-arm64-v8a.apk \
             "$ARM64"
 
           "$APKSIGNER" sign \
-            --ks nexo-v0134-ci.jks \
+            --ks nexo-v0135-ci.jks \
             --ks-key-alias nexo \
             --ks-pass pass:android \
             --key-pass pass:android \
-            --out artifacts/release/Nexo-v0.13.4-armeabi-v7a.apk \
+            --out artifacts/release/Nexo-v0.13.5-armeabi-v7a.apk \
             "$ARM32"
 
-          "$APKSIGNER" verify --verbose artifacts/release/Nexo-v0.13.4-arm64-v8a.apk
-          "$APKSIGNER" verify --verbose artifacts/release/Nexo-v0.13.4-armeabi-v7a.apk
+          "$APKSIGNER" verify --verbose \
+            artifacts/release/Nexo-v0.13.5-arm64-v8a.apk
+
+          "$APKSIGNER" verify --verbose \
+            artifacts/release/Nexo-v0.13.5-armeabi-v7a.apk
 
       - name: Generate SHA256 checksums
         shell: bash
         run: |
           set -euo pipefail
           cd artifacts/release
+
           sha256sum \
-            Nexo-v0.13.4-arm64-v8a.apk \
-            Nexo-v0.13.4-armeabi-v7a.apk \
+            Nexo-v0.13.5-arm64-v8a.apk \
+            Nexo-v0.13.5-armeabi-v7a.apk \
             > SHA256SUMS.txt
+
           cat SHA256SUMS.txt
 
-      - name: Upload Nexo v0.13.4 APKs
+      - name: Upload Nexo v0.13.5 APKs
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-v0134-Foreground-Audio-Stability-Release
+          name: Nexo-v0135-Stable-PiP-Local-Extensions
           path: |
-            artifacts/release/Nexo-v0.13.4-arm64-v8a.apk
-            artifacts/release/Nexo-v0.13.4-armeabi-v7a.apk
+            artifacts/release/Nexo-v0.13.5-arm64-v8a.apk
+            artifacts/release/Nexo-v0.13.5-armeabi-v7a.apk
             artifacts/release/SHA256SUMS.txt
           if-no-files-found: error
           compression-level: 0
@@ -1152,23 +1161,31 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.13.4
-          name: Nexo Browser v0.13.4
+          tag_name: v0.13.5
+          name: Nexo Browser v0.13.5
           target_commitish: main
           draft: false
           prerelease: false
           make_latest: true
           fail_on_unmatched_files: true
           body: |
-            Nexo Browser v0.13.4
+            Nexo Browser v0.13.5
+
+            Cambios principales:
+            - PiP simplificado para evitar trabas y pantalla negra.
+            - Sin reintentos agresivos de MediaSession.play() durante PiP.
+            - Se conserva el audio de segundo plano estable de v0.13.4.
+            - XPI locales conservados en almacenamiento persistente.
+            - Extensiones locales re-enlazadas cuando Gecko confirma onReady.
+            - Importación deja claro que GeckoView release requiere XPI firmado.
 
             Descargas:
-            - Nexo-v0.13.4-arm64-v8a.apk (Android 64 bits, recomendado)
-            - Nexo-v0.13.4-armeabi-v7a.apk (Android 32 bits)
+            - Nexo-v0.13.5-arm64-v8a.apk (Android 64 bits, recomendado)
+            - Nexo-v0.13.5-armeabi-v7a.apk (Android 32 bits)
             - SHA256SUMS.txt
           files: |
-            artifacts/release/Nexo-v0.13.4-arm64-v8a.apk
-            artifacts/release/Nexo-v0.13.4-armeabi-v7a.apk
+            artifacts/release/Nexo-v0.13.5-arm64-v8a.apk
+            artifacts/release/Nexo-v0.13.5-armeabi-v7a.apk
             artifacts/release/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1177,7 +1194,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-v0134-build-diagnostics
+          name: Nexo-v0135-build-diagnostics
           path: |
             full-build.log
             app/build/reports/
