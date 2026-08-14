@@ -1,4 +1,4 @@
-name: Nexo v0.13.2 - YouTube PiP Fix
+name: Nexo v0.13.3 - PiP Audio Extensions Fix
 
 on:
   workflow_dispatch:
@@ -12,13 +12,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: nexo-v0132-youtube-pip
+  group: nexo-v0133-pip-audio-extensions
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 80
+    timeout-minutes: 90
 
     env:
       COMPILE_SDK: "36"
@@ -26,21 +26,12 @@ jobs:
       GRADLE_VERSION: "8.14.4"
 
     steps:
-
-      # ============================================================
-      # CHECKOUT
-      # ============================================================
-
       - name: Checkout Nexo
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      # ============================================================
-      # APLICAR FIX YOUTUBE / PIP
-      # ============================================================
-
-      - name: Apply Nexo v0.13.2 YouTube PiP fixes
+      - name: Apply Nexo v0.13.3 fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -48,242 +39,609 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          MAIN = Path(
-              "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
-          )
-
-          SCRIPT = Path(
-              "app/src/main/assets/extensions/nexo_bridge/content_script.js"
-          )
-
-          GRADLE = Path(
-              "app/build.gradle.kts"
-          )
+          ROOT = Path(".")
+          MAIN = ROOT / "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
+          MEDIA = ROOT / "app/src/main/java/com/ejemplo/navegador/BrowserMediaController.kt"
+          TABS = ROOT / "app/src/main/java/com/ejemplo/navegador/TabManager.kt"
+          EXT = ROOT / "app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt"
+          EXT_UI = ROOT / "app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt"
+          SCRIPT = ROOT / "app/src/main/assets/extensions/nexo_bridge/content_script.js"
+          GRADLE = ROOT / "app/build.gradle.kts"
 
           main = MAIN.read_text(encoding="utf-8")
+          tabs = TABS.read_text(encoding="utf-8")
+          ext = EXT.read_text(encoding="utf-8")
+          ext_ui = EXT_UI.read_text(encoding="utf-8")
           js = SCRIPT.read_text(encoding="utf-8")
           gradle = GRADLE.read_text(encoding="utf-8")
 
+          def must_replace(text, old, new, label, count=1):
+              if old not in text:
+                  raise RuntimeError(f"No se encontró bloque para: {label}")
+              return text.replace(old, new, count)
 
-          # ========================================================
-          # 1. MAINACTIVITY.KT
-          # ========================================================
+          def replace_between(text, start_marker, end_marker, replacement, label):
+              if start_marker not in text:
+                  raise RuntimeError(f"No se encontró inicio para: {label}")
+              start = text.index(start_marker)
+              try:
+                  end = text.index(end_marker, start)
+              except ValueError:
+                  raise RuntimeError(f"No se encontró fin para: {label}")
+              return text[:start] + replacement + text[end:]
 
-          start_marker = (
-              "    private fun isMiniVideoAvailable(): Boolean {"
-          )
+          # =========================================================
+          # 1. BrowserMediaController.kt
+          #    - estado nativo + JS
+          #    - memoria corta de reproducción
+          #    - recuperación controlada tras transición a PiP/fondo
+          # =========================================================
 
-          end_marker = (
-              "    override fun onPictureInPictureModeChanged("
-          )
+          media = r'''package com.ejemplo.navegador
 
-          if start_marker not in main:
-              raise RuntimeError(
-                  "No se encontró isMiniVideoAvailable() en MainActivity.kt"
-              )
+          import android.os.Handler
+          import android.os.Looper
+          import android.os.SystemClock
+          import org.mozilla.geckoview.MediaSession
 
-          if end_marker not in main:
-              raise RuntimeError(
-                  "No se encontró onPictureInPictureModeChanged()"
-              )
-
-          start = main.index(start_marker)
-          end = main.index(end_marker, start)
-
-          new_pip_block = r'''    private fun isYoutubeVideoPage(
-              url: String
-          ): Boolean {
-              val uri =
-                  runCatching {
-                      Uri.parse(url)
-                  }.getOrNull()
-                      ?: return false
-
-              val host =
-                  uri.host
-                      ?.lowercase()
-                      .orEmpty()
-
-              val path =
-                  uri.path
-                      ?.lowercase()
-                      .orEmpty()
-
-              return when (host) {
-                  "youtu.be" ->
-                      path.length > 1
-
-                  "youtube.com",
-                  "www.youtube.com",
-                  "m.youtube.com" ->
-                      path == "/watch" ||
-                          path.startsWith("/shorts/") ||
-                          path.startsWith("/live/")
-
-                  else ->
-                      false
+          object BrowserMediaController {
+              interface Listener {
+                  fun onBrowserMediaStateChanged()
               }
-          }
 
-          private fun isMiniPlaybackActive(
-              tab: BrowserTab
-          ): Boolean =
-              BrowserMediaController
-                  .isVideoPlaying(tab.id) ||
-                  BrowserMediaController
-                      .isPlaying(tab.id)
+              data class Snapshot(
+                  val tabId: String,
+                  val title: String,
+                  val playing: Boolean
+              )
 
-          private fun hasMiniVideo(
-              tab: BrowserTab
-          ): Boolean =
-              BrowserMediaController
-                  .isVideoPresent(tab.id) ||
-                  BrowserMediaController
-                      .isVideoPlaying(tab.id) ||
-                  (
-                      isYoutubeVideoPage(tab.url) &&
-                          BrowserMediaController
-                              .isPlaying(tab.id)
-                  )
+              private data class Entry(
+                  val mediaSession: MediaSession,
+                  var title: String,
+                  var playing: Boolean = false
+              )
 
-          private fun isMiniVideoAvailable(): Boolean {
-              val tab =
-                  TabManager.activeTab()
-                      ?: return false
+              private data class VideoState(
+                  var present: Boolean = false,
+                  var playing: Boolean = false,
+                  var width: Int = 0,
+                  var height: Int = 0
+              )
 
-              return BrowserPrefs
-                  .smartPip(this) &&
-                  hasMiniVideo(tab)
-          }
+              private val entries =
+                  linkedMapOf<String, Entry>()
 
-          private fun updateMiniPlayerChip() {
-              miniPlayerButton.visibility =
+              private val videos =
+                  mutableMapOf<String, VideoState>()
+
+              /*
+               * Se mantiene separado del estado "playing".
+               *
+               * YouTube puede emitir una pausa transitoria exactamente
+               * durante Home/PiP. No queremos interpretar esa transición
+               * como una orden explícita del usuario.
+               */
+              private val recentPlayback =
+                  mutableMapOf<String, Long>()
+
+              private val main =
+                  Handler(Looper.getMainLooper())
+
+              private var listener: Listener? = null
+              private var currentTabId: String? = null
+
+              private fun now(): Long =
+                  SystemClock.elapsedRealtime()
+
+              private fun markRecentlyPlaying(
+                  tabId: String
+              ) {
+                  recentPlayback[tabId] = now()
+              }
+
+              fun attach(value: Listener?) {
+                  listener = value
+                  listener?.onBrowserMediaStateChanged()
+              }
+
+              fun onActivated(
+                  tab: BrowserTab,
+                  media: MediaSession
+              ) {
+                  val previous = entries[tab.id]
+
+                  entries[tab.id] =
+                      Entry(
+                          mediaSession = media,
+                          title =
+                              tab.title.ifBlank {
+                                  previous?.title
+                                      ?: "Multimedia en Nexo"
+                              },
+                          playing =
+                              previous?.playing == true
+                      )
+
+                  currentTabId = tab.id
+                  notifyChanged()
+              }
+
+              fun onDeactivated(
+                  tabId: String,
+                  media: MediaSession
+              ) {
                   if (
-                      !isInPictureInPictureMode &&
-                      isMiniVideoAvailable()
+                      entries[tabId]
+                          ?.mediaSession === media
                   ) {
-                      View.VISIBLE
+                      entries.remove(tabId)
+
+                      if (currentTabId == tabId) {
+                          currentTabId = null
+                      }
+                  }
+
+                  /*
+                   * No borrar recentPlayback aquí:
+                   * Gecko puede desactivar/recrear MediaSession durante
+                   * la transición de actividad sin que el usuario haya
+                   * detenido el contenido.
+                   */
+                  notifyChanged()
+              }
+
+              fun onPlay(
+                  tab: BrowserTab,
+                  media: MediaSession
+              ) {
+                  val entry = entries[tab.id]
+
+                  if (
+                      entry == null ||
+                      entry.mediaSession !== media
+                  ) {
+                      entries[tab.id] =
+                          Entry(
+                              mediaSession = media,
+                              title =
+                                  tab.title.ifBlank {
+                                      "Multimedia en Nexo"
+                                  },
+                              playing = true
+                          )
                   } else {
-                      View.GONE
+                      if (tab.title.isNotBlank()) {
+                          entry.title = tab.title
+                      }
+
+                      entry.playing = true
                   }
+
+                  currentTabId = tab.id
+                  markRecentlyPlaying(tab.id)
+                  notifyChanged()
+              }
+
+              fun onPause(
+                  tabId: String,
+                  media: MediaSession
+              ) {
+                  entries[tabId]
+                      ?.takeIf {
+                          it.mediaSession === media
+                      }
+                      ?.playing = false
+
+                  notifyChanged()
+              }
+
+              fun onStop(
+                  tabId: String,
+                  media: MediaSession
+              ) {
+                  if (
+                      entries[tabId]
+                          ?.mediaSession === media
+                  ) {
+                      entries.remove(tabId)
+                  }
+
+                  if (currentTabId == tabId) {
+                      currentTabId = null
+                  }
+
+                  notifyChanged()
+              }
+
+              fun updateMetadata(
+                  tabId: String,
+                  media: MediaSession,
+                  title: String?
+              ) {
+                  val entry =
+                      entries[tabId]
+                          ?: return
+
+                  if (entry.mediaSession !== media) {
+                      return
+                  }
+
+                  if (!title.isNullOrBlank()) {
+                      entry.title = title
+                  }
+
+                  notifyChanged()
+              }
+
+              fun updateTabTitle(
+                  tabId: String,
+                  title: String
+              ) {
+                  val entry =
+                      entries[tabId]
+                          ?: return
+
+                  if (title.isNotBlank()) {
+                      entry.title = title
+                  }
+
+                  if (entry.playing) {
+                      notifyChanged()
+                  }
+              }
+
+              fun onVideoState(
+                  tabId: String,
+                  present: Boolean,
+                  playing: Boolean,
+                  width: Int,
+                  height: Int
+              ) {
+                  videos[tabId] =
+                      VideoState(
+                          present = present,
+                          playing = playing,
+                          width = width.coerceAtLeast(0),
+                          height = height.coerceAtLeast(0)
+                      )
+
+                  if (playing) {
+                      markRecentlyPlaying(tabId)
+                  }
+
+                  listener?.onBrowserMediaStateChanged()
+              }
+
+              fun resetVideo(tabId: String) {
+                  videos.remove(tabId)
+                  listener?.onBrowserMediaStateChanged()
+              }
+
+              fun removeTab(tabId: String) {
+                  entries.remove(tabId)
+                  videos.remove(tabId)
+                  recentPlayback.remove(tabId)
+
+                  if (currentTabId == tabId) {
+                      currentTabId = null
+                  }
+
+                  notifyChanged()
+              }
+
+              fun isPlaying(tabId: String): Boolean =
+                  entries[tabId]?.playing == true
+
+              fun isAnyPlaying(): Boolean =
+                  entries.values.any {
+                      it.playing
+                  }
+
+              fun isVideoPresent(tabId: String): Boolean =
+                  videos[tabId]?.present == true
+
+              fun isVideoPlaying(tabId: String): Boolean =
+                  videos[tabId]?.playing == true
+
+              fun isPlaybackActive(
+                  tabId: String
+              ): Boolean =
+                  isPlaying(tabId) ||
+                      isVideoPlaying(tabId)
+
+              fun wasRecentlyPlaying(
+                  tabId: String,
+                  windowMs: Long = 6_000L
+              ): Boolean {
+                  val last =
+                      recentPlayback[tabId]
+                          ?: return false
+
+                  return now() - last <=
+                      windowMs.coerceAtLeast(0L)
+              }
+
+              fun shouldKeepAlive(
+                  tabId: String,
+                  windowMs: Long = 6_000L
+              ): Boolean =
+                  isPlaybackActive(tabId) ||
+                      wasRecentlyPlaying(
+                          tabId,
+                          windowMs
+                      )
+
+              fun videoAspect(
+                  tabId: String
+              ): Pair<Int, Int> {
+                  val state = videos[tabId]
+
+                  return if (
+                      (state?.width ?: 0) > 0 &&
+                      (state?.height ?: 0) > 0
+                  ) {
+                      state!!.width to state.height
+                  } else {
+                      16 to 9
+                  }
+              }
+
+              /*
+               * Recuperación nativa.
+               *
+               * Solo se invoca cuando MainActivity sabe que el contenido
+               * estaba reproduciéndose ANTES de la transición.
+               * Por eso no fuerza a reproducir un video que el usuario
+               * hubiera dejado pausado.
+               */
+              fun resumeIfRecent(
+                  tabId: String,
+                  windowMs: Long = 6_000L
+              ): Boolean {
+                  if (
+                      !wasRecentlyPlaying(
+                          tabId,
+                          windowMs
+                      )
+                  ) {
+                      return false
+                  }
+
+                  val media =
+                      entries[tabId]
+                          ?.mediaSession
+                          ?: return false
+
+                  main.post {
+                      runCatching {
+                          if (media.isActive) {
+                              media.play()
+                          }
+                      }
+                  }
+
+                  return true
+              }
+
+              fun snapshot(): Snapshot? {
+                  val preferred =
+                      currentTabId
+                          ?.let { id ->
+                              entries[id]
+                                  ?.takeIf {
+                                      it.playing
+                                  }
+                                  ?.let {
+                                      id to it
+                                  }
+                          }
+
+                  val selected =
+                      preferred
+                          ?: entries.entries
+                              .lastOrNull {
+                                  it.value.playing
+                              }
+                              ?.let {
+                                  it.key to it.value
+                              }
+                          ?: return null
+
+                  currentTabId = selected.first
+
+                  return Snapshot(
+                      tabId = selected.first,
+                      title =
+                          selected.second
+                              .title
+                              .ifBlank {
+                                  "Multimedia en Nexo"
+                              },
+                      playing = true
+                  )
+              }
+
+              fun pauseCurrent() {
+                  val media =
+                      currentPlayingSession()
+                          ?: return
+
+                  main.post {
+                      runCatching {
+                          media.pause()
+                      }
+                  }
+              }
+
+              fun stopCurrent() {
+                  val media =
+                      currentPlayingSession()
+                          ?: return
+
+                  main.post {
+                      runCatching {
+                          media.stop()
+                      }
+                  }
+              }
+
+              private fun currentPlayingSession():
+                  MediaSession? =
+                  snapshot()
+                      ?.tabId
+                      ?.let {
+                          entries[it]
+                              ?.mediaSession
+                      }
+
+              private fun notifyChanged() {
+                  listener
+                      ?.onBrowserMediaStateChanged()
+
+                  val context =
+                      runCatching {
+                          AppContext.get()
+                      }.getOrNull()
+                          ?: return
+
+                  MediaPlaybackService.sync(
+                      context
+                  )
+              }
           }
+          '''
 
-          private fun startMiniPlayer(
-              silent: Boolean = false,
-              requirePlayback: Boolean = false,
-              delayMs: Long = 120L
-          ) {
-              if (Build.VERSION.SDK_INT < 26) {
-                  if (!silent) {
-                      Toast.makeText(
-                          this,
-                          "Mini reproductor requiere Android 8 o superior",
-                          Toast.LENGTH_SHORT
-                      ).show()
+          MEDIA.write_text(
+              media,
+              encoding="utf-8"
+          )
+
+          # =========================================================
+          # 2. MainActivity.kt
+          # =========================================================
+
+          main = must_replace(
+              main,
+              '''    private var mediaNotificationPermissionAsked = false
+              private var suppressAutoPipOnce = false
+          ''',
+              '''    private var mediaNotificationPermissionAsked = false
+              private var suppressAutoPipOnce = false
+
+              // Estado capturado ANTES de que Android/YouTube cambien
+              // la Activity de foreground a PiP/background.
+              private var pipPlaybackWasActive = false
+              private var backgroundPlaybackWasActive = false
+          ''',
+              "campos de recuperación multimedia"
+          )
+
+          main = must_replace(
+              main,
+              '''    override fun onResume() {
+                  suppressAutoPipOnce = false
+                  super.onResume()
+          ''',
+              '''    override fun onResume() {
+                  suppressAutoPipOnce = false
+                  backgroundPlaybackWasActive = false
+                  super.onResume()
+          ''',
+              "onResume"
+          )
+
+          old_on_stop = '''    override fun onStop() {
+                  captureCurrentTabPreview()
+                  if (!isInPictureInPictureMode) {
+                      TabManager.prepareForBackground()
+                  }
+                  super.onStop()
+              }
+          '''
+
+          new_on_stop = '''    override fun onStop() {
+                  captureCurrentTabPreview()
+
+                  if (!isInPictureInPictureMode) {
+                      val tab =
+                          TabManager.activeTab()
+
+                      TabManager.prepareForBackground()
+
+                      /*
+                       * Si el usuario salió mientras multimedia estaba
+                       * reproduciéndose, damos a Gecko una segunda
+                       * oportunidad de continuar después de la transición.
+                       */
+                      if (
+                          backgroundPlaybackWasActive &&
+                          BrowserPrefs.backgroundMedia(this) &&
+                          tab != null
+                      ) {
+                          geckoView.postDelayed(
+                              {
+                                  BrowserMediaController
+                                      .resumeIfRecent(
+                                          tab.id,
+                                          8_000L
+                                      )
+                              },
+                              180L
+                          )
+
+                          geckoView.postDelayed(
+                              {
+                                  BrowserMediaController
+                                      .resumeIfRecent(
+                                          tab.id,
+                                          8_000L
+                                      )
+                              },
+                              650L
+                          )
+                      }
                   }
 
-                  return
+                  super.onStop()
               }
+          '''
 
-              if (isInPictureInPictureMode) {
-                  return
-              }
+          main = must_replace(
+              main,
+              old_on_stop,
+              new_on_stop,
+              "onStop con recuperación de segundo plano"
+          )
 
-              val tab =
-                  TabManager.activeTab()
-                      ?: return
-
-              val session =
+          old_session = '''    val session =
                   tab.session
                       ?: return
 
               if (!hasMiniVideo(tab)) {
-                  if (!silent) {
-                      Toast.makeText(
-                          this,
-                          "No se detectó un video para abrir Mini.",
-                          Toast.LENGTH_SHORT
-                      ).show()
-                  }
+          '''
 
-                  updateMiniPlayerChip()
-                  return
-              }
-
-              if (
-                  requirePlayback &&
-                  !isMiniPlaybackActive(tab)
-              ) {
-                  return
-              }
+          new_session = '''    val session =
+                  tab.session
+                      ?: return
 
               /*
-               * Mantener GeckoSession activa durante
-               * la transición a Android PiP.
+               * Capturar el estado antes de tocar CSS, GeckoSession
+               * o Picture-in-Picture.
                */
-              TabManager.prepareForPictureInPicture()
+              pipPlaybackWasActive =
+                  isMiniPlaybackActive(tab)
 
-              /*
-               * Pedir al bridge JS que aisle
-               * únicamente el video HTML5.
-               */
-              ExtensionManager.setPipMode(
-                  session,
-                  true
-              )
+              if (!hasMiniVideo(tab)) {
+          '''
 
-              miniPlayerButton.visibility =
-                  View.GONE
+          main = must_replace(
+              main,
+              old_session,
+              new_session,
+              "captura de reproducción al abrir Mini"
+          )
 
-              val enterPip =
-                  Runnable {
-                      val builder =
-                          PictureInPictureParams
-                              .Builder()
-                              .setAspectRatio(
-                                  pipAspectRatio(
-                                      tab.id
-                                  )
-                              )
-
-                      if (
-                          geckoView.width > 0 &&
-                          geckoView.height > 0
-                      ) {
-                          builder.setSourceRectHint(
-                              Rect(
-                                  geckoView.left,
-                                  geckoView.top,
-                                  geckoView.right,
-                                  geckoView.bottom
-                              )
-                          )
-                      }
-
-                      if (
-                          Build.VERSION.SDK_INT >= 31
-                      ) {
-                          /*
-                           * Nexo controla manualmente el PiP
-                           * desde onUserLeaveHint().
-                           *
-                           * Se mantiene autoEnter desactivado
-                           * para no activar PiP al entrar en
-                           * Configuración, Historial, etc.
-                           */
-                          builder
-                              .setAutoEnterEnabled(false)
-                              .setSeamlessResizeEnabled(true)
-                      }
-
-                      val entered =
-                          runCatching {
-                              enterPictureInPictureMode(
-                                  builder.build()
-                              )
-                          }.getOrDefault(false)
-
-                      if (!entered) {
+          old_entered = '''            if (!entered) {
                           ExtensionManager.setPipMode(
                               session,
                               false
@@ -291,547 +649,712 @@ jobs:
 
                           updateMiniPlayerChip()
                       }
-                  }
+          '''
 
-              /*
-               * Botón manual:
-               * 120 ms para permitir que JS prepare
-               * el aislamiento.
-               *
-               * Home / cambio de app:
-               * delay 0 para evitar carrera con onStop().
-               */
-              if (delayMs <= 0L) {
-                  enterPip.run()
-              } else {
-                  geckoView.postDelayed(
-                      enterPip,
-                      delayMs
-                  )
-              }
-          }
+          new_entered = '''            if (!entered) {
+                          pipPlaybackWasActive = false
 
-          private fun updatePipParams() {
-              if (Build.VERSION.SDK_INT < 26) {
-                  return
-              }
-
-              val tab =
-                  TabManager.activeTab()
-
-              val builder =
-                  PictureInPictureParams
-                      .Builder()
-                      .setAspectRatio(
-                          pipAspectRatio(
-                              tab?.id
+                          ExtensionManager.setPipMode(
+                              session,
+                              false
                           )
-                      )
 
-              if (
-                  geckoView.width > 0 &&
-                  geckoView.height > 0
-              ) {
-                  builder.setSourceRectHint(
-                      Rect(
-                          geckoView.left,
-                          geckoView.top,
-                          geckoView.right,
-                          geckoView.bottom
-                      )
-                  )
-              }
+                          updateMiniPlayerChip()
+                      } else if (
+                          pipPlaybackWasActive
+                      ) {
+                          /*
+                           * Algunos sitios (especialmente YouTube) envían
+                           * una pausa transitoria al cambiar de ventana.
+                           * Reanudamos únicamente porque sabemos que
+                           * estaba reproduciéndose antes de entrar a PiP.
+                           */
+                          geckoView.postDelayed(
+                              {
+                                  BrowserMediaController
+                                      .resumeIfRecent(
+                                          tab.id,
+                                          8_000L
+                                      )
+                              },
+                              180L
+                          )
 
-              if (
-                  Build.VERSION.SDK_INT >= 31
-              ) {
-                  builder
-                      .setAutoEnterEnabled(false)
-                      .setSeamlessResizeEnabled(true)
-              }
+                          geckoView.postDelayed(
+                              {
+                                  BrowserMediaController
+                                      .resumeIfRecent(
+                                          tab.id,
+                                          8_000L
+                                      )
+                              },
+                              650L
+                          )
+                      }
+          '''
 
-              runCatching {
-                  setPictureInPictureParams(
-                      builder.build()
-                  )
-              }
-          }
+          main = must_replace(
+              main,
+              old_entered,
+              new_entered,
+              "recuperación tras enterPictureInPictureMode"
+          )
 
-          private fun pipAspectRatio(
-              tabId: String?
-          ): Rational {
-              val (rawWidth, rawHeight) =
-                  if (tabId != null) {
-                      BrowserMediaController
-                          .videoAspect(tabId)
-                  } else {
-                      16 to 9
-                  }
-
-              val width =
-                  rawWidth.coerceAtLeast(1)
-
-              val height =
-                  rawHeight.coerceAtLeast(1)
-
-              val ratio =
-                  width.toDouble() /
-                      height.toDouble()
-
-              /*
-               * Android PiP acepta aproximadamente
-               * ratios entre 1:2.39 y 2.39:1.
-               *
-               * Dejamos margen de seguridad.
-               */
-              return when {
-                  ratio < 0.42 ->
-                      Rational(
-                          42,
-                          100
-                      )
-
-                  ratio > 2.38 ->
-                      Rational(
-                          238,
-                          100
-                      )
-
-                  else ->
-                      Rational(
-                          width,
-                          height
-                      )
-              }
-          }
-
-          override fun onUserLeaveHint() {
+          old_leave = '''override fun onUserLeaveHint() {
               val tab =
                   TabManager.activeTab()
 
               if (
-                  !suppressAutoPipOnce &&
-                  !isInPictureInPictureMode &&
-                  BrowserPrefs.smartPip(this) &&
-                  tab != null &&
-                  hasMiniVideo(tab) &&
-                  isMiniPlaybackActive(tab)
-              ) {
-                  startMiniPlayer(
-                      silent = true,
-                      requirePlayback = true,
-                      delayMs = 0L
-                  )
-              }
-
-              super.onUserLeaveHint()
-          }
-
           '''
 
-          main = (
-              main[:start] +
-              new_pip_block +
-              main[end:]
-          )
-
-
-          # ========================================================
-          # 2. CONTENT_SCRIPT.JS
-          # ========================================================
-
-          if "let pipActive = false;" not in js:
-              anchor = "  let pipAncestors = [];\n"
-
-              if anchor not in js:
-                  raise RuntimeError(
-                      "No se encontró pipAncestors en content_script.js"
-                  )
-
-              js = js.replace(
-                  anchor,
-                  anchor +
-                  "  let pipActive = false;\n",
-                  1
-              )
-
-
-          # ========================================================
-          # bestVideo()
-          # ========================================================
-
-          best_start_marker = (
-              "  function bestVideo(preferPlaying) {"
-          )
-
-          best_end_marker = (
-              "  function ensurePipStyle() {"
-          )
-
-          if best_start_marker not in js:
-              raise RuntimeError(
-                  "No se encontró bestVideo()"
-              )
-
-          if best_end_marker not in js:
-              raise RuntimeError(
-                  "No se encontró ensurePipStyle()"
-              )
-
-          best_start = js.index(
-              best_start_marker
-          )
-
-          best_end = js.index(
-              best_end_marker,
-              best_start
-          )
-
-          best_video = r'''  function bestVideo(preferPlaying) {
-              const videos = videoList();
-
-              if (!videos.length) {
-                return null;
-              }
-
-              const playing =
-                videos.filter(
-                  video =>
-                    !video.paused &&
-                    !video.ended
-                );
+          new_leave = '''override fun onUserLeaveHint() {
+              val tab =
+                  TabManager.activeTab()
 
               /*
-               * Si solicitamos un video reproduciendo,
-               * no devolver uno pausado como fallback.
+               * También cubre modo solo audio / segundo plano.
+               * Se captura antes de que el sitio reciba eventos de
+               * lifecycle y pueda marcarse temporalmente como pausado.
                */
+              backgroundPlaybackWasActive =
+                  tab != null &&
+                  BrowserPrefs.backgroundMedia(this) &&
+                  BrowserMediaController
+                      .isPlaybackActive(tab.id)
+
               if (
-                preferPlaying &&
-                !playing.length
-              ) {
-                return null;
-              }
-
-              const candidates =
-                preferPlaying
-                  ? playing
-                  : videos;
-
-              return candidates
-                .slice()
-                .sort(
-                  (a, b) =>
-                    videoArea(b) -
-                    videoArea(a)
-                )[0] || null;
-            }
-
           '''
 
-          js = (
-              js[:best_start] +
-              best_video +
-              js[best_end:]
+          main = must_replace(
+              main,
+              old_leave,
+              new_leave,
+              "captura onUserLeaveHint"
           )
 
-
-          # ========================================================
-          # CSS PIP
-          # ========================================================
-
-          style_start_marker = (
-              "  function ensurePipStyle() {"
-          )
-
-          style_end_marker = (
-              "  function clearPipIsolation() {"
-          )
-
-          if style_start_marker not in js:
-              raise RuntimeError(
-                  "No se encontró ensurePipStyle()"
-              )
-
-          if style_end_marker not in js:
-              raise RuntimeError(
-                  "No se encontró clearPipIsolation()"
-              )
-
-          style_start = js.index(
-              style_start_marker
-          )
-
-          style_end = js.index(
-              style_end_marker,
-              style_start
-          )
-
-          pip_style = r'''  function ensurePipStyle() {
-              if (
-                document.getElementById(
-                  "nexo-pip-style"
-                )
-              ) {
-                return;
-              }
-
-              const style =
-                document.createElement(
-                  "style"
-                );
-
-              style.id =
-                "nexo-pip-style";
-
-              style.textContent = `
-                html.nexo-pip-root,
-                html.nexo-pip-root body {
-                  background: #000 !important;
-                  overflow: hidden !important;
-                }
-
-                /*
-                 * YouTube utiliza transform,
-                 * contain y will-change en padres
-                 * del reproductor.
-                 *
-                 * Eso puede convertir esos elementos
-                 * en containing blocks y romper
-                 * position: fixed.
-                 */
-                html.nexo-pip-root .nexo-pip-ancestor {
-                  position: static !important;
-                  transform: none !important;
-                  contain: none !important;
-                  will-change: auto !important;
-                  filter: none !important;
-                  perspective: none !important;
-                  backdrop-filter: none !important;
-                  z-index: auto !important;
-                  overflow: visible !important;
-                  clip: auto !important;
-                  clip-path: none !important;
-                }
-
-                html.nexo-pip-root video.nexo-pip-video {
-                  position: fixed !important;
-                  top: 0 !important;
-                  left: 0 !important;
-                  right: 0 !important;
-                  bottom: 0 !important;
-                  width: 100vw !important;
-                  height: 100vh !important;
-                  max-width: 100vw !important;
-                  max-height: 100vh !important;
-                  object-fit: contain !important;
-                  object-position: center center !important;
-                  z-index: 2147483647 !important;
-                  background: #000 !important;
-                  margin: 0 !important;
-                  padding: 0 !important;
-                  transform: none !important;
-                }
-              `;
-
-              (
-                document.head ||
-                document.documentElement
-              ).appendChild(style);
-            }
-
+          old_pip_change = '''        if (isInPictureInPictureMode) {
+                      TabManager.prepareForPictureInPicture()
+                  } else {
+                      TabManager.resumeActive()
+                  }
           '''
 
-          js = (
-              js[:style_start] +
-              pip_style +
-              js[style_end:]
-          )
+          new_pip_change = '''        if (isInPictureInPictureMode) {
+                      TabManager.prepareForPictureInPicture()
 
+                      val tab =
+                          TabManager.activeTab()
 
-          # ========================================================
-          # AISLAMIENTO PIP + YOUTUBE SPA
-          # ========================================================
-
-          isolation_start_marker = (
-              "  function setPipIsolation(active) {"
-          )
-
-          isolation_end_marker = (
-              "  function reportVideoState() {"
-          )
-
-          if isolation_start_marker not in js:
-              raise RuntimeError(
-                  "No se encontró setPipIsolation()"
-              )
-
-          if isolation_end_marker not in js:
-              raise RuntimeError(
-                  "No se encontró reportVideoState()"
-              )
-
-          isolation_start = js.index(
-              isolation_start_marker
-          )
-
-          isolation_end = js.index(
-              isolation_end_marker,
-              isolation_start
-          )
-
-          isolation = r'''  function setPipIsolation(active) {
-              pipActive =
-                active === true;
-
-              if (!pipActive) {
-                clearPipIsolation();
-                return;
-              }
-
-              const video =
-                bestVideo(true) ||
-                bestVideo(false);
-
-              if (!video) {
-                return;
-              }
-
-              clearPipIsolation();
-              ensurePipStyle();
-
-              pipVideo = video;
-
-              let current =
-                video.parentElement;
-
-              while (
-                current &&
-                current !== document.body &&
-                current !==
-                  document.documentElement
-              ) {
-                current.classList.add(
-                  "nexo-pip-ancestor"
-                );
-
-                pipAncestors.push(
-                  current
-                );
-
-                current =
-                  current.parentElement;
-              }
-
-              document.documentElement
-                .classList.add(
-                  "nexo-pip-root"
-                );
-
-              video.classList.add(
-                "nexo-pip-video"
-              );
-            }
-
-            /*
-             * YouTube funciona como SPA y puede
-             * reemplazar o mover el <video> sin
-             * recargar la página.
-             *
-             * Mientras PiP esté activo comprobamos
-             * si seguimos aislando el video correcto.
-             */
-            function refreshPipIsolation() {
-              if (!pipActive) {
-                return;
-              }
-
-              const video =
-                bestVideo(true) ||
-                bestVideo(false);
-
-              if (!video) {
-                return;
-              }
-
-              const currentStillValid =
-                pipVideo === video &&
-                video.isConnected &&
-                pipAncestors.every(
-                  ancestor =>
-                    ancestor.isConnected &&
-                    ancestor.classList.contains(
-                      "nexo-pip-ancestor"
-                    )
-                );
-
-              if (currentStillValid) {
-                return;
-              }
-
-              setPipIsolation(true);
-            }
-
+                      if (
+                          pipPlaybackWasActive &&
+                          tab != null
+                      ) {
+                          geckoView.postDelayed(
+                              {
+                                  BrowserMediaController
+                                      .resumeIfRecent(
+                                          tab.id,
+                                          8_000L
+                                      )
+                              },
+                              140L
+                          )
+                      }
+                  } else {
+                      pipPlaybackWasActive = false
+                      TabManager.resumeActive()
+                  }
           '''
 
-          js = (
-              js[:isolation_start] +
-              isolation +
-              js[isolation_end:]
+          main = must_replace(
+              main,
+              old_pip_change,
+              new_pip_change,
+              "onPictureInPictureModeChanged"
           )
-
-
-          # ========================================================
-          # reportVideoState()
-          # ========================================================
-
-          old_report = '''  function reportVideoState() {
-              if (!port) return;
-          '''
-
-          new_report = '''  function reportVideoState() {
-              refreshPipIsolation();
-
-              if (!port) return;
-          '''
-
-          if old_report not in js:
-              raise RuntimeError(
-                  "No se pudo modificar reportVideoState()"
-              )
-
-          js = js.replace(
-              old_report,
-              new_report,
-              1
-          )
-
-
-          # ========================================================
-          # 3. VERSION
-          # ========================================================
-
-          if 'versionCode = 18' in gradle:
-              gradle = gradle.replace(
-                  'versionCode = 18',
-                  'versionCode = 19',
-                  1
-              )
-
-          if 'versionName = "0.13.1"' in gradle:
-              gradle = gradle.replace(
-                  'versionName = "0.13.1"',
-                  'versionName = "0.13.2"',
-                  1
-              )
-
-
-          # ========================================================
-          # GUARDAR
-          # ========================================================
 
           MAIN.write_text(
               main,
               encoding="utf-8"
+          )
+
+          # =========================================================
+          # 3. TabManager.kt
+          # =========================================================
+
+          old_old_tab = '''            old?.session?.let { session ->
+                      val keepMediaAlive =
+                          BrowserPrefs.backgroundMedia(requireContext()) &&
+                          old != null &&
+                          BrowserMediaController.isPlaying(old.id)
+
+                      session.setFocused(false)
+                      session.setPriorityHint(
+                          if (keepMediaAlive) {
+                              GeckoSession.PRIORITY_HIGH
+                          } else {
+                              GeckoSession.PRIORITY_DEFAULT
+                          }
+                      )
+                      session.setActive(keepMediaAlive)
+                  }
+          '''
+
+          new_old_tab = '''            old?.session?.let { session ->
+                      val backgroundEnabled =
+                          BrowserPrefs.backgroundMedia(
+                              requireContext()
+                          )
+
+                      val keepMediaAlive =
+                          backgroundEnabled &&
+                          BrowserMediaController
+                              .shouldKeepAlive(
+                                  old.id,
+                                  8_000L
+                              )
+
+                      session.settings
+                          .setSuspendMediaWhenInactive(
+                              !backgroundEnabled
+                          )
+
+                      session.setFocused(false)
+                      ExtensionManager.setTabActive(
+                          session,
+                          false
+                      )
+
+                      session.setPriorityHint(
+                          if (keepMediaAlive) {
+                              GeckoSession.PRIORITY_HIGH
+                          } else {
+                              GeckoSession.PRIORITY_DEFAULT
+                          }
+                      )
+
+                      session.setActive(
+                          keepMediaAlive
+                      )
+                  }
+          '''
+
+          tabs = must_replace(
+              tabs,
+              old_old_tab,
+              new_old_tab,
+              "switchTo pestaña anterior"
+          )
+
+          old_target_active = '''        session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
+                  session.setActive(true)
+                  session.setFocused(true)
+
+                  listener?.onActiveTabChanged(target, session)
+          '''
+
+          new_target_active = '''        session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
+                  session.setActive(true)
+                  session.setFocused(true)
+
+                  ExtensionManager.setTabActive(
+                      session,
+                      true
+                  )
+
+                  listener?.onActiveTabChanged(target, session)
+          '''
+
+          tabs = must_replace(
+              tabs,
+              old_target_active,
+              new_target_active,
+              "setTabActive pestaña destino"
+          )
+
+          old_ext_inactive = '''        if (activate) {
+                      switchTo(tab.id, loadUrl = false)
+                  } else {
+                      session.setActive(false)
+                  }
+          '''
+
+          new_ext_inactive = '''        if (activate) {
+                      switchTo(tab.id, loadUrl = false)
+                  } else {
+                      session.setActive(false)
+
+                      ExtensionManager.setTabActive(
+                          session,
+                          false
+                      )
+                  }
+          '''
+
+          tabs = must_replace(
+              tabs,
+              old_ext_inactive,
+              new_ext_inactive,
+              "pestaña de extensión inactiva"
+          )
+
+          old_close = '''        removed.session?.let { session ->
+                      runCatching {
+                          session.setActive(false)
+                          session.close()
+                      }
+                  }
+          '''
+
+          new_close = '''        removed.session?.let { session ->
+                      runCatching {
+                          ExtensionManager.setTabActive(
+                              session,
+                              false
+                          )
+                          session.setActive(false)
+                          session.close()
+                      }
+                  }
+          '''
+
+          tabs = must_replace(
+              tabs,
+              old_close,
+              new_close,
+              "cerrar pestaña y WebExtensions"
+          )
+
+          tabs = replace_between(
+              tabs,
+              "    fun prepareForPictureInPicture() {",
+              "    fun prepareForBackground() {",
+              r'''    fun prepareForPictureInPicture() {
+                  val tab =
+                      activeTab()
+                          ?: return
+
+                  tab.session?.let {
+                      session ->
+
+                      /*
+                       * PiP sigue siendo contenido visible.
+                       * Nunca suspender multimedia durante esta transición.
+                       */
+                      session.settings
+                          .setSuspendMediaWhenInactive(
+                              false
+                          )
+
+                      session.setPriorityHint(
+                          GeckoSession.PRIORITY_HIGH
+                      )
+
+                      session.setActive(true)
+
+                      ExtensionManager.setTabActive(
+                          session,
+                          true
+                      )
+                  }
+
+                  BrowserMediaController
+                      .resumeIfRecent(
+                          tab.id,
+                          8_000L
+                      )
+
+                  MediaPlaybackService.sync(
+                      requireContext()
+                  )
+              }
+
+          ''',
+              "prepareForPictureInPicture"
+          )
+
+          tabs = replace_between(
+              tabs,
+              "    fun prepareForBackground() {",
+              "    fun suspendForBackground() {",
+              r'''    fun prepareForBackground() {
+                  val tab =
+                      activeTab()
+                          ?: return
+
+                  val context =
+                      requireContext()
+
+                  val backgroundEnabled =
+                      BrowserPrefs.backgroundMedia(
+                          context
+                      )
+
+                  val keepMediaAlive =
+                      backgroundEnabled &&
+                      BrowserMediaController
+                          .shouldKeepAlive(
+                              tab.id,
+                              8_000L
+                          )
+
+                  tab.session?.let {
+                      session ->
+
+                      session.flushSessionState()
+                      session.setFocused(false)
+
+                      /*
+                       * Si el usuario habilitó reproducción en segundo
+                       * plano no permitimos que Gecko suspenda media.
+                       */
+                      session.settings
+                          .setSuspendMediaWhenInactive(
+                              !backgroundEnabled
+                          )
+
+                      ExtensionManager.setTabActive(
+                          session,
+                          false
+                      )
+
+                      session.setPriorityHint(
+                          if (keepMediaAlive) {
+                              GeckoSession.PRIORITY_HIGH
+                          } else {
+                              GeckoSession.PRIORITY_DEFAULT
+                          }
+                      )
+
+                      session.setActive(
+                          keepMediaAlive
+                      )
+                  }
+
+                  if (keepMediaAlive) {
+                      MediaPlaybackService.sync(
+                          context
+                      )
+                  }
+
+                  persist()
+              }
+
+          ''',
+              "prepareForBackground"
+          )
+
+          old_resume = '''    fun resumeActive() {
+                  activeSession()?.let { session ->
+                      session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
+                      session.setActive(true)
+                      session.setFocused(true)
+                  }
+              }
+          '''
+
+          new_resume = '''    fun resumeActive() {
+                  activeSession()?.let {
+                      session ->
+
+                      session.setPriorityHint(
+                          GeckoSession.PRIORITY_HIGH
+                      )
+
+                      session.setActive(true)
+                      session.setFocused(true)
+
+                      ExtensionManager.setTabActive(
+                          session,
+                          true
+                      )
+                  }
+              }
+          '''
+
+          tabs = must_replace(
+              tabs,
+              old_resume,
+              new_resume,
+              "resumeActive"
+          )
+
+          TABS.write_text(
+              tabs,
+              encoding="utf-8"
+          )
+
+          # =========================================================
+          # 4. content_script.js
+          # =========================================================
+
+          js = must_replace(
+              js,
+              '''  let pipActive = false;
+              let reportTimer = 0;
+          ''',
+              '''  let pipActive = false;
+              let pipKeepPlaying = false;
+              let pipRecoveryUntil = 0;
+              let reportTimer = 0;
+          ''',
+              "variables PiP JS"
+          )
+
+          old_visibility = '''    visibilityHandler = event => {
+                  if (backgroundMedia) {
+                    event.stopImmediatePropagation();
+                  }
+                };
+          '''
+
+          new_visibility = '''    visibilityHandler = event => {
+                  if (backgroundMedia) {
+                    /*
+                     * Guardar el elemento que estaba reproduciendo ANTES
+                     * de que la página procese el cambio de visibilidad.
+                     */
+                    const playingBefore =
+                      playingMediaElement();
+
+                    event.stopImmediatePropagation();
+
+                    if (playingBefore) {
+                      setTimeout(() => {
+                        try {
+                          if (
+                            backgroundMedia &&
+                            playingBefore.isConnected &&
+                            playingBefore.paused &&
+                            !playingBefore.ended
+                          ) {
+                            Promise.resolve(
+                              playingBefore.play()
+                            ).catch(() => {});
+                          }
+                        } catch (_) {}
+                      }, 140);
+                    }
+                  }
+                };
+          '''
+
+          js = must_replace(
+              js,
+              old_visibility,
+              new_visibility,
+              "visibilitychange multimedia"
+          )
+
+          insert_after_video_list = '''  function videoList() {
+                  return collectVideos(document, []).filter(visibleEnough);
+                }
+
+          '''
+
+          media_helper = '''  function videoList() {
+                  return collectVideos(document, []).filter(visibleEnough);
+                }
+
+                function playingMediaElement() {
+                  const video =
+                    bestVideo(true);
+
+                  if (video) {
+                    return video;
+                  }
+
+                  try {
+                    const audio =
+                      Array.from(
+                        document.querySelectorAll("audio")
+                      ).find(
+                        item =>
+                          !item.paused &&
+                          !item.ended
+                      );
+
+                    return audio || null;
+                  } catch (_) {
+                    return null;
+                  }
+                }
+
+          '''
+
+          js = must_replace(
+              js,
+              insert_after_video_list,
+              media_helper,
+              "soporte audio HTML5"
+          )
+
+          js = replace_between(
+              js,
+              "  function setPipIsolation(active) {",
+              "  function reportVideoState() {",
+              r'''  function setPipIsolation(active) {
+                  const nextActive =
+                    active === true;
+
+                  const activating =
+                    nextActive &&
+                    !pipActive;
+
+                  pipActive =
+                    nextActive;
+
+                  if (!pipActive) {
+                    pipKeepPlaying = false;
+                    pipRecoveryUntil = 0;
+                    clearPipIsolation();
+                    return;
+                  }
+
+                  const video =
+                    bestVideo(true) ||
+                    bestVideo(false);
+
+                  if (!video) {
+                    return;
+                  }
+
+                  /*
+                   * Recordar intención de reproducción únicamente
+                   * en el primer momento de entrada a PiP.
+                   */
+                  if (activating) {
+                    pipKeepPlaying =
+                      !video.paused &&
+                      !video.ended;
+
+                    pipRecoveryUntil =
+                      pipKeepPlaying
+                        ? Date.now() + 5_000
+                        : 0;
+                  }
+
+                  clearPipIsolation();
+                  ensurePipStyle();
+
+                  pipVideo = video;
+
+                  let current =
+                    video.parentElement;
+
+                  while (
+                    current &&
+                    current !== document.body &&
+                    current !==
+                      document.documentElement
+                  ) {
+                    current.classList.add(
+                      "nexo-pip-ancestor"
+                    );
+
+                    pipAncestors.push(
+                      current
+                    );
+
+                    current =
+                      current.parentElement;
+                  }
+
+                  document.documentElement
+                    .classList.add(
+                      "nexo-pip-root"
+                    );
+
+                  video.classList.add(
+                    "nexo-pip-video"
+                  );
+
+                  recoverPipPlayback();
+                }
+
+                function recoverPipPlayback() {
+                  if (
+                    !pipActive ||
+                    !pipKeepPlaying ||
+                    Date.now() >
+                      pipRecoveryUntil
+                  ) {
+                    return;
+                  }
+
+                  const video =
+                    pipVideo ||
+                    bestVideo(false);
+
+                  if (
+                    !video ||
+                    video.ended ||
+                    !video.paused
+                  ) {
+                    return;
+                  }
+
+                  try {
+                    Promise.resolve(
+                      video.play()
+                    ).catch(() => {});
+                  } catch (_) {}
+                }
+
+                /*
+                 * YouTube funciona como SPA y puede reemplazar
+                 * o mover el <video> sin recargar la página.
+                 */
+                function refreshPipIsolation() {
+                  if (!pipActive) {
+                    return;
+                  }
+
+                  const video =
+                    bestVideo(true) ||
+                    bestVideo(false);
+
+                  if (!video) {
+                    recoverPipPlayback();
+                    return;
+                  }
+
+                  const currentStillValid =
+                    pipVideo === video &&
+                    video.isConnected &&
+                    pipAncestors.every(
+                      ancestor =>
+                        ancestor.isConnected &&
+                        ancestor.classList.contains(
+                          "nexo-pip-ancestor"
+                        )
+                    );
+
+                  if (!currentStillValid) {
+                    setPipIsolation(true);
+                  }
+
+                  recoverPipPlayback();
+                }
+
+          ''',
+              "aislamiento y recuperación PiP JS"
+          )
+
+          js = must_replace(
+              js,
+              '''  function reportVideoState() {
+                  refreshPipIsolation();
+
+                  if (!port) return;
+          ''',
+              '''  function reportVideoState() {
+                  refreshPipIsolation();
+                  recoverPipPlayback();
+
+                  if (!port) return;
+          ''',
+              "reportVideoState recovery"
           )
 
           SCRIPT.write_text(
@@ -839,34 +1362,754 @@ jobs:
               encoding="utf-8"
           )
 
+          # =========================================================
+          # 5. ExtensionManager.kt
+          # =========================================================
+
+          ext = must_replace(
+              ext,
+              '''    private var initialized = false
+
+              fun initialize(context: Context) {
+          ''',
+              '''    private var initialized = false
+
+              /*
+               * GeckoView entrega acciones de extensiones a través de
+               * ActionDelegate. Nexo antes no guardaba esas acciones,
+               * por eso muchas extensiones podían instalarse pero no
+               * tenían ninguna forma de ejecutarse desde la interfaz.
+               */
+              private val defaultActions =
+                  mutableMapOf<
+                      String,
+                      WebExtension.Action
+                      >()
+
+              private val sessionActions =
+                  java.util.WeakHashMap<
+                      GeckoSession,
+                      MutableMap<
+                          String,
+                          WebExtension.Action
+                          >
+                      >()
+
+              fun initialize(context: Context) {
+          ''',
+              "almacenamiento de acciones WebExtension"
+          )
+
+          attach_marker = '''    fun attachPromptActivity(activity: Activity?) {
+                  promptActivity = WeakReference(activity)
+              }
+
+          '''
+
+          attach_replacement = '''    fun attachPromptActivity(activity: Activity?) {
+                  promptActivity = WeakReference(activity)
+              }
+
+              fun setTabActive(
+                  session: GeckoSession,
+                  active: Boolean
+              ) {
+                  runCatching {
+                      GeckoRuntimeHolder
+                          .get(AppContext.get())
+                          .webExtensionController
+                          .setTabActive(
+                              session,
+                              active
+                          )
+                  }.onFailure {
+                      error ->
+
+                      android.util.Log.w(
+                          "NexoExtensions",
+                          "No se pudo notificar pestaña activa",
+                          error
+                      )
+                  }
+              }
+
+              fun runAction(
+                  extension: WebExtension,
+                  onDone:
+                      (Boolean, String) -> Unit
+              ) {
+                  val session =
+                      TabManager.activeSession()
+
+                  val sessionAction =
+                      session
+                          ?.let {
+                              sessionActions[it]
+                                  ?.get(
+                                      extension.id
+                                  )
+                          }
+
+                  val defaultAction =
+                      defaultActions[
+                          extension.id
+                      ]
+
+                  val action =
+                      when {
+                          sessionAction != null &&
+                              defaultAction != null ->
+                              runCatching {
+                                  sessionAction
+                                      .withDefault(
+                                          defaultAction
+                                      )
+                              }.getOrDefault(
+                                  sessionAction
+                              )
+
+                          sessionAction != null ->
+                              sessionAction
+
+                          else ->
+                              defaultAction
+                      }
+
+                  if (action == null) {
+                      onDone(
+                          false,
+                          "La extensión no expone una acción para esta pestaña."
+                      )
+                      return
+                  }
+
+                  if (action.enabled == false) {
+                      onDone(
+                          false,
+                          "La acción de la extensión está deshabilitada en esta página."
+                      )
+                      return
+                  }
+
+                  runCatching {
+                      action.click()
+                  }.fold(
+                      onSuccess = {
+                          onDone(
+                              true,
+                              action.title
+                                  ?.takeIf {
+                                      it.isNotBlank()
+                                  }
+                                  ?: "Acción de extensión ejecutada"
+                          )
+                      },
+                      onFailure = {
+                          error ->
+
+                          onDone(
+                              false,
+                              "No se pudo ejecutar: " +
+                                  (
+                                      error.message
+                                          ?: "error desconocido"
+                                      )
+                          )
+                      }
+                  )
+              }
+
+          '''
+
+          ext = must_replace(
+              ext,
+              attach_marker,
+              attach_replacement,
+              "API pestaña activa y ejecutar extensión"
+          )
+
+          register_start = "    private fun registerExtension(extension: WebExtension) {"
+          register_end = "    private fun bindExtensionToSession("
+
+          new_register = r'''    private fun registerExtension(
+                  extension: WebExtension
+              ) {
+                  if (extension.id == BRIDGE_ID) {
+                      configureBridge(
+                          extension
+                      )
+                      return
+                  }
+
+                  if (
+                      extension.id ==
+                      TranslatorManager
+                          .TRANSLATOR_ID
+                  ) {
+                      return
+                  }
+
+                  extension.setActionDelegate(
+                      extensionActionDelegate
+                  )
+
+                  extension.setTabDelegate(
+                      object :
+                          WebExtension.TabDelegate {
+
+                          override fun onNewTab(
+                              source: WebExtension,
+                              createDetails:
+                                  WebExtension
+                                      .CreateTabDetails
+                          ): GeckoResult<GeckoSession>? {
+                              val session =
+                                  TabManager
+                                      .createSessionForExtension(
+                                          createDetails.url
+                                              ?: "about:blank",
+                                          createDetails.active !=
+                                              false
+                                      )
+
+                              return GeckoResult
+                                  .fromValue(
+                                      session
+                                  )
+                          }
+
+                          override fun onOpenOptionsPage(
+                              source: WebExtension
+                          ) {
+                              val url =
+                                  source
+                                      .metaData
+                                      ?.optionsPageUrl
+
+                              if (
+                                  !url.isNullOrBlank()
+                              ) {
+                                  TabManager.createTab(
+                                      url = url,
+                                      activate = true
+                                  )
+                              }
+                          }
+                      }
+                  )
+
+                  TabManager.liveSessions()
+                      .forEach {
+                          bindExtensionToSession(
+                              extension,
+                              it
+                          )
+                      }
+              }
+
+          '''
+
+          ext = replace_between(
+              ext,
+              register_start,
+              register_end,
+              new_register,
+              "registerExtension"
+          )
+
+          bind_start = "    private fun bindExtensionToSession("
+          bind_end = "    private val bridgeMessageDelegate ="
+
+          new_bind = r'''    private fun bindExtensionToSession(
+                  extension: WebExtension,
+                  session: GeckoSession
+              ) {
+                  /*
+                   * Recibir browser_action/page_action específicos
+                   * de esta pestaña.
+                   */
+                  session.webExtensionController
+                      .setActionDelegate(
+                          extension,
+                          extensionActionDelegate
+                      )
+
+                  session.webExtensionController
+                      .setTabDelegate(
+                          extension,
+                          object :
+                              WebExtension
+                                  .SessionTabDelegate {
+
+                              override fun onCloseTab(
+                                  source: WebExtension?,
+                                  session: GeckoSession
+                              ): GeckoResult<AllowOrDeny> {
+                                  TabManager
+                                      .closeBySession(
+                                          session
+                                      )
+
+                                  return GeckoResult.allow()
+                              }
+
+                              override fun onUpdateTab(
+                                  extension: WebExtension,
+                                  session: GeckoSession,
+                                  details:
+                                      WebExtension
+                                          .UpdateTabDetails
+                              ): GeckoResult<AllowOrDeny> {
+                                  if (
+                                      details.active == true
+                                  ) {
+                                      TabManager
+                                          .activateBySession(
+                                              session
+                                          )
+                                  }
+
+                                  return GeckoResult.allow()
+                              }
+                          }
+                      )
+              }
+
+              private fun rememberAction(
+                  extension: WebExtension,
+                  session: GeckoSession?,
+                  action: WebExtension.Action
+              ) {
+                  if (session == null) {
+                      defaultActions[
+                          extension.id
+                      ] = action
+                  } else {
+                      sessionActions
+                          .getOrPut(
+                              session
+                          ) {
+                              mutableMapOf()
+                          }[
+                              extension.id
+                          ] = action
+                  }
+              }
+
+              private fun createExtensionPopupSession():
+                  GeckoResult<GeckoSession> {
+                  val session =
+                      TabManager
+                          .createSessionForExtension(
+                              "about:blank",
+                              true
+                          )
+
+                  return GeckoResult.fromValue(
+                      session
+                  )
+              }
+
+              private val extensionActionDelegate =
+                  object :
+                      WebExtension.ActionDelegate {
+
+                      override fun onBrowserAction(
+                          extension: WebExtension,
+                          session: GeckoSession?,
+                          action: WebExtension.Action
+                      ) {
+                          rememberAction(
+                              extension,
+                              session,
+                              action
+                          )
+                      }
+
+                      override fun onPageAction(
+                          extension: WebExtension,
+                          session: GeckoSession?,
+                          action: WebExtension.Action
+                      ) {
+                          rememberAction(
+                              extension,
+                              session,
+                              action
+                          )
+                      }
+
+                      override fun onOpenPopup(
+                          extension: WebExtension,
+                          action: WebExtension.Action
+                      ): GeckoResult<GeckoSession>? =
+                          createExtensionPopupSession()
+
+                      override fun onTogglePopup(
+                          extension: WebExtension,
+                          action: WebExtension.Action
+                      ): GeckoResult<GeckoSession>? =
+                          createExtensionPopupSession()
+                  }
+
+          '''
+
+          ext = replace_between(
+              ext,
+              bind_start,
+              bind_end,
+              new_bind,
+              "bindExtensionToSession + ActionDelegate"
+          )
+
+          old_update_prompt = '''        override fun onUpdatePrompt(
+                      extension: WebExtension,
+                      newPermissions: Array<out String>,
+                      newOrigins: Array<out String>,
+                      newDataCollectionPermissions: Array<out String>
+                  ): GeckoResult<AllowOrDeny>? =
+                      showPermissionPrompt(extension, "Actualizar extensión")
+          '''
+
+          new_update_prompt = '''        override fun onUpdatePrompt(
+                      extension: WebExtension,
+                      newPermissions: Array<out String>,
+                      newOrigins: Array<out String>,
+                      newDataCollectionPermissions: Array<out String>
+                  ): GeckoResult<AllowOrDeny>? =
+                      showPermissionPrompt(
+                          extension = extension,
+                          title = "Actualizar extensión",
+                          permissions = newPermissions,
+                          origins = newOrigins,
+                          dataCollectionPermissions =
+                              newDataCollectionPermissions
+                      )
+
+                  override fun onOptionalPrompt(
+                      extension: WebExtension,
+                      permissions: Array<out String>,
+                      origins: Array<out String>,
+                      dataCollectionPermissions:
+                          Array<out String>
+                  ): GeckoResult<AllowOrDeny>? =
+                      showPermissionPrompt(
+                          extension = extension,
+                          title = "Permisos adicionales",
+                          permissions = permissions,
+                          origins = origins,
+                          dataCollectionPermissions =
+                              dataCollectionPermissions
+                      )
+          '''
+
+          ext = must_replace(
+              ext,
+              old_update_prompt,
+              new_update_prompt,
+              "PromptDelegate update + optional"
+          )
+
+          permission_start = "    private fun showPermissionPrompt("
+          permission_end = ext.rfind("\n}")
+
+          if permission_start not in ext:
+              raise RuntimeError(
+                  "No se encontró showPermissionPrompt()"
+              )
+
+          if permission_end < 0:
+              raise RuntimeError(
+                  "No se encontró cierre de ExtensionManager"
+              )
+
+          p_start = ext.index(
+              permission_start
+          )
+
+          new_permission_func = r'''    private fun showPermissionPrompt(
+                  extension: WebExtension,
+                  title: String,
+                  permissions:
+                      Array<out String> =
+                      emptyArray<String>(),
+                  origins:
+                      Array<out String> =
+                      emptyArray<String>(),
+                  dataCollectionPermissions:
+                      Array<out String> =
+                      emptyArray<String>()
+              ): GeckoResult<AllowOrDeny> {
+                  val result =
+                      GeckoResult<AllowOrDeny>()
+
+                  val activity =
+                      promptActivity.get()
+
+                  if (
+                      activity == null ||
+                      activity.isFinishing
+                  ) {
+                      result.complete(
+                          AllowOrDeny.DENY
+                      )
+                      return result
+                  }
+
+                  val details =
+                      buildString {
+                          append(
+                              extension
+                                  .metaData
+                                  ?.name
+                                  ?: extension.id
+                          )
+
+                          append(
+                              "\nVersión: "
+                          )
+
+                          append(
+                              extension
+                                  .metaData
+                                  ?.version
+                                  ?: "?"
+                          )
+
+                          if (
+                              permissions
+                                  .isNotEmpty()
+                          ) {
+                              append(
+                                  "\n\nPermisos: "
+                              )
+
+                              append(
+                                  permissions
+                                      .joinToString(
+                                          ", "
+                                      )
+                              )
+                          }
+
+                          if (
+                              origins
+                                  .isNotEmpty()
+                          ) {
+                              append(
+                                  "\n\nSitios: "
+                              )
+
+                              append(
+                                  origins
+                                      .joinToString(
+                                          ", "
+                                      )
+                              )
+                          }
+
+                          if (
+                              dataCollectionPermissions
+                                  .isNotEmpty()
+                          ) {
+                              append(
+                                  "\n\nDatos solicitados: "
+                              )
+
+                              append(
+                                  dataCollectionPermissions
+                                      .joinToString(
+                                          ", "
+                                      )
+                              )
+                          }
+
+                          append(
+                              "\n\nPermite únicamente si confías en la extensión."
+                          )
+                      }
+
+                  activity.runOnUiThread {
+                      AlertDialog.Builder(
+                          activity
+                      )
+                          .setTitle(title)
+                          .setMessage(details)
+                          .setNegativeButton(
+                              "Cancelar"
+                          ) {
+                                  _,
+                                  _ ->
+
+                              result.complete(
+                                  AllowOrDeny.DENY
+                              )
+                          }
+                          .setPositiveButton(
+                              "Permitir"
+                          ) {
+                                  _,
+                                  _ ->
+
+                              result.complete(
+                                  AllowOrDeny.ALLOW
+                              )
+                          }
+                          .setOnCancelListener {
+                              result.complete(
+                                  AllowOrDeny.DENY
+                              )
+                          }
+                          .show()
+                  }
+
+                  return result
+              }
+          '''
+
+          ext = (
+              ext[:p_start] +
+              new_permission_func +
+              ext[permission_end:]
+          )
+
+          EXT.write_text(
+              ext,
+              encoding="utf-8"
+          )
+
+          # =========================================================
+          # 6. ExtensionsActivity.kt
+          # =========================================================
+
+          ext_ui = must_replace(
+              ext_ui,
+              '''        popup.menu.add(
+                  "Buscar actualización"
+              )
+          ''',
+              '''        if (meta.enabled) {
+                  popup.menu.add(
+                      "Ejecutar en esta pestaña"
+                  )
+              }
+
+              popup.menu.add(
+                  "Buscar actualización"
+              )
+          ''',
+              "menú Ejecutar extensión"
+          )
+
+          ext_ui = must_replace(
+              ext_ui,
+              '''                "Buscar actualización" -> {
+                          updateOne(
+                              extension
+                          )
+                          true
+                      }
+          ''',
+              '''                "Ejecutar en esta pestaña" -> {
+                          runExtensionAction(
+                              extension
+                          )
+                          true
+                      }
+
+                      "Buscar actualización" -> {
+                          updateOne(
+                              extension
+                          )
+                          true
+                      }
+          ''',
+              "acción Ejecutar en menú"
+          )
+
+          set_enabled_marker = '''    private fun setEnabled(
+                  extension: WebExtension,
+                  enabled: Boolean
+              ) {
+          '''
+
+          run_action_func = '''    private fun runExtensionAction(
+                  extension: WebExtension
+              ) {
+                  ExtensionManager.runAction(
+                      extension
+                  ) {
+                          ok,
+                          message ->
+
+                      runOnUiThread {
+                          toast(message)
+
+                          if (ok) {
+                              load()
+                          }
+                      }
+                  }
+              }
+
+          ''' + set_enabled_marker
+
+          ext_ui = must_replace(
+              ext_ui,
+              set_enabled_marker,
+              run_action_func,
+              "runExtensionAction"
+          )
+
+          EXT_UI.write_text(
+              ext_ui,
+              encoding="utf-8"
+          )
+
+          # =========================================================
+          # 7. Version
+          # =========================================================
+
+          if 'versionCode = 19' in gradle:
+              gradle = gradle.replace(
+                  'versionCode = 19',
+                  'versionCode = 20',
+                  1
+              )
+          elif 'versionCode = 20' not in gradle:
+              raise RuntimeError(
+                  "VersionCode base inesperado"
+              )
+
+          if 'versionName = "0.13.2"' in gradle:
+              gradle = gradle.replace(
+                  'versionName = "0.13.2"',
+                  'versionName = "0.13.3"',
+                  1
+              )
+          elif 'versionName = "0.13.3"' not in gradle:
+              raise RuntimeError(
+                  "VersionName base inesperado"
+              )
+
           GRADLE.write_text(
               gradle,
               encoding="utf-8"
           )
 
           print(
-              "✅ Nexo v0.13.2 YouTube PiP patch aplicado"
+              "✅ Nexo v0.13.3 patch aplicado"
           )
-
           PY
 
           echo ""
           echo "========================================"
           echo " CAMBIOS GENERADOS"
           echo "========================================"
-
           git diff --stat
-
           echo ""
-
           git diff --check
 
-
-      # ============================================================
-      # VALIDACIONES
-      # ============================================================
-
-      - name: Validate PiP source changes
+      - name: Validate Nexo v0.13.3 source
         shell: bash
         run: |
           set -euo pipefail
@@ -876,226 +2119,94 @@ jobs:
 
           main = Path(
               "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
-          ).read_text(
-              encoding="utf-8"
-          )
+          ).read_text(encoding="utf-8")
+
+          media = Path(
+              "app/src/main/java/com/ejemplo/navegador/BrowserMediaController.kt"
+          ).read_text(encoding="utf-8")
+
+          tabs = Path(
+              "app/src/main/java/com/ejemplo/navegador/TabManager.kt"
+          ).read_text(encoding="utf-8")
+
+          ext = Path(
+              "app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt"
+          ).read_text(encoding="utf-8")
+
+          ext_ui = Path(
+              "app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt"
+          ).read_text(encoding="utf-8")
 
           js = Path(
               "app/src/main/assets/extensions/nexo_bridge/content_script.js"
-          ).read_text(
-              encoding="utf-8"
-          )
+          ).read_text(encoding="utf-8")
 
           gradle = Path(
               "app/build.gradle.kts"
-          ).read_text(
-              encoding="utf-8"
-          )
+          ).read_text(encoding="utf-8")
 
           manifest = Path(
               "app/src/main/AndroidManifest.xml"
-          ).read_text(
-              encoding="utf-8"
-          )
+          ).read_text(encoding="utf-8")
 
+          compact_main = "".join(main.split())
+          compact_media = "".join(media.split())
+          compact_tabs = "".join(tabs.split())
+          compact_ext = "".join(ext.split())
+          compact_ui = "".join(ext_ui.split())
+          compact_js = "".join(js.split())
 
-          # ========================================================
-          # NORMALIZACIÓN
-          # ========================================================
+          # Multimedia / PiP
+          assert "pipPlaybackWasActive" in main
+          assert "backgroundPlaybackWasActive" in main
+          assert "resumeIfRecent(" in main
+          assert "privatevalrecentPlayback=" in compact_media
+          assert "funshouldKeepAlive(" in compact_media
+          assert "funresumeIfRecent(" in compact_media
+          assert "media.play()" in compact_media
+          assert "setSuspendMediaWhenInactive(false)" in compact_tabs
+          assert "shouldKeepAlive(tab.id,8_000L)" in compact_tabs
 
-          compact_main = "".join(
-              main.split()
-          )
+          # JS recuperación PiP y segundo plano
+          assert "letpipKeepPlaying=false;" in compact_js
+          assert "functionrecoverPipPlayback()" in compact_js
+          assert "playingMediaElement()" in compact_js
+          assert "Promise.resolve(video.play())" in compact_js
+          assert "transform:none!important;" in compact_js
+          assert "contain:none!important;" in compact_js
 
-          compact_js = "".join(
-              js.split()
-          )
+          # Extensiones
+          assert ".setTabActive(session,active)" in compact_ext
+          assert "extension.setActionDelegate(extensionActionDelegate)" in compact_ext
+          assert ".setActionDelegate(extension,extensionActionDelegate)" in compact_ext
+          assert "overridefunonOptionalPrompt(" in compact_ext
+          assert "overridefunonOpenOptionsPage(" in compact_ext
+          assert "overridefunonBrowserAction(" in compact_ext
+          assert "overridefunonPageAction(" in compact_ext
+          assert "overridefunonOpenPopup(" in compact_ext
+          assert "overridefunonTogglePopup(" in compact_ext
+          assert "action.click()" in compact_ext
+          assert "Ejecutarenestapestaña" in compact_ui
 
-
-          # ========================================================
-          # MAINACTIVITY
-          # ========================================================
-
-          assert (
-              "privatefunisYoutubeVideoPage("
-              in compact_main
-          )
-
-          assert (
-              "privatefunisMiniPlaybackActive("
-              in compact_main
-          )
-
-          assert (
-              "privatefunhasMiniVideo("
-              in compact_main
-          )
-
-          assert (
-              "BrowserMediaController.isVideoPlaying(tab.id)"
-              in compact_main
-          )
-
-          assert (
-              "BrowserMediaController.isPlaying(tab.id)"
-              in compact_main
-          )
-
-          assert (
-              "BrowserMediaController.isVideoPresent(tab.id)"
-              in compact_main
-          )
-
-          assert (
-              "overridefunonUserLeaveHint()"
-              in compact_main
-          )
-
-          assert (
-              "requirePlayback:Boolean=false"
-              in compact_main
-          )
-
-          assert (
-              "delayMs:Long=120L"
-              in compact_main
-          )
-
-          assert (
-              "setAutoEnterEnabled(false)"
-              in compact_main
-          )
-
-          assert (
-              "setSeamlessResizeEnabled(true)"
-              in compact_main
-          )
-
-          # Ratio mínimo seguro
-          assert (
-              "Rational(42,100)"
-              in compact_main
-          )
-
-          # Ratio máximo seguro
-          assert (
-              "Rational(238,100)"
-              in compact_main
-          )
-
-          # La restricción estricta de v0.13.1
-          # debe desaparecer.
-          assert (
-              "Reproduce el video antes de abrir Mini."
-              not in main
-          )
-
-
-          # ========================================================
-          # JAVASCRIPT
-          # ========================================================
-
-          assert (
-              "letpipActive=false;"
-              in compact_js
-          )
-
-          assert (
-              "transform:none!important;"
-              in compact_js
-          )
-
-          assert (
-              "contain:none!important;"
-              in compact_js
-          )
-
-          assert (
-              "will-change:auto!important;"
-              in compact_js
-          )
-
-          assert (
-              "functionrefreshPipIsolation()"
-              in compact_js
-          )
-
-          assert (
-              "pipVideo===video"
-              in compact_js
-          )
-
-          assert (
-              "preferPlaying&&!playing.length"
-              in compact_js
-          )
-
-          assert (
-              "refreshPipIsolation();"
-              in compact_js
-          )
-
-          assert (
-              "object-fit:contain!important;"
-              in compact_js
-          )
-
-
-          # ========================================================
-          # MANIFEST
-          # ========================================================
-
-          assert (
-              'android:supportsPictureInPicture="true"'
-              in manifest
-          )
-
-
-          # ========================================================
-          # VERSION
-          # ========================================================
-
-          assert (
-              'versionCode = 19'
-              in gradle
-          )
-
-          assert (
-              'versionName = "0.13.2"'
-              in gradle
-          )
-
-
-          # ========================================================
-          # GECKOVIEW
-          # ========================================================
-
-          assert (
-              "geckoview-omni:153.0.20260715202819"
-              in gradle
-          )
+          # Base
+          assert 'android:supportsPictureInPicture="true"' in manifest
+          assert 'versionCode = 20' in gradle
+          assert 'versionName = "0.13.3"' in gradle
+          assert "geckoview-omni:153.0.20260715202819" in gradle
 
           print(
-              "✅ Validaciones Nexo v0.13.2 correctas"
+              "✅ Validaciones estáticas v0.13.3 correctas"
           )
-
           PY
 
-
-      # ============================================================
-      # JAVA
-      # ============================================================
+          node --check \
+            app/src/main/assets/extensions/nexo_bridge/content_script.js
 
       - name: Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
-
-
-      # ============================================================
-      # ANDROID SDK
-      # ============================================================
 
       - name: Android SDK
         uses: android-actions/setup-android@v3
@@ -1112,11 +2223,6 @@ jobs:
             "platforms;android-${COMPILE_SDK}" \
             "build-tools;${BUILD_TOOLS}" \
             "platform-tools"
-
-
-      # ============================================================
-      # GRADLE
-      # ============================================================
 
       - name: Install Gradle
         shell: bash
@@ -1139,11 +2245,6 @@ jobs:
 
           gradle --version
 
-
-      # ============================================================
-      # COMPILAR
-      # ============================================================
-
       - name: Build Debug Release and Lint
         shell: bash
         run: |
@@ -1157,11 +2258,6 @@ jobs:
             --stacktrace \
             --no-daemon \
             2>&1 | tee full-build.log
-
-
-      # ============================================================
-      # VALIDAR APK
-      # ============================================================
 
       - name: Validate generated APKs
         shell: bash
@@ -1194,25 +2290,20 @@ jobs:
               | head -n 1
           )"
 
-          if [ -z "$ARM64" ]; then
+          test -n "$ARM64" || {
             echo "❌ No se generó APK arm64-v8a"
             exit 1
-          fi
+          }
 
-          if [ -z "$ARM32" ]; then
+          test -n "$ARM32" || {
             echo "❌ No se generó APK armeabi-v7a"
             exit 1
-          fi
+          }
 
           echo "✅ APK arm64-v8a detectado"
           echo "✅ APK armeabi-v7a detectado"
 
-
-      # ============================================================
-      # COMMIT SOLO SI COMPILA
-      # ============================================================
-
-      - name: Save verified Nexo v0.13.2 source
+      - name: Save verified Nexo v0.13.3 source
         shell: bash
         run: |
           set -euo pipefail
@@ -1228,25 +2319,24 @@ jobs:
           git add \
             app/build.gradle.kts \
             app/src/main/java/com/ejemplo/navegador/MainActivity.kt \
+            app/src/main/java/com/ejemplo/navegador/BrowserMediaController.kt \
+            app/src/main/java/com/ejemplo/navegador/TabManager.kt \
+            app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt \
+            app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt \
             app/src/main/assets/extensions/nexo_bridge/content_script.js
 
           if git diff --cached --quiet; then
             echo "ℹ️ No hay cambios nuevos para guardar."
           else
             git commit \
-              -m "Nexo v0.13.2 YouTube PiP fix [skip ci]"
+              -m "Nexo v0.13.3 PiP audio extensions fix [skip ci]"
 
             git push \
               origin \
               HEAD:main
 
-            echo "✅ Código v0.13.2 guardado en main"
+            echo "✅ Código v0.13.3 guardado en main"
           fi
-
-
-      # ============================================================
-      # FIRMAR APK RELEASE
-      # ============================================================
 
       - name: Sign Release APKs
         shell: bash
@@ -1257,14 +2347,14 @@ jobs:
 
           keytool \
             -genkeypair \
-            -keystore nexo-v0132-ci.jks \
+            -keystore nexo-v0133-ci.jks \
             -storepass android \
             -alias nexo \
             -keypass android \
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000 \
-            -dname "CN=Nexo Browser v0.13.2,O=Nexo,C=CO"
+            -dname "CN=Nexo Browser v0.13.3,O=Nexo,C=CO"
 
           APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
 
@@ -1284,56 +2374,31 @@ jobs:
               | head -n 1
           )"
 
-          if [ -z "$ARM64" ]; then
-            echo "❌ No se encontró APK arm64-v8a"
-            exit 1
-          fi
-
-          if [ -z "$ARM32" ]; then
-            echo "❌ No se encontró APK armeabi-v7a"
-            exit 1
-          fi
-
           "$APKSIGNER" sign \
-            --ks nexo-v0132-ci.jks \
+            --ks nexo-v0133-ci.jks \
             --ks-key-alias nexo \
             --ks-pass pass:android \
             --key-pass pass:android \
             --out \
-            artifacts/release/Nexo-v0.13.2-arm64-v8a.apk \
+            artifacts/release/Nexo-v0.13.3-arm64-v8a.apk \
             "$ARM64"
 
           "$APKSIGNER" sign \
-            --ks nexo-v0132-ci.jks \
+            --ks nexo-v0133-ci.jks \
             --ks-key-alias nexo \
             --ks-pass pass:android \
             --key-pass pass:android \
             --out \
-            artifacts/release/Nexo-v0.13.2-armeabi-v7a.apk \
+            artifacts/release/Nexo-v0.13.3-armeabi-v7a.apk \
             "$ARM32"
 
-          echo ""
-          echo "========================================"
-          echo " VERIFY ARM64"
-          echo "========================================"
+          "$APKSIGNER" verify \
+            --verbose \
+            artifacts/release/Nexo-v0.13.3-arm64-v8a.apk
 
           "$APKSIGNER" verify \
             --verbose \
-            artifacts/release/Nexo-v0.13.2-arm64-v8a.apk
-
-          echo ""
-          echo "========================================"
-          echo " VERIFY ARM32"
-          echo "========================================"
-
-          "$APKSIGNER" verify \
-            --verbose \
-            artifacts/release/Nexo-v0.13.2-armeabi-v7a.apk
-
-
-      # ============================================================
-      # CHECKSUMS
-      # ============================================================
+            artifacts/release/Nexo-v0.13.3-armeabi-v7a.apk
 
       - name: Generate SHA256 checksums
         shell: bash
@@ -1343,44 +2408,29 @@ jobs:
           cd artifacts/release
 
           sha256sum \
-            Nexo-v0.13.2-arm64-v8a.apk \
-            Nexo-v0.13.2-armeabi-v7a.apk \
+            Nexo-v0.13.3-arm64-v8a.apk \
+            Nexo-v0.13.3-armeabi-v7a.apk \
             > SHA256SUMS.txt
-
-          echo ""
-          echo "========================================"
-          echo " SHA256"
-          echo "========================================"
 
           cat SHA256SUMS.txt
 
-
-      # ============================================================
-      # SUBIR APK
-      # ============================================================
-
-      - name: Upload Nexo v0.13.2 APKs
+      - name: Upload Nexo v0.13.3 APKs
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-v0132-YouTube-PiP-Release
+          name: Nexo-v0133-PiP-Audio-Extensions-Release
           path: |
-            artifacts/release/Nexo-v0.13.2-arm64-v8a.apk
-            artifacts/release/Nexo-v0.13.2-armeabi-v7a.apk
+            artifacts/release/Nexo-v0.13.3-arm64-v8a.apk
+            artifacts/release/Nexo-v0.13.3-armeabi-v7a.apk
             artifacts/release/SHA256SUMS.txt
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
 
-
-      # ============================================================
-      # DIAGNÓSTICOS
-      # ============================================================
-
       - name: Upload diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-v0132-PiP-build-diagnostics
+          name: Nexo-v0133-build-diagnostics
           path: |
             full-build.log
             app/build/reports/
