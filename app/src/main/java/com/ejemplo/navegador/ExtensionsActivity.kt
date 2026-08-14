@@ -278,7 +278,7 @@ class ExtensionsActivity :
         setLoading(true)
 
         status.text =
-            "Analizando XPI o ZIP…"
+            "Analizando XPI/ZIP firmado…"
 
         ExtensionManager.importXpi(
             this,
@@ -332,10 +332,10 @@ class ExtensionsActivity :
                                 .isEmpty()
                         ) {
                             status.text =
-                                "No encontré XPI, ZIP ni una carpeta con manifest.json."
+                                "No encontré ningún XPI/ZIP instalable en esta carpeta."
 
                             toast(
-                                "Prueba seleccionando la carpeta que contiene la extensión o su archivo XPI/ZIP."
+                                "Busca un XPI firmado por Mozilla. Una carpeta/ZIP de código fuente sin firma no puede instalarse como extensión normal en GeckoView."
                             )
                         } else {
                             showCandidates(

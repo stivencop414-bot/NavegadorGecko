@@ -4,96 +4,26 @@
   let port = null;
   let backgroundMedia = true;
   let visibilityHandler = null;
-  let spoofed = false;
   let pipVideo = null;
   let pipAncestors = [];
-    let pipActive = false;
-    let pipKeepPlaying = false;
-    let pipRecoveryUntil = 0;
-    let reportTimer = 0;
+  let pipActive = false;
+  let reportTimer = 0;
 
-
-  function pageDocument() {
-    try {
-      return document.wrappedJSObject || document;
-    } catch (_) {
-      return document;
-    }
-  }
-
-  function makePageFunction(fn) {
-    try {
-      if (typeof exportFunction === "function") {
-        return exportFunction(
-          fn,
-          window.wrappedJSObject || window
-        );
-      }
-    } catch (_) {}
-    return fn;
-  }
-
-  function enableVisibilitySpoof() {
-    if (spoofed) return;
-    spoofed = true;
-
-    const pageDoc = pageDocument();
-    let pageProto = null;
-
-    try {
-      pageProto = Object.getPrototypeOf(pageDoc);
-    } catch (_) {}
-
-    const defineVisible = target => {
-      if (!target) return;
-
-      try {
-        Reflect.defineProperty(target, "visibilityState", {
-          configurable: true,
-          get: makePageFunction(() => "visible")
-        });
-      } catch (_) {}
-
-      try {
-        Reflect.defineProperty(target, "hidden", {
-          configurable: true,
-          get: makePageFunction(() => false)
-        });
-      } catch (_) {}
-    };
-
-    defineVisible(pageProto);
-    defineVisible(pageDoc);
+  function installVisibilityGuard() {
+    if (visibilityHandler) return;
 
     visibilityHandler = event => {
-    if (backgroundMedia) {
-          /*
-           * Guardar el elemento que estaba reproduciendo ANTES
-           * de que la página procese el cambio de visibilidad.
-           */
-          const playingBefore =
-            playingMediaElement();
-
-          event.stopImmediatePropagation();
-
-          if (playingBefore) {
-            setTimeout(() => {
-              try {
-                if (
-                  backgroundMedia &&
-                  playingBefore.isConnected &&
-                  playingBefore.paused &&
-                  !playingBefore.ended
-                ) {
-                  Promise.resolve(
-                    playingBefore.play()
-                  ).catch(() => {});
-                }
-              } catch (_) {}
-            }, 140);
-          }
-        }
-      };
+      /*
+       * PiP continúa visible para el usuario. Segundo plano
+       * solo se protege si la opción correspondiente está activa.
+       *
+       * No llamamos play() aquí: dejamos al decoder/MediaSession
+       * de Gecko mantener su estado sin carreras.
+       */
+      if (pipActive || backgroundMedia) {
+        event.stopImmediatePropagation();
+      }
+    };
 
     window.addEventListener(
       "visibilitychange",
@@ -108,33 +38,13 @@
     );
   }
 
-  function disableVisibilitySpoof() {
-    if (!spoofed) return;
-    spoofed = false;
-
-    if (visibilityHandler) {
-      window.removeEventListener(
-        "visibilitychange",
-        visibilityHandler,
-        true
-      );
-      document.removeEventListener(
-        "visibilitychange",
-        visibilityHandler,
-        true
-      );
-      visibilityHandler = null;
-    }
-  }
-
   function applyState(state) {
     if (!state) return;
     backgroundMedia = state.backgroundMedia !== false;
-    if (backgroundMedia) enableVisibilitySpoof();
-    else disableVisibilitySpoof();
+    installVisibilityGuard();
   }
 
-  enableVisibilitySpoof();
+  installVisibilityGuard();
 
   function collectVideos(root, output) {
     if (!root) return output;
@@ -160,6 +70,7 @@
     try {
       const rect = video.getBoundingClientRect();
       const style = getComputedStyle(video);
+
       return (
         rect.width >= 80 &&
         rect.height >= 45 &&
@@ -182,52 +93,17 @@
     return collectVideos(document, []).filter(visibleEnough);
   }
 
-  function playingMediaElement() {
-        const video =
-          bestVideo(true);
-
-        if (video) {
-          return video;
-        }
-
-        try {
-          const audio =
-            Array.from(
-              document.querySelectorAll("audio")
-            ).find(
-              item =>
-                !item.paused &&
-                !item.ended
-            );
-
-          return audio || null;
-        } catch (_) {
-          return null;
-        }
-      }
-
   function bestVideo(preferPlaying) {
     const videos = videoList();
+    if (!videos.length) return null;
 
-    if (!videos.length) {
-      return null;
-    }
+    const playing = videos.filter(
+      video =>
+        !video.paused &&
+        !video.ended
+    );
 
-    const playing =
-      videos.filter(
-        video =>
-          !video.paused &&
-          !video.ended
-      );
-
-    /*
-     * Si solicitamos un video reproduciendo,
-     * no devolver uno pausado como fallback.
-     */
-    if (
-      preferPlaying &&
-      !playing.length
-    ) {
+    if (preferPlaying && !playing.length) {
       return null;
     }
 
@@ -236,31 +112,24 @@
         ? playing
         : videos;
 
-    return candidates
-      .slice()
-      .sort(
-        (a, b) =>
-          videoArea(b) -
-          videoArea(a)
-      )[0] || null;
+    return (
+      candidates
+        .slice()
+        .sort(
+          (a, b) =>
+            videoArea(b) -
+            videoArea(a)
+        )[0] || null
+    );
   }
 
   function ensurePipStyle() {
-    if (
-      document.getElementById(
-        "nexo-pip-style"
-      )
-    ) {
+    if (document.getElementById("nexo-pip-style")) {
       return;
     }
 
-    const style =
-      document.createElement(
-        "style"
-      );
-
-    style.id =
-      "nexo-pip-style";
+    const style = document.createElement("style");
+    style.id = "nexo-pip-style";
 
     style.textContent = `
       html.nexo-pip-root,
@@ -270,34 +139,24 @@
       }
 
       /*
-       * YouTube utiliza transform,
-       * contain y will-change en padres
-       * del reproductor.
-       *
-       * Eso puede convertir esos elementos
-       * en containing blocks y romper
-       * position: fixed.
+       * Solo neutralizamos propiedades que pueden crear
+       * containing blocks. No cambiamos position/z-index
+       * de la jerarquía de YouTube porque eso puede romper
+       * su compositor de video.
        */
       html.nexo-pip-root .nexo-pip-ancestor {
-        position: static !important;
         transform: none !important;
         contain: none !important;
         will-change: auto !important;
         filter: none !important;
         perspective: none !important;
         backdrop-filter: none !important;
-        z-index: auto !important;
         overflow: visible !important;
-        clip: auto !important;
-        clip-path: none !important;
       }
 
       html.nexo-pip-root video.nexo-pip-video {
         position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
-        bottom: 0 !important;
+        inset: 0 !important;
         width: 100vw !important;
         height: 100vh !important;
         max-width: 100vw !important;
@@ -309,6 +168,8 @@
         margin: 0 !important;
         padding: 0 !important;
         transform: none !important;
+        opacity: 1 !important;
+        visibility: visible !important;
       }
     `;
 
@@ -335,155 +196,71 @@
   }
 
   function setPipIsolation(active) {
-        const nextActive =
-          active === true;
+    pipActive = active === true;
 
-        const activating =
-          nextActive &&
-          !pipActive;
+    if (!pipActive) {
+      clearPipIsolation();
+      return;
+    }
 
-        pipActive =
-          nextActive;
+    const video =
+      bestVideo(true) ||
+      bestVideo(false);
 
-        if (!pipActive) {
-          pipKeepPlaying = false;
-          pipRecoveryUntil = 0;
-          clearPipIsolation();
-          return;
-        }
+    if (!video) return;
 
-        const video =
-          bestVideo(true) ||
-          bestVideo(false);
+    clearPipIsolation();
+    ensurePipStyle();
 
-        if (!video) {
-          return;
-        }
+    pipVideo = video;
 
-        /*
-         * Recordar intención de reproducción únicamente
-         * en el primer momento de entrada a PiP.
-         */
-        if (activating) {
-          pipKeepPlaying =
-            !video.paused &&
-            !video.ended;
+    let current = video.parentElement;
 
-          pipRecoveryUntil =
-            pipKeepPlaying
-              ? Date.now() + 5_000
-              : 0;
-        }
+    while (
+      current &&
+      current !== document.body &&
+      current !== document.documentElement
+    ) {
+      current.classList.add("nexo-pip-ancestor");
+      pipAncestors.push(current);
+      current = current.parentElement;
+    }
 
-        clearPipIsolation();
-        ensurePipStyle();
+    document.documentElement.classList
+      .add("nexo-pip-root");
 
-        pipVideo = video;
+    video.classList.add("nexo-pip-video");
+  }
 
-        let current =
-          video.parentElement;
+  function refreshPipIsolation() {
+    if (!pipActive) return;
 
-        while (
-          current &&
-          current !== document.body &&
-          current !==
-            document.documentElement
-        ) {
-          current.classList.add(
+    const video =
+      bestVideo(true) ||
+      bestVideo(false);
+
+    if (!video) return;
+
+    const currentStillValid =
+      pipVideo === video &&
+      video.isConnected &&
+      pipAncestors.every(
+        ancestor =>
+          ancestor.isConnected &&
+          ancestor.classList.contains(
             "nexo-pip-ancestor"
-          );
+          )
+      );
 
-          pipAncestors.push(
-            current
-          );
+    if (!currentStillValid) {
+      setPipIsolation(true);
+    }
+  }
 
-          current =
-            current.parentElement;
-        }
+  function reportVideoState() {
+    refreshPipIsolation();
 
-        document.documentElement
-          .classList.add(
-            "nexo-pip-root"
-          );
-
-        video.classList.add(
-          "nexo-pip-video"
-        );
-
-        recoverPipPlayback();
-      }
-
-      function recoverPipPlayback() {
-        if (
-          !pipActive ||
-          !pipKeepPlaying ||
-          Date.now() >
-            pipRecoveryUntil
-        ) {
-          return;
-        }
-
-        const video =
-          pipVideo ||
-          bestVideo(false);
-
-        if (
-          !video ||
-          video.ended ||
-          !video.paused
-        ) {
-          return;
-        }
-
-        try {
-          Promise.resolve(
-            video.play()
-          ).catch(() => {});
-        } catch (_) {}
-      }
-
-      /*
-       * YouTube funciona como SPA y puede reemplazar
-       * o mover el <video> sin recargar la página.
-       */
-      function refreshPipIsolation() {
-        if (!pipActive) {
-          return;
-        }
-
-        const video =
-          bestVideo(true) ||
-          bestVideo(false);
-
-        if (!video) {
-          recoverPipPlayback();
-          return;
-        }
-
-        const currentStillValid =
-          pipVideo === video &&
-          video.isConnected &&
-          pipAncestors.every(
-            ancestor =>
-              ancestor.isConnected &&
-              ancestor.classList.contains(
-                "nexo-pip-ancestor"
-              )
-          );
-
-        if (!currentStillValid) {
-          setPipIsolation(true);
-        }
-
-        recoverPipPlayback();
-      }
-
-    function reportVideoState() {
-        refreshPipIsolation();
-        recoverPipPlayback();
-
-        if (!port) return;
-
+    if (!port) return;
 
     const anyVideo = bestVideo(false);
     const playingVideo = bestVideo(true);
@@ -498,10 +275,18 @@
           !playingVideo.paused &&
           !playingVideo.ended,
         width: best
-          ? Number(best.videoWidth || best.clientWidth || 0)
+          ? Number(
+              best.videoWidth ||
+              best.clientWidth ||
+              0
+            )
           : 0,
         height: best
-          ? Number(best.videoHeight || best.clientHeight || 0)
+          ? Number(
+              best.videoHeight ||
+              best.clientHeight ||
+              0
+            )
           : 0
       });
     } catch (_) {}
@@ -509,7 +294,11 @@
 
   function scheduleVideoReport() {
     clearTimeout(reportTimer);
-    reportTimer = setTimeout(reportVideoState, 100);
+    reportTimer =
+      setTimeout(
+        reportVideoState,
+        120
+      );
   }
 
   [
@@ -530,9 +319,10 @@
   });
 
   try {
-    const observer = new MutationObserver(
-      scheduleVideoReport
-    );
+    const observer =
+      new MutationObserver(
+        scheduleVideoReport
+      );
 
     observer.observe(
       document.documentElement,
@@ -543,9 +333,10 @@
     );
   } catch (_) {}
 
-  // YouTube y otras SPA pueden reemplazar el player
-  // sin recargar el documento.
-  setInterval(reportVideoState, 900);
+  setInterval(
+    reportVideoState,
+    1200
+  );
 
   browser.runtime.sendNativeMessage(
     "browser",
@@ -557,19 +348,31 @@
   ).then(applyState).catch(() => {});
 
   try {
-    port = browser.runtime.connectNative("browser");
+    port =
+      browser.runtime
+        .connectNative("browser");
 
-    port.onMessage.addListener(message => {
-      if (!message) return;
+    port.onMessage.addListener(
+      message => {
+        if (!message) return;
 
-      if (message.type === "browser_state") {
-        applyState(message);
+        if (
+          message.type ===
+          "browser_state"
+        ) {
+          applyState(message);
+        }
+
+        if (
+          message.type ===
+          "pip_mode"
+        ) {
+          setPipIsolation(
+            message.active === true
+          );
+        }
       }
-
-      if (message.type === "pip_mode") {
-        setPipIsolation(message.active === true);
-      }
-    });
+    );
 
     port.postMessage({
       type: "content_script_ready",

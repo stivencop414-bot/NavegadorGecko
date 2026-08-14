@@ -691,15 +691,6 @@ private fun startMiniPlayer(
     pipPlaybackWasActive =
         isMiniPlaybackActive(tab)
 
-    if (pipPlaybackWasActive) {
-        BrowserMediaController.holdPlayback(
-            tab.id,
-            10_000L
-        )
-
-        MediaPlaybackService.sync(this)
-    }
-
     if (!hasMiniVideo(tab)) {
         if (!silent) {
             Toast.makeText(
@@ -795,37 +786,8 @@ private fun startMiniPlayer(
                 )
 
                 updateMiniPlayerChip()
-            } else if (
-                pipPlaybackWasActive
-            ) {
-                /*
-                 * Algunos sitios (especialmente YouTube) envían
-                 * una pausa transitoria al cambiar de ventana.
-                 * Reanudamos únicamente porque sabemos que
-                 * estaba reproduciéndose antes de entrar a PiP.
-                 */
-                geckoView.postDelayed(
-                    {
-                        BrowserMediaController
-                            .resumeIfRecent(
-                                tab.id,
-                                8_000L
-                            )
-                    },
-                    180L
-                )
+                        }
 
-                geckoView.postDelayed(
-                    {
-                        BrowserMediaController
-                            .resumeIfRecent(
-                                tab.id,
-                                8_000L
-                            )
-                    },
-                    650L
-                )
-            }
         }
 
     /*
@@ -945,11 +907,24 @@ override fun onUserLeaveHint() {
         TabManager.activeTab()
 
     /*
-     * También cubre modo solo audio / segundo plano.
-     * Se captura antes de que el sitio reciba eventos de
-     * lifecycle y pueda marcarse temporalmente como pausado.
+     * Decidir ANTES de tocar el estado multimedia si vamos
+     * realmente a Android PiP. PiP permanece visible y no
+     * necesita foreground service ni reintentos de play().
+     */
+    val willEnterPip =
+        !suppressAutoPipOnce &&
+        !isInPictureInPictureMode &&
+        BrowserPrefs.smartPip(this) &&
+        tab != null &&
+        hasMiniVideo(tab) &&
+        isMiniPlaybackActive(tab)
+
+    /*
+     * El hold queda reservado exclusivamente para segundo
+     * plano real (audio/video sin PiP).
      */
     backgroundPlaybackWasActive =
+        !willEnterPip &&
         tab != null &&
         BrowserPrefs.backgroundMedia(this) &&
         BrowserMediaController
@@ -964,23 +939,10 @@ override fun onUserLeaveHint() {
             10_000L
         )
 
-        /*
-         * Arrancar/refrescar el foreground service mientras
-         * la Activity aún está visible. Así evitamos las
-         * restricciones de inicio desde background y la pausa
-         * transitoria de YouTube no lo apaga.
-         */
         MediaPlaybackService.sync(this)
     }
 
-    if (
-        !suppressAutoPipOnce &&
-        !isInPictureInPictureMode &&
-        BrowserPrefs.smartPip(this) &&
-        tab != null &&
-        hasMiniVideo(tab) &&
-        isMiniPlaybackActive(tab)
-    ) {
+    if (willEnterPip) {
         startMiniPlayer(
             silent = true,
             requirePlayback = true,
@@ -1001,28 +963,15 @@ override fun onUserLeaveHint() {
             isInPictureInPictureMode
         )
 
-        if (isInPictureInPictureMode) {
-            TabManager.prepareForPictureInPicture()
+                if (isInPictureInPictureMode) {
+        /*
+         * GeckoView mantiene la sesión/compositor activos.
+         * No forzar MediaSession.play(): en YouTube puede
+         * reiniciar el decoder y producir frames negros.
+         */
+        TabManager.prepareForPictureInPicture()
+    } else {
 
-            val tab =
-                TabManager.activeTab()
-
-            if (
-                pipPlaybackWasActive &&
-                tab != null
-            ) {
-                geckoView.postDelayed(
-                    {
-                        BrowserMediaController
-                            .resumeIfRecent(
-                                tab.id,
-                                8_000L
-                            )
-                    },
-                    140L
-                )
-            }
-        } else {
             pipPlaybackWasActive = false
             TabManager.resumeActive()
         }

@@ -46,7 +46,7 @@
                 android:id="@+id/importButton"
                 android:layout_width="wrap_content"
                 android:layout_height="40dp"
-                android:text="Archivo XPI / ZIP"
+                android:text="Importar XPI firmado"
                 android:textAllCaps="false" />
 
             <Button
@@ -54,7 +54,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="40dp"
                 android:layout_marginStart="5dp"
-                android:text="Buscar en carpeta"
+                android:text="Buscar XPI en carpeta"
                 android:textAllCaps="false" />
 
             <Button

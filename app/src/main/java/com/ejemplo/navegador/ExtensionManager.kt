@@ -55,6 +55,7 @@ object ExtensionManager {
 
         val controller = GeckoRuntimeHolder.get(context).webExtensionController
         controller.setPromptDelegate(promptDelegate)
+    controller.setAddonManagerDelegate(addonManagerDelegate)
 
         controller.ensureBuiltIn(BRIDGE_URI, BRIDGE_ID).accept(
             { extension ->
@@ -331,7 +332,7 @@ object ExtensionManager {
             else ->
                 install.message ?: "Error de instalación (${install.code})."
         }
-        return "No se pudo instalar: $detail"
+        return "No se pudo instalar [código ${install.code}]: $detail"
     }
 
 
@@ -393,20 +394,21 @@ object ExtensionManager {
                                 )
                         }
 
-                    if (hasManifest) {
-                        candidates +=
-                            LocalExtensionCandidate(
-                                label =
-                                    "Carpeta · " +
-                                        (
-                                            directory.name
-                                                ?: "Extensión"
-                                            ),
-                                document =
-                                    directory,
-                                isFolder = true
-                            )
-                    }
+                                        /*
+             * Una carpeta con manifest.json es código fuente,
+             * no un paquete instalable normal en GeckoView
+             * release. Seguimos recorriéndola para encontrar
+             * XPI/ZIP firmados en subcarpetas, pero no la
+             * mostramos como candidato instalable.
+             */
+            if (hasManifest) {
+                android.util.Log.d(
+                    "NexoExtensions",
+                    "Carpeta de código fuente omitida: " +
+                        (directory.name ?: "Extensión")
+                )
+            }
+
 
                     children.forEach {
                         child ->
@@ -513,11 +515,12 @@ object ExtensionManager {
         Thread {
             val prepared =
                 runCatching {
-                    val cache =
-                        File(
-                            context.cacheDir,
-                            "extensions"
-                        )
+                                        val cache =
+                File(
+                    context.filesDir,
+                    "imported_extensions"
+                )
+
 
                     cache.mkdirs()
 
@@ -553,12 +556,8 @@ object ExtensionManager {
                         ).toString(),
                         WebExtensionController
                             .INSTALLATION_METHOD_FROM_FILE,
-                        onDone,
-                        cleanup = {
-                            runCatching {
-                                target.delete()
-                            }
-                        }
+                                                onDone
+
                     )
                 }.onFailure {
                     error ->
@@ -1392,6 +1391,34 @@ object ExtensionManager {
                 )
 
                 sendBrowserState(AppContext.get())
+            }
+        }
+
+    /*
+     * Esperar también onReady es importante para extensiones
+     * importadas desde archivo: en ese punto Gecko terminó
+     * de iniciar el add-on y ya puede resolver popup/opciones.
+     */
+    private val addonManagerDelegate =
+        object :
+            WebExtensionController.AddonManagerDelegate {
+
+            override fun onInstalled(
+                extension: WebExtension
+            ) {
+                registerExtension(extension)
+            }
+
+            override fun onReady(
+                extension: WebExtension
+            ) {
+                registerExtension(extension)
+            }
+
+            override fun onEnabled(
+                extension: WebExtension
+            ) {
+                registerExtension(extension)
             }
         }
 

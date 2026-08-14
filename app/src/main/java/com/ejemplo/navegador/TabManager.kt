@@ -418,15 +418,8 @@ object TabManager {
             )
         }
 
-        BrowserMediaController
-            .resumeIfRecent(
-                tab.id,
-                8_000L
-            )
 
-        MediaPlaybackService.sync(
-            requireContext()
-        )
+
     }
 
     fun prepareForBackground() {
