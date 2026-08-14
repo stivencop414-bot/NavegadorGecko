@@ -1,4 +1,4 @@
-name: Nexo v0.13.3 - PiP Audio Extensions Fix
+name: Nexo v0.13.4 - Foreground Audio Stability Fix
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: nexo-v0133-pip-audio-extensions
+  group: nexo-v0134-foreground-audio-stability
   cancel-in-progress: true
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply Nexo v0.13.3 fixes
+      - name: Apply Nexo v0.13.4 foreground audio fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -43,29 +43,16 @@ jobs:
           ROOT = Path(".")
           MAIN = ROOT / "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
           MEDIA = ROOT / "app/src/main/java/com/ejemplo/navegador/BrowserMediaController.kt"
-          TABS = ROOT / "app/src/main/java/com/ejemplo/navegador/TabManager.kt"
-          EXT = ROOT / "app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt"
-          EXT_UI = ROOT / "app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt"
-          SCRIPT = ROOT / "app/src/main/assets/extensions/nexo_bridge/content_script.js"
+          SERVICE = ROOT / "app/src/main/java/com/ejemplo/navegador/MediaPlaybackService.kt"
           GRADLE = ROOT / "app/build.gradle.kts"
 
           main = MAIN.read_text(encoding="utf-8")
-          tabs = TABS.read_text(encoding="utf-8")
-          ext = EXT.read_text(encoding="utf-8")
-          ext_ui = EXT_UI.read_text(encoding="utf-8")
-          js = SCRIPT.read_text(encoding="utf-8")
           gradle = GRADLE.read_text(encoding="utf-8")
 
           def must_replace(text, old, new, label, count=1):
-              # 1) Intento exacto: rápido y seguro.
               if old in text:
                   return text.replace(old, new, count)
 
-              # 2) Fallback tolerante a formato/sangría.
-              # Convierte cualquier grupo de espacios/saltos de línea
-              # del bloque esperado en \s+, manteniendo intactos los
-              # tokens reales del código. Evita falsos fallos por
-              # reformatos de Kotlin/JS sin hacer reemplazos ciegos.
               tokens = re.split(r"\s+", old.strip())
               pattern = r"\s+".join(
                   re.escape(token)
@@ -84,241 +71,251 @@ jobs:
               if replaced != count:
                   raise RuntimeError(
                       f"No se encontró bloque para: {label} "
-                      f"(exacto ni flexible; encontrados={replaced})"
+                      f"(esperado={count}, encontrado={replaced})"
                   )
 
               return updated
 
-          def replace_between(text, start_marker, end_marker, replacement, label):
-              if start_marker not in text:
-                  raise RuntimeError(f"No se encontró inicio para: {label}")
-              start = text.index(start_marker)
-              try:
-                  end = text.index(end_marker, start)
-              except ValueError:
-                  raise RuntimeError(f"No se encontró fin para: {label}")
-              return text[:start] + replacement + text[end:]
-
-          # =========================================================
-          # 1. BrowserMediaController.kt
-          #    - estado nativo + JS
-          #    - memoria corta de reproducción
-          #    - recuperación controlada tras transición a PiP/fondo
-          # =========================================================
-
-          media = r'''package com.ejemplo.navegador
-
+          MEDIA.write_text(r'''package com.ejemplo.navegador
+          
           import android.os.Handler
           import android.os.Looper
           import android.os.SystemClock
           import org.mozilla.geckoview.MediaSession
-
+          
           object BrowserMediaController {
               interface Listener {
                   fun onBrowserMediaStateChanged()
               }
-
+          
               data class Snapshot(
                   val tabId: String,
                   val title: String,
                   val playing: Boolean
               )
-
+          
               private data class Entry(
                   val mediaSession: MediaSession,
                   var title: String,
                   var playing: Boolean = false
               )
-
+          
               private data class VideoState(
                   var present: Boolean = false,
                   var playing: Boolean = false,
                   var width: Int = 0,
                   var height: Int = 0
               )
-
-              private val entries =
-                  linkedMapOf<String, Entry>()
-
-              private val videos =
-                  mutableMapOf<String, VideoState>()
-
+          
+              private val entries = linkedMapOf<String, Entry>()
+              private val videos = mutableMapOf<String, VideoState>()
+              private val recentPlayback = mutableMapOf<String, Long>()
+          
               /*
-               * Se mantiene separado del estado "playing".
-               *
-               * YouTube puede emitir una pausa transitoria exactamente
-               * durante Home/PiP. No queremos interpretar esa transición
-               * como una orden explícita del usuario.
+               * Ventana de protección para Home/PiP.
+               * Durante esta ventana una pausa transitoria emitida por el sitio
+               * no debe apagar GeckoSession ni el foreground service.
                */
-              private val recentPlayback =
-                  mutableMapOf<String, Long>()
-
-              private val main =
-                  Handler(Looper.getMainLooper())
-
+              private val playbackHoldUntil = mutableMapOf<String, Long>()
+          
+              private val main = Handler(Looper.getMainLooper())
+          
               private var listener: Listener? = null
               private var currentTabId: String? = null
-
-              private fun now(): Long =
-                  SystemClock.elapsedRealtime()
-
-              private fun markRecentlyPlaying(
-                  tabId: String
-              ) {
+          
+              private fun now(): Long = SystemClock.elapsedRealtime()
+          
+              private fun markRecentlyPlaying(tabId: String) {
                   recentPlayback[tabId] = now()
               }
-
+          
+              private fun hasActiveHold(tabId: String): Boolean {
+                  val until = playbackHoldUntil[tabId] ?: return false
+                  if (now() >= until) {
+                      playbackHoldUntil.remove(tabId)
+                      return false
+                  }
+                  return true
+              }
+          
+              private fun cleanupExpiredHold(tabId: String) {
+                  if (hasActiveHold(tabId)) return
+          
+                  playbackHoldUntil.remove(tabId)
+          
+                  val entry = entries[tabId]
+                  if (
+                      entry != null &&
+                      !entry.playing &&
+                      videos[tabId]?.playing != true &&
+                      !entry.mediaSession.isActive
+                  ) {
+                      entries.remove(tabId)
+                      if (currentTabId == tabId) {
+                          currentTabId = null
+                      }
+                  }
+          
+                  notifyChanged()
+              }
+          
+              fun holdPlayback(
+                  tabId: String,
+                  durationMs: Long = 10_000L
+              ) {
+                  val duration = durationMs.coerceAtLeast(1_000L)
+                  val until = now() + duration
+                  val previous = playbackHoldUntil[tabId] ?: 0L
+                  playbackHoldUntil[tabId] = maxOf(previous, until)
+          
+                  main.postDelayed(
+                      { cleanupExpiredHold(tabId) },
+                      duration + 100L
+                  )
+          
+                  notifyChanged()
+              }
+          
+              fun clearPlaybackHold(tabId: String) {
+                  if (playbackHoldUntil.remove(tabId) != null) {
+                      notifyChanged()
+                  }
+              }
+          
+              fun isPlaybackHoldActive(tabId: String): Boolean =
+                  hasActiveHold(tabId)
+          
               fun attach(value: Listener?) {
                   listener = value
                   listener?.onBrowserMediaStateChanged()
               }
-
+          
               fun onActivated(
                   tab: BrowserTab,
                   media: MediaSession
               ) {
                   val previous = entries[tab.id]
-
-                  entries[tab.id] =
-                      Entry(
-                          mediaSession = media,
-                          title =
-                              tab.title.ifBlank {
-                                  previous?.title
-                                      ?: "Multimedia en Nexo"
-                              },
-                          playing =
-                              previous?.playing == true
-                      )
-
+          
+                  entries[tab.id] = Entry(
+                      mediaSession = media,
+                      title = tab.title.ifBlank {
+                          previous?.title ?: "Multimedia en Nexo"
+                      },
+                      playing = previous?.playing == true
+                  )
+          
                   currentTabId = tab.id
                   notifyChanged()
               }
-
+          
               fun onDeactivated(
                   tabId: String,
                   media: MediaSession
               ) {
-                  if (
-                      entries[tabId]
-                          ?.mediaSession === media
-                  ) {
-                      entries.remove(tabId)
-
-                      if (currentTabId == tabId) {
-                          currentTabId = null
+                  val entry = entries[tabId]
+          
+                  if (entry?.mediaSession === media) {
+                      if (hasActiveHold(tabId)) {
+                          entry.playing = false
+                      } else {
+                          entries.remove(tabId)
+                          if (currentTabId == tabId) {
+                              currentTabId = null
+                          }
                       }
                   }
-
-                  /*
-                   * No borrar recentPlayback aquí:
-                   * Gecko puede desactivar/recrear MediaSession durante
-                   * la transición de actividad sin que el usuario haya
-                   * detenido el contenido.
-                   */
+          
                   notifyChanged()
               }
-
+          
               fun onPlay(
                   tab: BrowserTab,
                   media: MediaSession
               ) {
                   val entry = entries[tab.id]
-
-                  if (
-                      entry == null ||
-                      entry.mediaSession !== media
-                  ) {
-                      entries[tab.id] =
-                          Entry(
-                              mediaSession = media,
-                              title =
-                                  tab.title.ifBlank {
-                                      "Multimedia en Nexo"
-                                  },
-                              playing = true
-                          )
+          
+                  if (entry == null || entry.mediaSession !== media) {
+                      entries[tab.id] = Entry(
+                          mediaSession = media,
+                          title = tab.title.ifBlank {
+                              "Multimedia en Nexo"
+                          },
+                          playing = true
+                      )
                   } else {
                       if (tab.title.isNotBlank()) {
                           entry.title = tab.title
                       }
-
                       entry.playing = true
                   }
-
+          
                   currentTabId = tab.id
                   markRecentlyPlaying(tab.id)
                   notifyChanged()
               }
-
+          
               fun onPause(
                   tabId: String,
                   media: MediaSession
               ) {
                   entries[tabId]
-                      ?.takeIf {
-                          it.mediaSession === media
-                      }
+                      ?.takeIf { it.mediaSession === media }
                       ?.playing = false
-
+          
                   notifyChanged()
               }
-
+          
               fun onStop(
                   tabId: String,
                   media: MediaSession
               ) {
-                  if (
-                      entries[tabId]
-                          ?.mediaSession === media
-                  ) {
-                      entries.remove(tabId)
+                  val entry = entries[tabId]
+          
+                  if (entry?.mediaSession === media) {
+                      if (hasActiveHold(tabId)) {
+                          entry.playing = false
+                      } else {
+                          entries.remove(tabId)
+                          recentPlayback.remove(tabId)
+                          if (currentTabId == tabId) {
+                              currentTabId = null
+                          }
+                      }
                   }
-
-                  if (currentTabId == tabId) {
-                      currentTabId = null
-                  }
-
+          
                   notifyChanged()
               }
-
+          
               fun updateMetadata(
                   tabId: String,
                   media: MediaSession,
                   title: String?
               ) {
-                  val entry =
-                      entries[tabId]
-                          ?: return
-
-                  if (entry.mediaSession !== media) {
-                      return
-                  }
-
+                  val entry = entries[tabId] ?: return
+                  if (entry.mediaSession !== media) return
+          
                   if (!title.isNullOrBlank()) {
                       entry.title = title
                   }
-
+          
                   notifyChanged()
               }
-
+          
               fun updateTabTitle(
                   tabId: String,
                   title: String
               ) {
-                  val entry =
-                      entries[tabId]
-                          ?: return
-
+                  val entry = entries[tabId] ?: return
+          
                   if (title.isNotBlank()) {
                       entry.title = title
                   }
-
-                  if (entry.playing) {
+          
+                  if (entry.playing || hasActiveHold(tabId)) {
                       notifyChanged()
                   }
               }
-
+          
               fun onVideoState(
                   tabId: String,
                   present: Boolean,
@@ -326,85 +323,71 @@ jobs:
                   width: Int,
                   height: Int
               ) {
-                  videos[tabId] =
-                      VideoState(
-                          present = present,
-                          playing = playing,
-                          width = width.coerceAtLeast(0),
-                          height = height.coerceAtLeast(0)
-                      )
-
+                  videos[tabId] = VideoState(
+                      present = present,
+                      playing = playing,
+                      width = width.coerceAtLeast(0),
+                      height = height.coerceAtLeast(0)
+                  )
+          
                   if (playing) {
                       markRecentlyPlaying(tabId)
                   }
-
+          
                   listener?.onBrowserMediaStateChanged()
               }
-
+          
               fun resetVideo(tabId: String) {
                   videos.remove(tabId)
                   listener?.onBrowserMediaStateChanged()
               }
-
+          
               fun removeTab(tabId: String) {
                   entries.remove(tabId)
                   videos.remove(tabId)
                   recentPlayback.remove(tabId)
-
+                  playbackHoldUntil.remove(tabId)
+          
                   if (currentTabId == tabId) {
                       currentTabId = null
                   }
-
+          
                   notifyChanged()
               }
-
+          
               fun isPlaying(tabId: String): Boolean =
                   entries[tabId]?.playing == true
-
+          
               fun isAnyPlaying(): Boolean =
-                  entries.values.any {
-                      it.playing
-                  }
-
+                  entries.values.any { it.playing }
+          
               fun isVideoPresent(tabId: String): Boolean =
                   videos[tabId]?.present == true
-
+          
               fun isVideoPlaying(tabId: String): Boolean =
                   videos[tabId]?.playing == true
-
-              fun isPlaybackActive(
-                  tabId: String
-              ): Boolean =
-                  isPlaying(tabId) ||
-                      isVideoPlaying(tabId)
-
+          
+              fun isPlaybackActive(tabId: String): Boolean =
+                  isPlaying(tabId) || isVideoPlaying(tabId)
+          
               fun wasRecentlyPlaying(
                   tabId: String,
                   windowMs: Long = 6_000L
               ): Boolean {
-                  val last =
-                      recentPlayback[tabId]
-                          ?: return false
-
-                  return now() - last <=
-                      windowMs.coerceAtLeast(0L)
+                  val last = recentPlayback[tabId] ?: return false
+                  return now() - last <= windowMs.coerceAtLeast(0L)
               }
-
+          
               fun shouldKeepAlive(
                   tabId: String,
                   windowMs: Long = 6_000L
               ): Boolean =
                   isPlaybackActive(tabId) ||
-                      wasRecentlyPlaying(
-                          tabId,
-                          windowMs
-                      )
-
-              fun videoAspect(
-                  tabId: String
-              ): Pair<Int, Int> {
+                      hasActiveHold(tabId) ||
+                      wasRecentlyPlaying(tabId, windowMs)
+          
+              fun videoAspect(tabId: String): Pair<Int, Int> {
                   val state = videos[tabId]
-
                   return if (
                       (state?.width ?: 0) > 0 &&
                       (state?.height ?: 0) > 0
@@ -414,33 +397,22 @@ jobs:
                       16 to 9
                   }
               }
-
+          
               /*
-               * Recuperación nativa.
-               *
-               * Solo se invoca cuando MainActivity sabe que el contenido
-               * estaba reproduciéndose ANTES de la transición.
-               * Por eso no fuerza a reproducir un video que el usuario
-               * hubiera dejado pausado.
+               * Solo reanuda automáticamente cuando existe una transición
+               * explícitamente protegida por MainActivity.
+               * Esto evita reactivar un contenido que el usuario pausó a mano.
                */
               fun resumeIfRecent(
                   tabId: String,
-                  windowMs: Long = 6_000L
+                  @Suppress("UNUSED_PARAMETER") windowMs: Long = 6_000L
               ): Boolean {
-                  if (
-                      !wasRecentlyPlaying(
-                          tabId,
-                          windowMs
-                      )
-                  ) {
+                  if (!hasActiveHold(tabId)) {
                       return false
                   }
-
-                  val media =
-                      entries[tabId]
-                          ?.mediaSession
-                          ?: return false
-
+          
+                  val media = entries[tabId]?.mediaSession ?: return false
+          
                   main.post {
                       runCatching {
                           if (media.isActive) {
@@ -448,1686 +420,515 @@ jobs:
                           }
                       }
                   }
-
+          
                   return true
               }
-
-              fun snapshot(): Snapshot? {
-                  val preferred =
-                      currentTabId
-                          ?.let { id ->
-                              entries[id]
-                                  ?.takeIf {
-                                      it.playing
-                                  }
-                                  ?.let {
-                                      id to it
-                                  }
-                          }
-
-                  val selected =
-                      preferred
-                          ?: entries.entries
-                              .lastOrNull {
-                                  it.value.playing
-                              }
-                              ?.let {
-                                  it.key to it.value
-                              }
+          
+              private fun snapshotFor(
+                  allowHold: Boolean
+              ): Snapshot? {
+                  fun usable(id: String): Boolean =
+                      isPlaybackActive(id) ||
+                          (allowHold && hasActiveHold(id))
+          
+                  val preferredId =
+                      currentTabId?.takeIf { id ->
+                          entries[id] != null && usable(id)
+                      }
+          
+                  val selectedId =
+                      preferredId
+                          ?: entries.keys.lastOrNull { usable(it) }
                           ?: return null
-
-                  currentTabId = selected.first
-
+          
+                  val entry = entries[selectedId] ?: return null
+                  currentTabId = selectedId
+          
                   return Snapshot(
-                      tabId = selected.first,
-                      title =
-                          selected.second
-                              .title
-                              .ifBlank {
-                                  "Multimedia en Nexo"
-                              },
-                      playing = true
+                      tabId = selectedId,
+                      title = entry.title.ifBlank {
+                          "Multimedia en Nexo"
+                      },
+                      playing = isPlaybackActive(selectedId)
                   )
               }
-
+          
+              fun snapshot(): Snapshot? =
+                  snapshotFor(allowHold = false)
+          
+              fun snapshotForService(): Snapshot? =
+                  snapshotFor(allowHold = true)
+          
               fun pauseCurrent() {
-                  val media =
-                      currentPlayingSession()
-                          ?: return
-
+                  val id = currentTabId ?: entries.keys.lastOrNull() ?: return
+                  val entry = entries[id] ?: return
+          
+                  playbackHoldUntil.remove(id)
+                  recentPlayback.remove(id)
+                  entry.playing = false
+                  notifyChanged()
+          
                   main.post {
                       runCatching {
-                          media.pause()
+                          entry.mediaSession.pause()
                       }
                   }
               }
-
+          
               fun stopCurrent() {
-                  val media =
-                      currentPlayingSession()
-                          ?: return
-
+                  val id = currentTabId ?: entries.keys.lastOrNull() ?: return
+                  val entry = entries[id] ?: return
+          
+                  playbackHoldUntil.remove(id)
+                  recentPlayback.remove(id)
+                  entry.playing = false
+                  notifyChanged()
+          
                   main.post {
                       runCatching {
-                          media.stop()
+                          entry.mediaSession.stop()
                       }
                   }
               }
-
-              private fun currentPlayingSession():
-                  MediaSession? =
-                  snapshot()
-                      ?.tabId
-                      ?.let {
-                          entries[it]
-                              ?.mediaSession
-                      }
-
+          
               private fun notifyChanged() {
-                  listener
-                      ?.onBrowserMediaStateChanged()
-
-                  val context =
-                      runCatching {
-                          AppContext.get()
-                      }.getOrNull()
-                          ?: return
-
-                  MediaPlaybackService.sync(
-                      context
-                  )
+                  listener?.onBrowserMediaStateChanged()
+          
+                  val context = runCatching {
+                      AppContext.get()
+                  }.getOrNull() ?: return
+          
+                  MediaPlaybackService.sync(context)
               }
           }
-          '''
-
-          MEDIA.write_text(
-              media,
-              encoding="utf-8"
-          )
-
-          # =========================================================
-          # 2. MainActivity.kt
-          # =========================================================
+          ''', encoding="utf-8")
+          SERVICE.write_text(r'''package com.ejemplo.navegador
+          
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.PendingIntent
+          import android.app.Service
+          import android.content.Context
+          import android.content.Intent
+          import android.content.pm.ServiceInfo
+          import android.os.Build
+          import android.os.Handler
+          import android.os.IBinder
+          import android.os.Looper
+          
+          class MediaPlaybackService : Service() {
+              override fun onCreate() {
+                  super.onCreate()
+                  createChannel()
+                  instance = this
+                  startRequested = false
+          
+                  /*
+                   * IMPORTANTE:
+                   * Android exige que cualquier Service iniciado mediante
+                   * startForegroundService() se promocione a foreground casi
+                   * inmediatamente. No esperamos a consultar de nuevo el estado
+                   * de YouTube porque puede cambiar durante Home/PiP.
+                   */
+                  promoteToForeground(
+                      buildBootstrapNotification()
+                  )
+              }
+          
+              override fun onStartCommand(
+                  intent: Intent?,
+                  flags: Int,
+                  startId: Int
+              ): Int {
+                  when (intent?.action) {
+                      ACTION_PAUSE ->
+                          BrowserMediaController.pauseCurrent()
+          
+                      ACTION_STOP ->
+                          BrowserMediaController.stopCurrent()
+                  }
+          
+                  refreshFromController()
+                  return START_NOT_STICKY
+              }
+          
+              override fun onDestroy() {
+                  if (instance === this) {
+                      instance = null
+                  }
+                  startRequested = false
+                  super.onDestroy()
+              }
+          
+              override fun onBind(intent: Intent?): IBinder? = null
+          
+              private fun refreshFromController() {
+                  val state =
+                      BrowserMediaController.snapshotForService()
+          
+                  if (
+                      state == null ||
+                      !BrowserPrefs.backgroundMedia(this)
+                  ) {
+                      stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                      stopSelf()
+                      return
+                  }
+          
+                  promoteToForeground(
+                      buildNotification(state)
+                  )
+              }
+          
+              private fun promoteToForeground(
+                  notification: Notification
+              ) {
+                  if (Build.VERSION.SDK_INT >= 29) {
+                      startForeground(
+                          NOTIFICATION_ID,
+                          notification,
+                          ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                      )
+                  } else {
+                      startForeground(
+                          NOTIFICATION_ID,
+                          notification
+                      )
+                  }
+              }
+          
+              private fun buildBootstrapNotification(): Notification =
+                  Notification.Builder(this, CHANNEL_ID)
+                      .setSmallIcon(R.drawable.ic_nexo_logo)
+                      .setContentTitle("Nexo Browser")
+                      .setContentText("Preparando reproducción multimedia…")
+                      .setCategory(Notification.CATEGORY_TRANSPORT)
+                      .setVisibility(Notification.VISIBILITY_PUBLIC)
+                      .setOngoing(true)
+                      .setOnlyAlertOnce(true)
+                      .build()
+          
+              private fun buildNotification(
+                  state: BrowserMediaController.Snapshot
+              ): Notification {
+                  val open = PendingIntent.getActivity(
+                      this,
+                      200,
+                      Intent(this, MainActivity::class.java).apply {
+                          addFlags(
+                              Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                  Intent.FLAG_ACTIVITY_SINGLE_TOP
+                          )
+                      },
+                      PendingIntent.FLAG_UPDATE_CURRENT or
+                          PendingIntent.FLAG_IMMUTABLE
+                  )
+          
+                  val pause = PendingIntent.getService(
+                      this,
+                      201,
+                      Intent(
+                          this,
+                          MediaPlaybackService::class.java
+                      ).setAction(ACTION_PAUSE),
+                      PendingIntent.FLAG_UPDATE_CURRENT or
+                          PendingIntent.FLAG_IMMUTABLE
+                  )
+          
+                  val stop = PendingIntent.getService(
+                      this,
+                      202,
+                      Intent(
+                          this,
+                          MediaPlaybackService::class.java
+                      ).setAction(ACTION_STOP),
+                      PendingIntent.FLAG_UPDATE_CURRENT or
+                          PendingIntent.FLAG_IMMUTABLE
+                  )
+          
+                  val statusText =
+                      if (state.playing) {
+                          "Reproduciendo desde Nexo Browser"
+                      } else {
+                          "Manteniendo reproducción en segundo plano"
+                      }
+          
+                  return Notification.Builder(this, CHANNEL_ID)
+                      .setSmallIcon(R.drawable.ic_nexo_logo)
+                      .setContentTitle(state.title)
+                      .setContentText(statusText)
+                      .setContentIntent(open)
+                      .setCategory(Notification.CATEGORY_TRANSPORT)
+                      .setVisibility(Notification.VISIBILITY_PUBLIC)
+                      .setOngoing(true)
+                      .setOnlyAlertOnce(true)
+                      .addAction(
+                          Notification.Action.Builder(
+                              android.R.drawable.ic_media_pause,
+                              "Pausar",
+                              pause
+                          ).build()
+                      )
+                      .addAction(
+                          Notification.Action.Builder(
+                              android.R.drawable.ic_menu_close_clear_cancel,
+                              "Detener",
+                              stop
+                          ).build()
+                      )
+                      .setStyle(
+                          Notification.MediaStyle()
+                              .setShowActionsInCompactView(0, 1)
+                      )
+                      .build()
+              }
+          
+              private fun createChannel() {
+                  getSystemService(NotificationManager::class.java)
+                      .createNotificationChannel(
+                          NotificationChannel(
+                              CHANNEL_ID,
+                              "Reproducción multimedia",
+                              NotificationManager.IMPORTANCE_LOW
+                          ).apply {
+                              description =
+                                  "Controles de audio y video de Nexo Browser"
+                              setShowBadge(false)
+                          }
+                      )
+              }
+          
+              companion object {
+                  private const val CHANNEL_ID = "nexo_media_playback"
+                  private const val NOTIFICATION_ID = 1907
+                  private const val ACTION_REFRESH = "nexo.media.REFRESH"
+                  private const val ACTION_PAUSE = "nexo.media.PAUSE"
+                  private const val ACTION_STOP = "nexo.media.STOP"
+          
+                  private val main = Handler(Looper.getMainLooper())
+          
+                  @Volatile
+                  private var instance: MediaPlaybackService? = null
+          
+                  @Volatile
+                  private var startRequested = false
+          
+                  fun sync(context: Context) {
+                      val app = context.applicationContext
+                      val state =
+                          BrowserMediaController.snapshotForService()
+          
+                      val enabled =
+                          BrowserPrefs.backgroundMedia(app)
+          
+                      val current = instance
+          
+                      if (state == null || !enabled) {
+                          if (current != null) {
+                              main.post {
+                                  if (instance === current) {
+                                      current.refreshFromController()
+                                  }
+                              }
+                          } else if (!startRequested) {
+                              runCatching {
+                                  app.stopService(
+                                      Intent(
+                                          app,
+                                          MediaPlaybackService::class.java
+                                      )
+                                  )
+                              }
+                          }
+                          return
+                      }
+          
+                      if (current != null) {
+                          main.post {
+                              if (instance === current) {
+                                  current.refreshFromController()
+                              }
+                          }
+                          return
+                      }
+          
+                      if (startRequested) {
+                          return
+                      }
+          
+                      val intent = Intent(
+                          app,
+                          MediaPlaybackService::class.java
+                      ).setAction(ACTION_REFRESH)
+          
+                      startRequested = true
+          
+                      runCatching {
+                          if (Build.VERSION.SDK_INT >= 26) {
+                              app.startForegroundService(intent)
+                          } else {
+                              app.startService(intent)
+                          }
+                      }.onFailure { error ->
+                          startRequested = false
+                          android.util.Log.w(
+                              "NexoMedia",
+                              "No se pudo iniciar servicio multimedia",
+                              error
+                          )
+                      }
+          
+                      /*
+                       * Si el sistema rechazara silenciosamente la creación,
+                       * permitir un nuevo intento más adelante.
+                       */
+                      main.postDelayed(
+                          {
+                              if (instance == null) {
+                                  startRequested = false
+                              }
+                          },
+                          6_000L
+                      )
+                  }
+          
+                  fun stop(context: Context) {
+                      val app = context.applicationContext
+                      val current = instance
+          
+                      if (current != null) {
+                          main.post {
+                              if (instance === current) {
+                                  current.stopForeground(
+                                      Service.STOP_FOREGROUND_REMOVE
+                                  )
+                                  current.stopSelf()
+                              }
+                          }
+                      } else if (!startRequested) {
+                          runCatching {
+                              app.stopService(
+                                  Intent(
+                                      app,
+                                      MediaPlaybackService::class.java
+                                  )
+                              )
+                          }
+                      }
+                  }
+              }
+          }
+          ''', encoding="utf-8")
 
           main = must_replace(
               main,
-              '''    private var mediaNotificationPermissionAsked = false
-              private var suppressAutoPipOnce = false
-          ''',
-              '''    private var mediaNotificationPermissionAsked = false
-              private var suppressAutoPipOnce = false
-
-              // Estado capturado ANTES de que Android/YouTube cambien
-              // la Activity de foreground a PiP/background.
-              private var pipPlaybackWasActive = false
-              private var backgroundPlaybackWasActive = false
-          ''',
-              "campos de recuperación multimedia"
-          )
-
-          main = must_replace(
-              main,
-              '''    override fun onResume() {
-                  suppressAutoPipOnce = false
-                  super.onResume()
-          ''',
               '''    override fun onResume() {
                   suppressAutoPipOnce = false
                   backgroundPlaybackWasActive = false
                   super.onResume()
-          ''',
-              "onResume"
-          )
-
-          old_on_stop = '''    override fun onStop() {
-                  captureCurrentTabPreview()
-                  if (!isInPictureInPictureMode) {
-                      TabManager.prepareForBackground()
-                  }
-                  super.onStop()
-              }
-          '''
-
-          new_on_stop = '''    override fun onStop() {
-                  captureCurrentTabPreview()
+              ''',
+              '''    override fun onResume() {
+                  suppressAutoPipOnce = false
+                  backgroundPlaybackWasActive = false
 
                   if (!isInPictureInPictureMode) {
-                      val tab =
-                          TabManager.activeTab()
-
-                      TabManager.prepareForBackground()
-
-                      /*
-                       * Si el usuario salió mientras multimedia estaba
-                       * reproduciéndose, damos a Gecko una segunda
-                       * oportunidad de continuar después de la transición.
-                       */
-                      if (
-                          backgroundPlaybackWasActive &&
-                          BrowserPrefs.backgroundMedia(this) &&
-                          tab != null
-                      ) {
-                          geckoView.postDelayed(
-                              {
-                                  BrowserMediaController
-                                      .resumeIfRecent(
-                                          tab.id,
-                                          8_000L
-                                      )
-                              },
-                              180L
-                          )
-
-                          geckoView.postDelayed(
-                              {
-                                  BrowserMediaController
-                                      .resumeIfRecent(
-                                          tab.id,
-                                          8_000L
-                                      )
-                              },
-                              650L
-                          )
+                      TabManager.activeTab()?.let { tab ->
+                          BrowserMediaController.clearPlaybackHold(tab.id)
                       }
                   }
 
-                  super.onStop()
-              }
-          '''
+                  super.onResume()
+              ''',
+              "onResume clear playback hold"
+          )
 
           main = must_replace(
               main,
-              old_on_stop,
-              new_on_stop,
-              "onStop con recuperación de segundo plano"
-          )
-
-          old_session = '''    val session =
-                  tab.session
-                      ?: return
-
-              if (!hasMiniVideo(tab)) {
-          '''
-
-          new_session = '''    val session =
-                  tab.session
-                      ?: return
-
-              /*
-               * Capturar el estado antes de tocar CSS, GeckoSession
-               * o Picture-in-Picture.
-               */
-              pipPlaybackWasActive =
+              '''    pipPlaybackWasActive =
                   isMiniPlaybackActive(tab)
 
               if (!hasMiniVideo(tab)) {
-          '''
+              ''',
+              '''    pipPlaybackWasActive =
+                  isMiniPlaybackActive(tab)
+
+              if (pipPlaybackWasActive) {
+                  BrowserMediaController.holdPlayback(
+                      tab.id,
+                      10_000L
+                  )
+
+                  MediaPlaybackService.sync(this)
+              }
+
+              if (!hasMiniVideo(tab)) {
+              ''',
+              "hold playback before PiP"
+          )
 
           main = must_replace(
               main,
-              old_session,
-              new_session,
-              "captura de reproducción al abrir Mini"
-          )
-
-          old_entered = '''            if (!entered) {
-                          ExtensionManager.setPipMode(
-                              session,
-                              false
-                          )
-
-                          updateMiniPlayerChip()
-                      }
-          '''
-
-          new_entered = '''            if (!entered) {
-                          pipPlaybackWasActive = false
-
-                          ExtensionManager.setPipMode(
-                              session,
-                              false
-                          )
-
-                          updateMiniPlayerChip()
-                      } else if (
-                          pipPlaybackWasActive
-                      ) {
-                          /*
-                           * Algunos sitios (especialmente YouTube) envían
-                           * una pausa transitoria al cambiar de ventana.
-                           * Reanudamos únicamente porque sabemos que
-                           * estaba reproduciéndose antes de entrar a PiP.
-                           */
-                          geckoView.postDelayed(
-                              {
-                                  BrowserMediaController
-                                      .resumeIfRecent(
-                                          tab.id,
-                                          8_000L
-                                      )
-                              },
-                              180L
-                          )
-
-                          geckoView.postDelayed(
-                              {
-                                  BrowserMediaController
-                                      .resumeIfRecent(
-                                          tab.id,
-                                          8_000L
-                                      )
-                              },
-                              650L
-                          )
-                      }
-          '''
-
-          main = must_replace(
-              main,
-              old_entered,
-              new_entered,
-              "recuperación tras enterPictureInPictureMode"
-          )
-
-          old_leave = '''override fun onUserLeaveHint() {
-              val tab =
-                  TabManager.activeTab()
-
-              if (
-          '''
-
-          new_leave = '''override fun onUserLeaveHint() {
-              val tab =
-                  TabManager.activeTab()
-
-              /*
-               * También cubre modo solo audio / segundo plano.
-               * Se captura antes de que el sitio reciba eventos de
-               * lifecycle y pueda marcarse temporalmente como pausado.
-               */
-              backgroundPlaybackWasActive =
+              '''    backgroundPlaybackWasActive =
                   tab != null &&
                   BrowserPrefs.backgroundMedia(this) &&
                   BrowserMediaController
                       .isPlaybackActive(tab.id)
 
               if (
-          '''
-
-          main = must_replace(
-              main,
-              old_leave,
-              new_leave,
-              "captura onUserLeaveHint"
-          )
-
-          old_pip_change = '''        if (isInPictureInPictureMode) {
-                      TabManager.prepareForPictureInPicture()
-                  } else {
-                      TabManager.resumeActive()
-                  }
-          '''
-
-          new_pip_change = '''        if (isInPictureInPictureMode) {
-                      TabManager.prepareForPictureInPicture()
-
-                      val tab =
-                          TabManager.activeTab()
-
-                      if (
-                          pipPlaybackWasActive &&
-                          tab != null
-                      ) {
-                          geckoView.postDelayed(
-                              {
-                                  BrowserMediaController
-                                      .resumeIfRecent(
-                                          tab.id,
-                                          8_000L
-                                      )
-                              },
-                              140L
-                          )
-                      }
-                  } else {
-                      pipPlaybackWasActive = false
-                      TabManager.resumeActive()
-                  }
-          '''
-
-          main = must_replace(
-              main,
-              old_pip_change,
-              new_pip_change,
-              "onPictureInPictureModeChanged"
-          )
-
-          MAIN.write_text(
-              main,
-              encoding="utf-8"
-          )
-
-          # =========================================================
-          # 3. TabManager.kt
-          # =========================================================
-
-          old_old_tab = '''            old?.session?.let { session ->
-                          val keepMediaAlive =
-                              BrowserPrefs.backgroundMedia(requireContext()) &&
-                              old != null &&
-                              BrowserMediaController.isPlaying(old.id)
-
-                          session.setFocused(false)
-                          session.setPriorityHint(
-                              if (keepMediaAlive) {
-                                  GeckoSession.PRIORITY_HIGH
-                              } else {
-                                  GeckoSession.PRIORITY_DEFAULT
-                              }
-                          )
-                          session.setActive(keepMediaAlive)
-                      }
-          '''
-
-          new_old_tab = '''            old?.session?.let { session ->
-                          val backgroundEnabled =
-                          BrowserPrefs.backgroundMedia(
-                              requireContext()
-                          )
-
-                      val keepMediaAlive =
-                          backgroundEnabled &&
-                          BrowserMediaController
-                              .shouldKeepAlive(
-                                  old.id,
-                                  8_000L
-                              )
-
-                      session.settings
-                          .setSuspendMediaWhenInactive(
-                              !backgroundEnabled
-                          )
-
-                      session.setFocused(false)
-                      ExtensionManager.setTabActive(
-                          session,
-                          false
-                      )
-
-                      session.setPriorityHint(
-                          if (keepMediaAlive) {
-                              GeckoSession.PRIORITY_HIGH
-                          } else {
-                              GeckoSession.PRIORITY_DEFAULT
-                          }
-                      )
-
-                      session.setActive(
-                          keepMediaAlive
-                      )
-                  }
-          '''
-
-          tabs = must_replace(
-              tabs,
-              old_old_tab,
-              new_old_tab,
-              "switchTo pestaña anterior"
-          )
-
-          old_target_active = '''        session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
-                  session.setActive(true)
-                  session.setFocused(true)
-
-                  listener?.onActiveTabChanged(target, session)
-          '''
-
-          new_target_active = '''        session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
-                  session.setActive(true)
-                  session.setFocused(true)
-
-                  ExtensionManager.setTabActive(
-                      session,
-                      true
-                  )
-
-                  listener?.onActiveTabChanged(target, session)
-          '''
-
-          tabs = must_replace(
-              tabs,
-              old_target_active,
-              new_target_active,
-              "setTabActive pestaña destino"
-          )
-
-          old_ext_inactive = '''        if (activate) {
-                      switchTo(tab.id, loadUrl = false)
-                  } else {
-                      session.setActive(false)
-                  }
-          '''
-
-          new_ext_inactive = '''        if (activate) {
-                      switchTo(tab.id, loadUrl = false)
-                  } else {
-                      session.setActive(false)
-
-                      ExtensionManager.setTabActive(
-                          session,
-                          false
-                      )
-                  }
-          '''
-
-          tabs = must_replace(
-              tabs,
-              old_ext_inactive,
-              new_ext_inactive,
-              "pestaña de extensión inactiva"
-          )
-
-          old_close = '''        removed.session?.let { session ->
-                      runCatching {
-                          session.setActive(false)
-                          session.close()
-                      }
-                  }
-          '''
-
-          new_close = '''        removed.session?.let { session ->
-                      runCatching {
-                          ExtensionManager.setTabActive(
-                              session,
-                              false
-                          )
-                          session.setActive(false)
-                          session.close()
-                      }
-                  }
-          '''
-
-          tabs = must_replace(
-              tabs,
-              old_close,
-              new_close,
-              "cerrar pestaña y WebExtensions"
-          )
-
-          tabs = replace_between(
-              tabs,
-              "    fun prepareForPictureInPicture() {",
-              "    fun prepareForBackground() {",
-              r'''    fun prepareForPictureInPicture() {
-                  val tab =
-                      activeTab()
-                          ?: return
-
-                  tab.session?.let {
-                      session ->
-
-                      /*
-                       * PiP sigue siendo contenido visible.
-                       * Nunca suspender multimedia durante esta transición.
-                       */
-                      session.settings
-                          .setSuspendMediaWhenInactive(
-                              false
-                          )
-
-                      session.setPriorityHint(
-                          GeckoSession.PRIORITY_HIGH
-                      )
-
-                      session.setActive(true)
-
-                      ExtensionManager.setTabActive(
-                          session,
-                          true
-                      )
-                  }
-
+              ''',
+              '''    backgroundPlaybackWasActive =
+                  tab != null &&
+                  BrowserPrefs.backgroundMedia(this) &&
                   BrowserMediaController
-                      .resumeIfRecent(
-                          tab.id,
-                          8_000L
-                      )
+                      .isPlaybackActive(tab.id)
 
-                  MediaPlaybackService.sync(
-                      requireContext()
+              if (
+                  backgroundPlaybackWasActive &&
+                  tab != null
+              ) {
+                  BrowserMediaController.holdPlayback(
+                      tab.id,
+                      10_000L
                   )
-              }
-
-          ''',
-              "prepareForPictureInPicture"
-          )
-
-          tabs = replace_between(
-              tabs,
-              "    fun prepareForBackground() {",
-              "    fun suspendForBackground() {",
-              r'''    fun prepareForBackground() {
-                  val tab =
-                      activeTab()
-                          ?: return
-
-                  val context =
-                      requireContext()
-
-                  val backgroundEnabled =
-                      BrowserPrefs.backgroundMedia(
-                          context
-                      )
-
-                  val keepMediaAlive =
-                      backgroundEnabled &&
-                      BrowserMediaController
-                          .shouldKeepAlive(
-                              tab.id,
-                              8_000L
-                          )
-
-                  tab.session?.let {
-                      session ->
-
-                      session.flushSessionState()
-                      session.setFocused(false)
-
-                      /*
-                       * Si el usuario habilitó reproducción en segundo
-                       * plano no permitimos que Gecko suspenda media.
-                       */
-                      session.settings
-                          .setSuspendMediaWhenInactive(
-                              !backgroundEnabled
-                          )
-
-                      ExtensionManager.setTabActive(
-                          session,
-                          false
-                      )
-
-                      session.setPriorityHint(
-                          if (keepMediaAlive) {
-                              GeckoSession.PRIORITY_HIGH
-                          } else {
-                              GeckoSession.PRIORITY_DEFAULT
-                          }
-                      )
-
-                      session.setActive(
-                          keepMediaAlive
-                      )
-                  }
-
-                  if (keepMediaAlive) {
-                      MediaPlaybackService.sync(
-                          context
-                      )
-                  }
-
-                  persist()
-              }
-
-          ''',
-              "prepareForBackground"
-          )
-
-          old_resume = '''    fun resumeActive() {
-                  activeSession()?.let { session ->
-                      session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
-                      session.setActive(true)
-                      session.setFocused(true)
-                  }
-              }
-          '''
-
-          new_resume = '''    fun resumeActive() {
-                  activeSession()?.let {
-                      session ->
-
-                      session.setPriorityHint(
-                          GeckoSession.PRIORITY_HIGH
-                      )
-
-                      session.setActive(true)
-                      session.setFocused(true)
-
-                      ExtensionManager.setTabActive(
-                          session,
-                          true
-                      )
-                  }
-              }
-          '''
-
-          tabs = must_replace(
-              tabs,
-              old_resume,
-              new_resume,
-              "resumeActive"
-          )
-
-          TABS.write_text(
-              tabs,
-              encoding="utf-8"
-          )
-
-          # =========================================================
-          # 4. content_script.js
-          # =========================================================
-
-          js = must_replace(
-              js,
-              '''  let pipActive = false;
-              let reportTimer = 0;
-          ''',
-              '''  let pipActive = false;
-              let pipKeepPlaying = false;
-              let pipRecoveryUntil = 0;
-              let reportTimer = 0;
-          ''',
-              "variables PiP JS"
-          )
-
-          old_visibility = '''    visibilityHandler = event => {
-                if (backgroundMedia) {
-                  event.stopImmediatePropagation();
-                }
-              };
-          '''
-
-          new_visibility = '''    visibilityHandler = event => {
-              if (backgroundMedia) {
-                    /*
-                     * Guardar el elemento que estaba reproduciendo ANTES
-                     * de que la página procese el cambio de visibilidad.
-                     */
-                    const playingBefore =
-                      playingMediaElement();
-
-                    event.stopImmediatePropagation();
-
-                    if (playingBefore) {
-                      setTimeout(() => {
-                        try {
-                          if (
-                            backgroundMedia &&
-                            playingBefore.isConnected &&
-                            playingBefore.paused &&
-                            !playingBefore.ended
-                          ) {
-                            Promise.resolve(
-                              playingBefore.play()
-                            ).catch(() => {});
-                          }
-                        } catch (_) {}
-                      }, 140);
-                    }
-                  }
-                };
-          '''
-
-          js = must_replace(
-              js,
-              old_visibility,
-              new_visibility,
-              "visibilitychange multimedia"
-          )
-
-          insert_after_video_list = '''  function videoList() {
-              return collectVideos(document, []).filter(visibleEnough);
-            }
-
-          '''
-
-          media_helper = '''  function videoList() {
-              return collectVideos(document, []).filter(visibleEnough);
-            }
-
-            function playingMediaElement() {
-                  const video =
-                    bestVideo(true);
-
-                  if (video) {
-                    return video;
-                  }
-
-                  try {
-                    const audio =
-                      Array.from(
-                        document.querySelectorAll("audio")
-                      ).find(
-                        item =>
-                          !item.paused &&
-                          !item.ended
-                      );
-
-                    return audio || null;
-                  } catch (_) {
-                    return null;
-                  }
-                }
-
-          '''
-
-          js = must_replace(
-              js,
-              insert_after_video_list,
-              media_helper,
-              "soporte audio HTML5"
-          )
-
-          js = replace_between(
-              js,
-              "  function setPipIsolation(active) {",
-              "  function reportVideoState() {",
-              r'''  function setPipIsolation(active) {
-                  const nextActive =
-                    active === true;
-
-                  const activating =
-                    nextActive &&
-                    !pipActive;
-
-                  pipActive =
-                    nextActive;
-
-                  if (!pipActive) {
-                    pipKeepPlaying = false;
-                    pipRecoveryUntil = 0;
-                    clearPipIsolation();
-                    return;
-                  }
-
-                  const video =
-                    bestVideo(true) ||
-                    bestVideo(false);
-
-                  if (!video) {
-                    return;
-                  }
 
                   /*
-                   * Recordar intención de reproducción únicamente
-                   * en el primer momento de entrada a PiP.
+                   * Arrancar/refrescar el foreground service mientras
+                   * la Activity aún está visible. Así evitamos las
+                   * restricciones de inicio desde background y la pausa
+                   * transitoria de YouTube no lo apaga.
                    */
-                  if (activating) {
-                    pipKeepPlaying =
-                      !video.paused &&
-                      !video.ended;
-
-                    pipRecoveryUntil =
-                      pipKeepPlaying
-                        ? Date.now() + 5_000
-                        : 0;
-                  }
-
-                  clearPipIsolation();
-                  ensurePipStyle();
-
-                  pipVideo = video;
-
-                  let current =
-                    video.parentElement;
-
-                  while (
-                    current &&
-                    current !== document.body &&
-                    current !==
-                      document.documentElement
-                  ) {
-                    current.classList.add(
-                      "nexo-pip-ancestor"
-                    );
-
-                    pipAncestors.push(
-                      current
-                    );
-
-                    current =
-                      current.parentElement;
-                  }
-
-                  document.documentElement
-                    .classList.add(
-                      "nexo-pip-root"
-                    );
-
-                  video.classList.add(
-                    "nexo-pip-video"
-                  );
-
-                  recoverPipPlayback();
-                }
-
-                function recoverPipPlayback() {
-                  if (
-                    !pipActive ||
-                    !pipKeepPlaying ||
-                    Date.now() >
-                      pipRecoveryUntil
-                  ) {
-                    return;
-                  }
-
-                  const video =
-                    pipVideo ||
-                    bestVideo(false);
-
-                  if (
-                    !video ||
-                    video.ended ||
-                    !video.paused
-                  ) {
-                    return;
-                  }
-
-                  try {
-                    Promise.resolve(
-                      video.play()
-                    ).catch(() => {});
-                  } catch (_) {}
-                }
-
-                /*
-                 * YouTube funciona como SPA y puede reemplazar
-                 * o mover el <video> sin recargar la página.
-                 */
-                function refreshPipIsolation() {
-                  if (!pipActive) {
-                    return;
-                  }
-
-                  const video =
-                    bestVideo(true) ||
-                    bestVideo(false);
-
-                  if (!video) {
-                    recoverPipPlayback();
-                    return;
-                  }
-
-                  const currentStillValid =
-                    pipVideo === video &&
-                    video.isConnected &&
-                    pipAncestors.every(
-                      ancestor =>
-                        ancestor.isConnected &&
-                        ancestor.classList.contains(
-                          "nexo-pip-ancestor"
-                        )
-                    );
-
-                  if (!currentStillValid) {
-                    setPipIsolation(true);
-                  }
-
-                  recoverPipPlayback();
-                }
-
-          ''',
-              "aislamiento y recuperación PiP JS"
-          )
-
-          js = must_replace(
-              js,
-              '''  function reportVideoState() {
-                  refreshPipIsolation();
-
-                  if (!port) return;
-          ''',
-              '''  function reportVideoState() {
-                  refreshPipIsolation();
-                  recoverPipPlayback();
-
-                  if (!port) return;
-          ''',
-              "reportVideoState recovery"
-          )
-
-          SCRIPT.write_text(
-              js,
-              encoding="utf-8"
-          )
-
-          # =========================================================
-          # 5. ExtensionManager.kt
-          # =========================================================
-
-          ext = must_replace(
-              ext,
-              '''    private var initialized = false
-
-              fun initialize(context: Context) {
-          ''',
-              '''    private var initialized = false
-
-              /*
-               * GeckoView entrega acciones de extensiones a través de
-               * ActionDelegate. Nexo antes no guardaba esas acciones,
-               * por eso muchas extensiones podían instalarse pero no
-               * tenían ninguna forma de ejecutarse desde la interfaz.
-               */
-              private val defaultActions =
-                  mutableMapOf<
-                      String,
-                      WebExtension.Action
-                      >()
-
-              private val sessionActions =
-                  java.util.WeakHashMap<
-                      GeckoSession,
-                      MutableMap<
-                          String,
-                          WebExtension.Action
-                          >
-                      >()
-
-              fun initialize(context: Context) {
-          ''',
-              "almacenamiento de acciones WebExtension"
-          )
-
-          attach_marker = '''    fun attachPromptActivity(activity: Activity?) {
-                  promptActivity = WeakReference(activity)
+                  MediaPlaybackService.sync(this)
               }
 
-          '''
-
-          attach_replacement = '''    fun attachPromptActivity(activity: Activity?) {
-                  promptActivity = WeakReference(activity)
-              }
-
-              fun setTabActive(
-                  session: GeckoSession,
-                  active: Boolean
-              ) {
-                  runCatching {
-                      GeckoRuntimeHolder
-                          .get(AppContext.get())
-                          .webExtensionController
-                          .setTabActive(
-                              session,
-                              active
-                          )
-                  }.onFailure {
-                      error ->
-
-                      android.util.Log.w(
-                          "NexoExtensions",
-                          "No se pudo notificar pestaña activa",
-                          error
-                      )
-                  }
-              }
-
-              fun runAction(
-                  extension: WebExtension,
-                  onDone:
-                      (Boolean, String) -> Unit
-              ) {
-                  val session =
-                      TabManager.activeSession()
-
-                  val sessionAction =
-                      session
-                          ?.let {
-                              sessionActions[it]
-                                  ?.get(
-                                      extension.id
-                                  )
-                          }
-
-                  val defaultAction =
-                      defaultActions[
-                          extension.id
-                      ]
-
-                  val action =
-                      when {
-                          sessionAction != null &&
-                              defaultAction != null ->
-                              runCatching {
-                                  sessionAction
-                                      .withDefault(
-                                          defaultAction
-                                      )
-                              }.getOrDefault(
-                                  sessionAction
-                              )
-
-                          sessionAction != null ->
-                              sessionAction
-
-                          else ->
-                              defaultAction
-                      }
-
-                  if (action == null) {
-                      onDone(
-                          false,
-                          "La extensión no expone una acción para esta pestaña."
-                      )
-                      return
-                  }
-
-                  if (action.enabled == false) {
-                      onDone(
-                          false,
-                          "La acción de la extensión está deshabilitada en esta página."
-                      )
-                      return
-                  }
-
-                  runCatching {
-                      action.click()
-                  }.fold(
-                      onSuccess = {
-                          onDone(
-                              true,
-                              action.title
-                                  ?.takeIf {
-                                      it.isNotBlank()
-                                  }
-                                  ?: "Acción de extensión ejecutada"
-                          )
-                      },
-                      onFailure = {
-                          error ->
-
-                          onDone(
-                              false,
-                              "No se pudo ejecutar: " +
-                                  (
-                                      error.message
-                                          ?: "error desconocido"
-                                      )
-                          )
-                      }
-                  )
-              }
-
-          '''
-
-          ext = must_replace(
-              ext,
-              attach_marker,
-              attach_replacement,
-              "API pestaña activa y ejecutar extensión"
+              if (
+              ''',
+              "hold playback before leaving app"
           )
 
-          register_start = "    private fun registerExtension(extension: WebExtension) {"
-          register_end = "    private fun bindExtensionToSession("
+          MAIN.write_text(main, encoding="utf-8")
 
-          new_register = r'''    private fun registerExtension(
-                  extension: WebExtension
-              ) {
-                  if (extension.id == BRIDGE_ID) {
-                      configureBridge(
-                          extension
-                      )
-                      return
-                  }
-
-                  if (
-                      extension.id ==
-                      TranslatorManager
-                          .TRANSLATOR_ID
-                  ) {
-                      return
-                  }
-
-                  extension.setActionDelegate(
-                      extensionActionDelegate
-                  )
-
-                  extension.setTabDelegate(
-                      object :
-                          WebExtension.TabDelegate {
-
-                          override fun onNewTab(
-                              source: WebExtension,
-                              createDetails:
-                                  WebExtension
-                                      .CreateTabDetails
-                          ): GeckoResult<GeckoSession>? {
-                              val session =
-                                  TabManager
-                                      .createSessionForExtension(
-                                          createDetails.url
-                                              ?: "about:blank",
-                                          createDetails.active !=
-                                              false
-                                      )
-
-                              return GeckoResult
-                                  .fromValue(
-                                      session
-                                  )
-                          }
-
-                          override fun onOpenOptionsPage(
-                              source: WebExtension
-                          ) {
-                              val url =
-                                  source
-                                      .metaData
-                                      ?.optionsPageUrl
-
-                              if (
-                                  !url.isNullOrBlank()
-                              ) {
-                                  TabManager.createTab(
-                                      url = url,
-                                      activate = true
-                                  )
-                              }
-                          }
-                      }
-                  )
-
-                  TabManager.liveSessions()
-                      .forEach {
-                          bindExtensionToSession(
-                              extension,
-                              it
-                          )
-                      }
-              }
-
-          '''
-
-          ext = replace_between(
-              ext,
-              register_start,
-              register_end,
-              new_register,
-              "registerExtension"
-          )
-
-          bind_start = "    private fun bindExtensionToSession("
-          bind_end = "    private val bridgeMessageDelegate ="
-
-          new_bind = r'''    private fun bindExtensionToSession(
-                  extension: WebExtension,
-                  session: GeckoSession
-              ) {
-                  /*
-                   * Recibir browser_action/page_action específicos
-                   * de esta pestaña.
-                   */
-                  session.webExtensionController
-                      .setActionDelegate(
-                          extension,
-                          extensionActionDelegate
-                      )
-
-                  session.webExtensionController
-                      .setTabDelegate(
-                          extension,
-                          object :
-                              WebExtension
-                                  .SessionTabDelegate {
-
-                              override fun onCloseTab(
-                                  source: WebExtension?,
-                                  session: GeckoSession
-                              ): GeckoResult<AllowOrDeny> {
-                                  TabManager
-                                      .closeBySession(
-                                          session
-                                      )
-
-                                  return GeckoResult.allow()
-                              }
-
-                              override fun onUpdateTab(
-                                  extension: WebExtension,
-                                  session: GeckoSession,
-                                  details:
-                                      WebExtension
-                                          .UpdateTabDetails
-                              ): GeckoResult<AllowOrDeny> {
-                                  if (
-                                      details.active == true
-                                  ) {
-                                      TabManager
-                                          .activateBySession(
-                                              session
-                                          )
-                                  }
-
-                                  return GeckoResult.allow()
-                              }
-                          }
-                      )
-              }
-
-              private fun rememberAction(
-                  extension: WebExtension,
-                  session: GeckoSession?,
-                  action: WebExtension.Action
-              ) {
-                  if (session == null) {
-                      defaultActions[
-                          extension.id
-                      ] = action
-                  } else {
-                      sessionActions
-                          .getOrPut(
-                              session
-                          ) {
-                              mutableMapOf()
-                          }[
-                              extension.id
-                          ] = action
-                  }
-              }
-
-              private fun createExtensionPopupSession():
-                  GeckoResult<GeckoSession> {
-                  val session =
-                      TabManager
-                          .createSessionForExtension(
-                              "about:blank",
-                              true
-                          )
-
-                  return GeckoResult.fromValue(
-                      session
-                  )
-              }
-
-              private val extensionActionDelegate =
-                  object :
-                      WebExtension.ActionDelegate {
-
-                      override fun onBrowserAction(
-                          extension: WebExtension,
-                          session: GeckoSession?,
-                          action: WebExtension.Action
-                      ) {
-                          rememberAction(
-                              extension,
-                              session,
-                              action
-                          )
-                      }
-
-                      override fun onPageAction(
-                          extension: WebExtension,
-                          session: GeckoSession?,
-                          action: WebExtension.Action
-                      ) {
-                          rememberAction(
-                              extension,
-                              session,
-                              action
-                          )
-                      }
-
-                      override fun onOpenPopup(
-                          extension: WebExtension,
-                          action: WebExtension.Action
-                      ): GeckoResult<GeckoSession>? =
-                          createExtensionPopupSession()
-
-                      override fun onTogglePopup(
-                          extension: WebExtension,
-                          action: WebExtension.Action
-                      ): GeckoResult<GeckoSession>? =
-                          createExtensionPopupSession()
-                  }
-
-          '''
-
-          ext = replace_between(
-              ext,
-              bind_start,
-              bind_end,
-              new_bind,
-              "bindExtensionToSession + ActionDelegate"
-          )
-
-          old_update_prompt = '''        override fun onUpdatePrompt(
-                      extension: WebExtension,
-                      newPermissions: Array<out String>,
-                      newOrigins: Array<out String>,
-                      newDataCollectionPermissions: Array<out String>
-                  ): GeckoResult<AllowOrDeny>? =
-                      showPermissionPrompt(extension, "Actualizar extensión")
-          '''
-
-          new_update_prompt = '''        override fun onUpdatePrompt(
-                      extension: WebExtension,
-                      newPermissions: Array<out String>,
-                      newOrigins: Array<out String>,
-                      newDataCollectionPermissions: Array<out String>
-                  ): GeckoResult<AllowOrDeny>? =
-                      showPermissionPrompt(
-                          extension = extension,
-                          title = "Actualizar extensión",
-                          permissions = newPermissions,
-                          origins = newOrigins,
-                          dataCollectionPermissions =
-                              newDataCollectionPermissions
-                      )
-
-                  override fun onOptionalPrompt(
-                      extension: WebExtension,
-                      permissions: Array<out String>,
-                      origins: Array<out String>,
-                      dataCollectionPermissions:
-                          Array<out String>
-                  ): GeckoResult<AllowOrDeny>? =
-                      showPermissionPrompt(
-                          extension = extension,
-                          title = "Permisos adicionales",
-                          permissions = permissions,
-                          origins = origins,
-                          dataCollectionPermissions =
-                              dataCollectionPermissions
-                      )
-          '''
-
-          ext = must_replace(
-              ext,
-              old_update_prompt,
-              new_update_prompt,
-              "PromptDelegate update + optional"
-          )
-
-          permission_start = "    private fun showPermissionPrompt("
-          permission_end = ext.rfind("\n}")
-
-          if permission_start not in ext:
-              raise RuntimeError(
-                  "No se encontró showPermissionPrompt()"
-              )
-
-          if permission_end < 0:
-              raise RuntimeError(
-                  "No se encontró cierre de ExtensionManager"
-              )
-
-          p_start = ext.index(
-              permission_start
-          )
-
-          new_permission_func = r'''    private fun showPermissionPrompt(
-                  extension: WebExtension,
-                  title: String,
-                  permissions:
-                      Array<out String> =
-                      emptyArray<String>(),
-                  origins:
-                      Array<out String> =
-                      emptyArray<String>(),
-                  dataCollectionPermissions:
-                      Array<out String> =
-                      emptyArray<String>()
-              ): GeckoResult<AllowOrDeny> {
-                  val result =
-                      GeckoResult<AllowOrDeny>()
-
-                  val activity =
-                      promptActivity.get()
-
-                  if (
-                      activity == null ||
-                      activity.isFinishing
-                  ) {
-                      result.complete(
-                          AllowOrDeny.DENY
-                      )
-                      return result
-                  }
-
-                  val details =
-                      buildString {
-                          append(
-                              extension
-                                  .metaData
-                                  ?.name
-                                  ?: extension.id
-                          )
-
-                          append(
-                              "\nVersión: "
-                          )
-
-                          append(
-                              extension
-                                  .metaData
-                                  ?.version
-                                  ?: "?"
-                          )
-
-                          if (
-                              permissions
-                                  .isNotEmpty()
-                          ) {
-                              append(
-                                  "\n\nPermisos: "
-                              )
-
-                              append(
-                                  permissions
-                                      .joinToString(
-                                          ", "
-                                      )
-                              )
-                          }
-
-                          if (
-                              origins
-                                  .isNotEmpty()
-                          ) {
-                              append(
-                                  "\n\nSitios: "
-                              )
-
-                              append(
-                                  origins
-                                      .joinToString(
-                                          ", "
-                                      )
-                              )
-                          }
-
-                          if (
-                              dataCollectionPermissions
-                                  .isNotEmpty()
-                          ) {
-                              append(
-                                  "\n\nDatos solicitados: "
-                              )
-
-                              append(
-                                  dataCollectionPermissions
-                                      .joinToString(
-                                          ", "
-                                      )
-                              )
-                          }
-
-                          append(
-                              "\n\nPermite únicamente si confías en la extensión."
-                          )
-                      }
-
-                  activity.runOnUiThread {
-                      AlertDialog.Builder(
-                          activity
-                      )
-                          .setTitle(title)
-                          .setMessage(details)
-                          .setNegativeButton(
-                              "Cancelar"
-                          ) {
-                                  _,
-                                  _ ->
-
-                              result.complete(
-                                  AllowOrDeny.DENY
-                              )
-                          }
-                          .setPositiveButton(
-                              "Permitir"
-                          ) {
-                                  _,
-                                  _ ->
-
-                              result.complete(
-                                  AllowOrDeny.ALLOW
-                              )
-                          }
-                          .setOnCancelListener {
-                              result.complete(
-                                  AllowOrDeny.DENY
-                              )
-                          }
-                          .show()
-                  }
-
-                  return result
-              }
-          '''
-
-          ext = (
-              ext[:p_start] +
-              new_permission_func +
-              ext[permission_end:]
-          )
-
-          EXT.write_text(
-              ext,
-              encoding="utf-8"
-          )
-
-          # =========================================================
-          # 6. ExtensionsActivity.kt
-          # =========================================================
-
-          ext_ui = must_replace(
-              ext_ui,
-              '''        popup.menu.add(
-                  "Buscar actualización"
-              )
-          ''',
-              '''        if (meta.enabled) {
-                  popup.menu.add(
-                      "Ejecutar en esta pestaña"
-                  )
-              }
-
-              popup.menu.add(
-                  "Buscar actualización"
-              )
-          ''',
-              "menú Ejecutar extensión"
-          )
-
-          ext_ui = must_replace(
-              ext_ui,
-              '''                "Buscar actualización" -> {
-                          updateOne(
-                              extension
-                          )
-                          true
-                      }
-          ''',
-              '''                "Ejecutar en esta pestaña" -> {
-                          runExtensionAction(
-                              extension
-                          )
-                          true
-                      }
-
-                      "Buscar actualización" -> {
-                          updateOne(
-                              extension
-                          )
-                          true
-                      }
-          ''',
-              "acción Ejecutar en menú"
-          )
-
-          set_enabled_marker = '''    private fun setEnabled(
-                  extension: WebExtension,
-                  enabled: Boolean
-              ) {
-          '''
-
-          run_action_func = '''    private fun runExtensionAction(
-                  extension: WebExtension
-              ) {
-                  ExtensionManager.runAction(
-                      extension
-                  ) {
-                          ok,
-                          message ->
-
-                      runOnUiThread {
-                          toast(message)
-
-                          if (ok) {
-                              load()
-                          }
-                      }
-                  }
-              }
-
-          ''' + set_enabled_marker
-
-          ext_ui = must_replace(
-              ext_ui,
-              set_enabled_marker,
-              run_action_func,
-              "runExtensionAction"
-          )
-
-          EXT_UI.write_text(
-              ext_ui,
-              encoding="utf-8"
-          )
-
-          # =========================================================
-          # 7. Version
-          # =========================================================
-
-          if 'versionCode = 19' in gradle:
+          if 'versionCode = 20' in gradle:
               gradle = gradle.replace(
-                  'versionCode = 19',
                   'versionCode = 20',
+                  'versionCode = 21',
                   1
               )
-          elif 'versionCode = 20' not in gradle:
-              raise RuntimeError(
-                  "VersionCode base inesperado"
-              )
+          elif 'versionCode = 21' not in gradle:
+              raise RuntimeError("VersionCode base inesperado")
 
-          if 'versionName = "0.13.2"' in gradle:
+          if 'versionName = "0.13.3"' in gradle:
               gradle = gradle.replace(
-                  'versionName = "0.13.2"',
                   'versionName = "0.13.3"',
+                  'versionName = "0.13.4"',
                   1
               )
-          elif 'versionName = "0.13.3"' not in gradle:
-              raise RuntimeError(
-                  "VersionName base inesperado"
-              )
+          elif 'versionName = "0.13.4"' not in gradle:
+              raise RuntimeError("VersionName base inesperado")
 
-          GRADLE.write_text(
-              gradle,
-              encoding="utf-8"
-          )
+          GRADLE.write_text(gradle, encoding="utf-8")
 
-          print(
-              "✅ Nexo v0.13.3 patch aplicado"
-          )
+          print("✅ Nexo v0.13.4 foreground/audio patch aplicado")
           PY
 
           echo ""
@@ -2138,7 +939,7 @@ jobs:
           echo ""
           git diff --check
 
-      - name: Validate Nexo v0.13.3 source
+      - name: Validate Nexo v0.13.4 source
         shell: bash
         run: |
           set -euo pipefail
@@ -2154,82 +955,51 @@ jobs:
               "app/src/main/java/com/ejemplo/navegador/BrowserMediaController.kt"
           ).read_text(encoding="utf-8")
 
-          tabs = Path(
-              "app/src/main/java/com/ejemplo/navegador/TabManager.kt"
-          ).read_text(encoding="utf-8")
-
-          ext = Path(
-              "app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt"
-          ).read_text(encoding="utf-8")
-
-          ext_ui = Path(
-              "app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt"
-          ).read_text(encoding="utf-8")
-
-          js = Path(
-              "app/src/main/assets/extensions/nexo_bridge/content_script.js"
-          ).read_text(encoding="utf-8")
-
-          gradle = Path(
-              "app/build.gradle.kts"
+          service = Path(
+              "app/src/main/java/com/ejemplo/navegador/MediaPlaybackService.kt"
           ).read_text(encoding="utf-8")
 
           manifest = Path(
               "app/src/main/AndroidManifest.xml"
           ).read_text(encoding="utf-8")
 
+          gradle = Path(
+              "app/build.gradle.kts"
+          ).read_text(encoding="utf-8")
+
           compact_main = "".join(main.split())
           compact_media = "".join(media.split())
-          compact_tabs = "".join(tabs.split())
-          compact_ext = "".join(ext.split())
-          compact_ui = "".join(ext_ui.split())
-          compact_js = "".join(js.split())
+          compact_service = "".join(service.split())
 
-          # Multimedia / PiP
-          assert "pipPlaybackWasActive" in main
-          assert "backgroundPlaybackWasActive" in main
-          assert "resumeIfRecent(" in main
-          assert "privatevalrecentPlayback=" in compact_media
-          assert "funshouldKeepAlive(" in compact_media
-          assert "funresumeIfRecent(" in compact_media
-          assert "media.play()" in compact_media
-          assert "setSuspendMediaWhenInactive(false)" in compact_tabs
-          assert "shouldKeepAlive(tab.id,8_000L)" in compact_tabs
+          assert "holdPlayback(tab.id,10_000L)" in compact_main
+          assert "clearPlaybackHold(tab.id)" in compact_main
+          assert "MediaPlaybackService.sync(this)" in compact_main
 
-          # JS recuperación PiP y segundo plano
-          assert "letpipKeepPlaying=false;" in compact_js
-          assert "functionrecoverPipPlayback()" in compact_js
-          assert "playingMediaElement()" in compact_js
-          assert "Promise.resolve(video.play())" in compact_js
-          assert "transform:none!important;" in compact_js
-          assert "contain:none!important;" in compact_js
+          assert "playbackHoldUntil" in media
+          assert "snapshotForService()" in compact_media
+          assert "isPlaybackHoldActive" in media
+          assert "resumeIfRecent" in media
+          assert "if(!hasActiveHold(tabId))" in compact_media
 
-          # Extensiones
-          assert ".setTabActive(session,active)" in compact_ext
-          assert "extension.setActionDelegate(extensionActionDelegate)" in compact_ext
-          assert ".setActionDelegate(extension,extensionActionDelegate)" in compact_ext
-          assert "overridefunonOptionalPrompt(" in compact_ext
-          assert "overridefunonOpenOptionsPage(" in compact_ext
-          assert "overridefunonBrowserAction(" in compact_ext
-          assert "overridefunonPageAction(" in compact_ext
-          assert "overridefunonOpenPopup(" in compact_ext
-          assert "overridefunonTogglePopup(" in compact_ext
-          assert "action.click()" in compact_ext
-          assert "Ejecutarenestapestaña" in compact_ui
+          # La promoción ocurre en onCreate, ANTES de onStartCommand.
+          create_pos = service.index("override fun onCreate()")
+          promote_pos = service.index("promoteToForeground(", create_pos)
+          start_cmd_pos = service.index("override fun onStartCommand(")
+          assert create_pos < promote_pos < start_cmd_pos
 
-          # Base
-          assert 'android:supportsPictureInPicture="true"' in manifest
-          assert 'versionCode = 20' in gradle
-          assert 'versionName = "0.13.3"' in gradle
+          assert "buildBootstrapNotification()" in compact_service
+          assert "snapshotForService()" in compact_service
+          assert "startRequested" in service
+          assert "FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK" in service
+
+          assert 'android:foregroundServiceType="mediaPlayback"' in manifest
+          assert 'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK' in manifest
+          assert 'versionCode = 21' in gradle
+          assert 'versionName = "0.13.4"' in gradle
           assert "geckoview-omni:153.0.20260715202819" in gradle
 
-          print(
-              "✅ Validaciones estáticas v0.13.3 correctas"
-          )
+          print("✅ Validaciones v0.13.4 correctas")
           PY
-
-          node --check \
-            app/src/main/assets/extensions/nexo_bridge/content_script.js
 
       - name: Java 17
         uses: actions/setup-java@v5
@@ -2244,10 +1014,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          yes | sdkmanager --licenses \
-            >/dev/null 2>&1 || true
-
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager \
             "platforms;android-${COMPILE_SDK}" \
             "build-tools;${BUILD_TOOLS}" \
@@ -2257,7 +1024,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           curl \
             --retry 5 \
             --retry-all-errors \
@@ -2265,20 +1031,14 @@ jobs:
             -fsSL \
             "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
             -o gradle.zip
-
           unzip -q gradle.zip
-
-          echo \
-            "$PWD/gradle-${GRADLE_VERSION}/bin" \
-            >> "$GITHUB_PATH"
-
+          echo "$PWD/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
           gradle --version
 
       - name: Build Debug Release and Lint
         shell: bash
         run: |
           set -euo pipefail
-
           gradle \
             :app:assembleDebug \
             :app:assembleRelease \
@@ -2293,78 +1053,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "========================================"
-          echo " APK GENERADOS"
-          echo "========================================"
+          find app/build/outputs/apk -type f -name "*.apk" -print
 
-          find \
-            app/build/outputs/apk \
-            -type f \
-            -name "*.apk" \
-            -print
+          ARM64="$(find app/build/outputs/apk/release -type f -name '*arm64-v8a*.apk' | head -n 1)"
+          ARM32="$(find app/build/outputs/apk/release -type f -name '*armeabi-v7a*.apk' | head -n 1)"
 
-          ARM64="$(
-            find \
-              app/build/outputs/apk/release \
-              -type f \
-              -name '*arm64-v8a*.apk' \
-              | head -n 1
-          )"
+          test -n "$ARM64" || { echo "❌ No se generó APK arm64-v8a"; exit 1; }
+          test -n "$ARM32" || { echo "❌ No se generó APK armeabi-v7a"; exit 1; }
 
-          ARM32="$(
-            find \
-              app/build/outputs/apk/release \
-              -type f \
-              -name '*armeabi-v7a*.apk' \
-              | head -n 1
-          )"
+          echo "✅ Ambos APK fueron generados"
 
-          test -n "$ARM64" || {
-            echo "❌ No se generó APK arm64-v8a"
-            exit 1
-          }
-
-          test -n "$ARM32" || {
-            echo "❌ No se generó APK armeabi-v7a"
-            exit 1
-          }
-
-          echo "✅ APK arm64-v8a detectado"
-          echo "✅ APK armeabi-v7a detectado"
-
-      - name: Save verified Nexo v0.13.3 source
+      - name: Save verified Nexo v0.13.4 source
         shell: bash
         run: |
           set -euo pipefail
 
-          git config \
-            user.name \
-            "github-actions[bot]"
-
-          git config \
-            user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add \
             app/build.gradle.kts \
             app/src/main/java/com/ejemplo/navegador/MainActivity.kt \
             app/src/main/java/com/ejemplo/navegador/BrowserMediaController.kt \
-            app/src/main/java/com/ejemplo/navegador/TabManager.kt \
-            app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt \
-            app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt \
-            app/src/main/assets/extensions/nexo_bridge/content_script.js
+            app/src/main/java/com/ejemplo/navegador/MediaPlaybackService.kt
 
           if git diff --cached --quiet; then
             echo "ℹ️ No hay cambios nuevos para guardar."
           else
-            git commit \
-              -m "Nexo v0.13.3 PiP audio extensions fix [skip ci]"
-
-            git push \
-              origin \
-              HEAD:main
-
-            echo "✅ Código v0.13.3 guardado en main"
+            git commit -m "Nexo v0.13.4 foreground audio stability fix [skip ci]"
+            git push origin HEAD:main
+            echo "✅ Código v0.13.4 guardado en main"
           fi
 
       - name: Sign Release APKs
@@ -2376,80 +1094,56 @@ jobs:
 
           keytool \
             -genkeypair \
-            -keystore nexo-v0133-ci.jks \
+            -keystore nexo-v0134-ci.jks \
             -storepass android \
             -alias nexo \
             -keypass android \
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000 \
-            -dname "CN=Nexo Browser v0.13.3,O=Nexo,C=CO"
+            -dname "CN=Nexo Browser v0.13.4,O=Nexo,C=CO"
 
           APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
-
-          ARM64="$(
-            find \
-              app/build/outputs/apk/release \
-              -type f \
-              -name '*arm64-v8a*.apk' \
-              | head -n 1
-          )"
-
-          ARM32="$(
-            find \
-              app/build/outputs/apk/release \
-              -type f \
-              -name '*armeabi-v7a*.apk' \
-              | head -n 1
-          )"
+          ARM64="$(find app/build/outputs/apk/release -type f -name '*arm64-v8a*.apk' | head -n 1)"
+          ARM32="$(find app/build/outputs/apk/release -type f -name '*armeabi-v7a*.apk' | head -n 1)"
 
           "$APKSIGNER" sign \
-            --ks nexo-v0133-ci.jks \
+            --ks nexo-v0134-ci.jks \
             --ks-key-alias nexo \
             --ks-pass pass:android \
             --key-pass pass:android \
-            --out \
-            artifacts/release/Nexo-v0.13.3-arm64-v8a.apk \
+            --out artifacts/release/Nexo-v0.13.4-arm64-v8a.apk \
             "$ARM64"
 
           "$APKSIGNER" sign \
-            --ks nexo-v0133-ci.jks \
+            --ks nexo-v0134-ci.jks \
             --ks-key-alias nexo \
             --ks-pass pass:android \
             --key-pass pass:android \
-            --out \
-            artifacts/release/Nexo-v0.13.3-armeabi-v7a.apk \
+            --out artifacts/release/Nexo-v0.13.4-armeabi-v7a.apk \
             "$ARM32"
 
-          "$APKSIGNER" verify \
-            --verbose \
-            artifacts/release/Nexo-v0.13.3-arm64-v8a.apk
-
-          "$APKSIGNER" verify \
-            --verbose \
-            artifacts/release/Nexo-v0.13.3-armeabi-v7a.apk
+          "$APKSIGNER" verify --verbose artifacts/release/Nexo-v0.13.4-arm64-v8a.apk
+          "$APKSIGNER" verify --verbose artifacts/release/Nexo-v0.13.4-armeabi-v7a.apk
 
       - name: Generate SHA256 checksums
         shell: bash
         run: |
           set -euo pipefail
-
           cd artifacts/release
-
           sha256sum \
-            Nexo-v0.13.3-arm64-v8a.apk \
-            Nexo-v0.13.3-armeabi-v7a.apk \
+            Nexo-v0.13.4-arm64-v8a.apk \
+            Nexo-v0.13.4-armeabi-v7a.apk \
             > SHA256SUMS.txt
-
           cat SHA256SUMS.txt
 
-      - name: Upload Nexo v0.13.3 APKs
+      - name: Upload Nexo v0.13.4 APKs
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-v0133-PiP-Audio-Extensions-Release
+          name: Nexo-v0134-Foreground-Audio-Stability-Release
           path: |
-            artifacts/release/Nexo-v0.13.3-arm64-v8a.apk
-            artifacts/release/Nexo-v0.13.3-armeabi-v7a.apk
+            artifacts/release/Nexo-v0.13.4-arm64-v8a.apk
+            artifacts/release/Nexo-v0.13.4-armeabi-v7a.apk
             artifacts/release/SHA256SUMS.txt
           if-no-files-found: error
           compression-level: 0
@@ -2459,7 +1153,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-v0133-build-diagnostics
+          name: Nexo-v0134-build-diagnostics
           path: |
             full-build.log
             app/build/reports/
