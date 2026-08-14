@@ -783,25 +783,25 @@ jobs:
           # =========================================================
 
           old_old_tab = '''            old?.session?.let { session ->
-                      val keepMediaAlive =
-                          BrowserPrefs.backgroundMedia(requireContext()) &&
-                          old != null &&
-                          BrowserMediaController.isPlaying(old.id)
+                          val keepMediaAlive =
+                              BrowserPrefs.backgroundMedia(requireContext()) &&
+                              old != null &&
+                              BrowserMediaController.isPlaying(old.id)
 
-                      session.setFocused(false)
-                      session.setPriorityHint(
-                          if (keepMediaAlive) {
-                              GeckoSession.PRIORITY_HIGH
-                          } else {
-                              GeckoSession.PRIORITY_DEFAULT
-                          }
-                      )
-                      session.setActive(keepMediaAlive)
-                  }
+                          session.setFocused(false)
+                          session.setPriorityHint(
+                              if (keepMediaAlive) {
+                                  GeckoSession.PRIORITY_HIGH
+                              } else {
+                                  GeckoSession.PRIORITY_DEFAULT
+                              }
+                          )
+                          session.setActive(keepMediaAlive)
+                      }
           '''
 
           new_old_tab = '''            old?.session?.let { session ->
-                      val backgroundEnabled =
+                          val backgroundEnabled =
                           BrowserPrefs.backgroundMedia(
                               requireContext()
                           )
@@ -1102,14 +1102,14 @@ jobs:
           )
 
           old_visibility = '''    visibilityHandler = event => {
-                  if (backgroundMedia) {
-                    event.stopImmediatePropagation();
-                  }
-                };
+                if (backgroundMedia) {
+                  event.stopImmediatePropagation();
+                }
+              };
           '''
 
           new_visibility = '''    visibilityHandler = event => {
-                  if (backgroundMedia) {
+              if (backgroundMedia) {
                     /*
                      * Guardar el elemento que estaba reproduciendo ANTES
                      * de que la página procese el cambio de visibilidad.
@@ -1147,16 +1147,16 @@ jobs:
           )
 
           insert_after_video_list = '''  function videoList() {
-                  return collectVideos(document, []).filter(visibleEnough);
-                }
+              return collectVideos(document, []).filter(visibleEnough);
+            }
 
           '''
 
           media_helper = '''  function videoList() {
-                  return collectVideos(document, []).filter(visibleEnough);
-                }
+              return collectVideos(document, []).filter(visibleEnough);
+            }
 
-                function playingMediaElement() {
+            function playingMediaElement() {
                   const video =
                     bestVideo(true);
 
