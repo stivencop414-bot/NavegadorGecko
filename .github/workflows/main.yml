@@ -224,7 +224,8 @@ jobs:
               TabManager.prepareForPictureInPicture()
 
               /*
-               * Pedimos al bridge que aisle el video HTML5.
+               * Pedir al bridge JS que aisle
+               * únicamente el video HTML5.
                */
               ExtensionManager.setPipMode(
                   session,
@@ -263,9 +264,12 @@ jobs:
                           Build.VERSION.SDK_INT >= 31
                       ) {
                           /*
-                           * Nexo controla manualmente el auto PiP.
-                           * Evitamos que Android active PiP cuando
-                           * se abren pantallas internas.
+                           * Nexo controla manualmente el PiP
+                           * desde onUserLeaveHint().
+                           *
+                           * Se mantiene autoEnter desactivado
+                           * para no activar PiP al entrar en
+                           * Configuración, Historial, etc.
                            */
                           builder
                               .setAutoEnterEnabled(false)
@@ -291,10 +295,11 @@ jobs:
 
               /*
                * Botón manual:
-               * damos 120 ms al bridge para preparar el video.
+               * 120 ms para permitir que JS prepare
+               * el aislamiento.
                *
-               * Home:
-               * delay 0 para entrar antes de onStop().
+               * Home / cambio de app:
+               * delay 0 para evitar carrera con onStop().
                */
               if (delayMs <= 0L) {
                   enterPip.run()
@@ -374,9 +379,10 @@ jobs:
                       height.toDouble()
 
               /*
-               * Android PiP:
-               * rango seguro aproximado
-               * 0.42 -> 2.38
+               * Android PiP acepta aproximadamente
+               * ratios entre 1:2.39 y 2.39:1.
+               *
+               * Dejamos margen de seguridad.
                */
               return when {
                   ratio < 0.42 ->
@@ -467,6 +473,11 @@ jobs:
                   "No se encontró bestVideo()"
               )
 
+          if best_end_marker not in js:
+              raise RuntimeError(
+                  "No se encontró ensurePipStyle()"
+              )
+
           best_start = js.index(
               best_start_marker
           )
@@ -491,8 +502,8 @@ jobs:
                 );
 
               /*
-               * Si buscamos reproducción activa,
-               * NO devolver un video pausado.
+               * Si solicitamos un video reproduciendo,
+               * no devolver uno pausado como fallback.
                */
               if (
                 preferPlaying &&
@@ -536,6 +547,16 @@ jobs:
               "  function clearPipIsolation() {"
           )
 
+          if style_start_marker not in js:
+              raise RuntimeError(
+                  "No se encontró ensurePipStyle()"
+              )
+
+          if style_end_marker not in js:
+              raise RuntimeError(
+                  "No se encontró clearPipIsolation()"
+              )
+
           style_start = js.index(
               style_start_marker
           )
@@ -570,12 +591,13 @@ jobs:
                 }
 
                 /*
-                 * YouTube aplica transform,
-                 * contain y will-change en los
-                 * padres del reproductor.
+                 * YouTube utiliza transform,
+                 * contain y will-change en padres
+                 * del reproductor.
                  *
-                 * Los anulamos mientras PiP
-                 * está activo.
+                 * Eso puede convertir esos elementos
+                 * en containing blocks y romper
+                 * position: fixed.
                  */
                 html.nexo-pip-root .nexo-pip-ancestor {
                   position: static !important;
@@ -711,11 +733,12 @@ jobs:
             }
 
             /*
-             * YouTube funciona como SPA.
+             * YouTube funciona como SPA y puede
+             * reemplazar o mover el <video> sin
+             * recargar la página.
              *
-             * Si cambia el <video> durante PiP,
-             * volvemos a detectar y aislar el
-             * reproductor nuevo.
+             * Mientras PiP esté activo comprobamos
+             * si seguimos aislando el video correcto.
              */
             function refreshPipIsolation() {
               if (!pipActive) {
@@ -835,6 +858,7 @@ jobs:
           git diff --stat
 
           echo ""
+
           git diff --check
 
 
@@ -876,8 +900,7 @@ jobs:
 
 
           # ========================================================
-          # Normalizar Kotlin para validar sin depender de saltos
-          # de línea o indentación.
+          # NORMALIZACIÓN
           # ========================================================
 
           compact_main = "".join(
@@ -929,42 +952,39 @@ jobs:
           )
 
           assert (
-              "startMiniPlayer("
-              in main
+              "requirePlayback:Boolean=false"
+              in compact_main
           )
 
           assert (
-              "requirePlayback: Boolean = false"
-              in main
-          )
-
-          assert (
-              "delayMs: Long = 120L"
-              in main
+              "delayMs:Long=120L"
+              in compact_main
           )
 
           assert (
               "setAutoEnterEnabled(false)"
-              in main
+              in compact_main
           )
 
           assert (
               "setSeamlessResizeEnabled(true)"
-              in main
+              in compact_main
           )
 
+          # Ratio mínimo seguro
           assert (
-              "Rational(42,"
-              in main
+              "Rational(42,100)"
+              in compact_main
           )
 
+          # Ratio máximo seguro
           assert (
-              "Rational(238,"
-              in main
+              "Rational(238,100)"
+              in compact_main
           )
 
-
-          # La restricción vieja debe desaparecer.
+          # La restricción estricta de v0.13.1
+          # debe desaparecer.
           assert (
               "Reproduce el video antes de abrir Mini."
               not in main
@@ -1140,7 +1160,7 @@ jobs:
 
 
       # ============================================================
-      # VALIDAR APK GENERADOS
+      # VALIDAR APK
       # ============================================================
 
       - name: Validate generated APKs
@@ -1152,7 +1172,8 @@ jobs:
           echo " APK GENERADOS"
           echo "========================================"
 
-          find app/build/outputs/apk \
+          find \
+            app/build/outputs/apk \
             -type f \
             -name "*.apk" \
             -print
@@ -1160,7 +1181,6 @@ jobs:
           ARM64="$(
             find \
               app/build/outputs/apk/release \
-              -maxdepth 1 \
               -type f \
               -name '*arm64-v8a*.apk' \
               | head -n 1
@@ -1169,7 +1189,6 @@ jobs:
           ARM32="$(
             find \
               app/build/outputs/apk/release \
-              -maxdepth 1 \
               -type f \
               -name '*armeabi-v7a*.apk' \
               | head -n 1
@@ -1190,7 +1209,7 @@ jobs:
 
 
       # ============================================================
-      # COMMIT SOLO DESPUÉS DE COMPILAR
+      # COMMIT SOLO SI COMPILA
       # ============================================================
 
       - name: Save verified Nexo v0.13.2 source
@@ -1226,7 +1245,7 @@ jobs:
 
 
       # ============================================================
-      # FIRMAR RELEASE APK
+      # FIRMAR APK RELEASE
       # ============================================================
 
       - name: Sign Release APKs
@@ -1252,7 +1271,6 @@ jobs:
           ARM64="$(
             find \
               app/build/outputs/apk/release \
-              -maxdepth 1 \
               -type f \
               -name '*arm64-v8a*.apk' \
               | head -n 1
@@ -1261,7 +1279,6 @@ jobs:
           ARM32="$(
             find \
               app/build/outputs/apk/release \
-              -maxdepth 1 \
               -type f \
               -name '*armeabi-v7a*.apk' \
               | head -n 1
@@ -1297,7 +1314,7 @@ jobs:
 
           echo ""
           echo "========================================"
-          echo " VERIFICAR FIRMA ARM64"
+          echo " VERIFY ARM64"
           echo "========================================"
 
           "$APKSIGNER" verify \
@@ -1306,7 +1323,7 @@ jobs:
 
           echo ""
           echo "========================================"
-          echo " VERIFICAR FIRMA ARM32"
+          echo " VERIFY ARM32"
           echo "========================================"
 
           "$APKSIGNER" verify \
