@@ -3,7 +3,8 @@ name: Nexo v0.13.2 - YouTube PiP Fix
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - ".github/workflows/main.yml"
 
@@ -25,6 +26,7 @@ jobs:
       GRADLE_VERSION: "8.14.4"
 
     steps:
+
       # ============================================================
       # CHECKOUT
       # ============================================================
@@ -216,14 +218,13 @@ jobs:
               }
 
               /*
-               * Mantener GeckoSession activa mientras Android
-               * realiza la transición a Picture-in-Picture.
+               * Mantener GeckoSession activa durante
+               * la transición a Android PiP.
                */
               TabManager.prepareForPictureInPicture()
 
               /*
-               * Indicar al bridge JS que aisle únicamente
-               * el reproductor HTML5.
+               * Pedimos al bridge que aisle el video HTML5.
                */
               ExtensionManager.setPipMode(
                   session,
@@ -262,13 +263,9 @@ jobs:
                           Build.VERSION.SDK_INT >= 31
                       ) {
                           /*
-                           * La entrada automática del sistema
-                           * permanece desactivada.
-                           *
-                           * Nexo controla la entrada mediante
-                           * onUserLeaveHint(), evitando activar
-                           * PiP cuando se abre Configuración,
-                           * Historial, Descargas, etc.
+                           * Nexo controla manualmente el auto PiP.
+                           * Evitamos que Android active PiP cuando
+                           * se abren pantallas internas.
                            */
                           builder
                               .setAutoEnterEnabled(false)
@@ -293,11 +290,11 @@ jobs:
                   }
 
               /*
-               * El botón manual da un pequeño margen al bridge
-               * para preparar el CSS.
+               * Botón manual:
+               * damos 120 ms al bridge para preparar el video.
                *
-               * onUserLeaveHint usa delayMs = 0 para evitar
-               * la carrera con onStop().
+               * Home:
+               * delay 0 para entrar antes de onStop().
                */
               if (delayMs <= 0L) {
                   enterPip.run()
@@ -377,10 +374,9 @@ jobs:
                       height.toDouble()
 
               /*
-               * Android PiP admite aproximadamente
-               * ratios entre 1:2.39 y 2.39:1.
-               *
-               * Dejamos un pequeño margen de seguridad.
+               * Android PiP:
+               * rango seguro aproximado
+               * 0.42 -> 2.38
                */
               return when {
                   ratio < 0.42 ->
@@ -407,10 +403,6 @@ jobs:
               val tab =
                   TabManager.activeTab()
 
-              /*
-               * No abrir PiP cuando el usuario está entrando
-               * a una Activity interna de Nexo.
-               */
               if (
                   !suppressAutoPipOnce &&
                   !isInPictureInPictureMode &&
@@ -458,9 +450,9 @@ jobs:
               )
 
 
-          # --------------------------------------------------------
+          # ========================================================
           # bestVideo()
-          # --------------------------------------------------------
+          # ========================================================
 
           best_start_marker = (
               "  function bestVideo(preferPlaying) {"
@@ -499,12 +491,8 @@ jobs:
                 );
 
               /*
-               * Importante:
-               * antes bestVideo(true) podía terminar
-               * devolviendo un video pausado.
-               *
-               * YouTube cambia de estado constantemente
-               * al navegar como SPA.
+               * Si buscamos reproducción activa,
+               * NO devolver un video pausado.
                */
               if (
                 preferPlaying &&
@@ -536,9 +524,9 @@ jobs:
           )
 
 
-          # --------------------------------------------------------
-          # ensurePipStyle()
-          # --------------------------------------------------------
+          # ========================================================
+          # CSS PIP
+          # ========================================================
 
           style_start_marker = (
               "  function ensurePipStyle() {"
@@ -582,11 +570,12 @@ jobs:
                 }
 
                 /*
-                 * YouTube utiliza transform / contain /
-                 * will-change en varios padres del video.
+                 * YouTube aplica transform,
+                 * contain y will-change en los
+                 * padres del reproductor.
                  *
-                 * Eso convierte esos elementos en
-                 * containing blocks y rompe position:fixed.
+                 * Los anulamos mientras PiP
+                 * está activo.
                  */
                 html.nexo-pip-root .nexo-pip-ancestor {
                   position: static !important;
@@ -637,9 +626,9 @@ jobs:
           )
 
 
-          # --------------------------------------------------------
-          # setPipIsolation + refreshPipIsolation
-          # --------------------------------------------------------
+          # ========================================================
+          # AISLAMIENTO PIP + YOUTUBE SPA
+          # ========================================================
 
           isolation_start_marker = (
               "  function setPipIsolation(active) {"
@@ -648,6 +637,16 @@ jobs:
           isolation_end_marker = (
               "  function reportVideoState() {"
           )
+
+          if isolation_start_marker not in js:
+              raise RuntimeError(
+                  "No se encontró setPipIsolation()"
+              )
+
+          if isolation_end_marker not in js:
+              raise RuntimeError(
+                  "No se encontró reportVideoState()"
+              )
 
           isolation_start = js.index(
               isolation_start_marker
@@ -712,14 +711,11 @@ jobs:
             }
 
             /*
-             * YouTube es SPA.
+             * YouTube funciona como SPA.
              *
-             * Puede eliminar el <video> actual y crear
-             * uno nuevo sin recargar la página.
-             *
-             * Si eso ocurre durante PiP, volvemos a
-             * encontrar el reproductor y aplicamos
-             * nuevamente el aislamiento.
+             * Si cambia el <video> durante PiP,
+             * volvemos a detectar y aislar el
+             * reproductor nuevo.
              */
             function refreshPipIsolation() {
               if (!pipActive) {
@@ -761,9 +757,9 @@ jobs:
           )
 
 
-          # --------------------------------------------------------
+          # ========================================================
           # reportVideoState()
-          # --------------------------------------------------------
+          # ========================================================
 
           old_report = '''  function reportVideoState() {
               if (!port) return;
@@ -788,20 +784,22 @@ jobs:
 
 
           # ========================================================
-          # 3. VERSION 0.13.2
+          # 3. VERSION
           # ========================================================
 
-          gradle = gradle.replace(
-              'versionCode = 18',
-              'versionCode = 19',
-              1
-          )
+          if 'versionCode = 18' in gradle:
+              gradle = gradle.replace(
+                  'versionCode = 18',
+                  'versionCode = 19',
+                  1
+              )
 
-          gradle = gradle.replace(
-              'versionName = "0.13.1"',
-              'versionName = "0.13.2"',
-              1
-          )
+          if 'versionName = "0.13.1"' in gradle:
+              gradle = gradle.replace(
+                  'versionName = "0.13.1"',
+                  'versionName = "0.13.2"',
+                  1
+              )
 
 
           # ========================================================
@@ -831,15 +829,17 @@ jobs:
 
           echo ""
           echo "========================================"
-          echo " CAMBIOS"
+          echo " CAMBIOS GENERADOS"
           echo "========================================"
-          git diff --stat
-          echo ""
 
+          git diff --stat
+
+          echo ""
           git diff --check
 
+
       # ============================================================
-      # VALIDACIONES ESTÁTICAS
+      # VALIDACIONES
       # ============================================================
 
       - name: Validate PiP source changes
@@ -852,40 +852,84 @@ jobs:
 
           main = Path(
               "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
-          ).read_text(encoding="utf-8")
+          ).read_text(
+              encoding="utf-8"
+          )
 
           js = Path(
               "app/src/main/assets/extensions/nexo_bridge/content_script.js"
-          ).read_text(encoding="utf-8")
+          ).read_text(
+              encoding="utf-8"
+          )
 
           gradle = Path(
               "app/build.gradle.kts"
-          ).read_text(encoding="utf-8")
+          ).read_text(
+              encoding="utf-8"
+          )
 
           manifest = Path(
               "app/src/main/AndroidManifest.xml"
-          ).read_text(encoding="utf-8")
+          ).read_text(
+              encoding="utf-8"
+          )
 
 
-          # MainActivity
-          assert "isYoutubeVideoPage" in main
-          assert "isMiniPlaybackActive" in main
-          assert "hasMiniVideo" in main
+          # ========================================================
+          # Normalizar Kotlin para validar sin depender de saltos
+          # de línea o indentación.
+          # ========================================================
+
+          compact_main = "".join(
+              main.split()
+          )
+
+          compact_js = "".join(
+              js.split()
+          )
+
+
+          # ========================================================
+          # MAINACTIVITY
+          # ========================================================
 
           assert (
-              "BrowserMediaController"
-              ".isVideoPlaying(tab.id)"
-              in main
+              "privatefunisYoutubeVideoPage("
+              in compact_main
           )
 
           assert (
-              "BrowserMediaController"
-              ".isPlaying(tab.id)"
-              in main
+              "privatefunisMiniPlaybackActive("
+              in compact_main
           )
 
           assert (
-              "override fun onUserLeaveHint()"
+              "privatefunhasMiniVideo("
+              in compact_main
+          )
+
+          assert (
+              "BrowserMediaController.isVideoPlaying(tab.id)"
+              in compact_main
+          )
+
+          assert (
+              "BrowserMediaController.isPlaying(tab.id)"
+              in compact_main
+          )
+
+          assert (
+              "BrowserMediaController.isVideoPresent(tab.id)"
+              in compact_main
+          )
+
+          assert (
+              "overridefunonUserLeaveHint()"
+              in compact_main
+          )
+
+          assert (
+              "startMiniPlayer("
               in main
           )
 
@@ -904,64 +948,93 @@ jobs:
               in main
           )
 
-          # La validación estricta vieja debe desaparecer.
+          assert (
+              "setSeamlessResizeEnabled(true)"
+              in main
+          )
+
+          assert (
+              "Rational(42,"
+              in main
+          )
+
+          assert (
+              "Rational(238,"
+              in main
+          )
+
+
+          # La restricción vieja debe desaparecer.
           assert (
               "Reproduce el video antes de abrir Mini."
               not in main
           )
 
 
-          # JavaScript / YouTube SPA
+          # ========================================================
+          # JAVASCRIPT
+          # ========================================================
+
           assert (
-              "let pipActive = false;"
-              in js
+              "letpipActive=false;"
+              in compact_js
           )
 
           assert (
-              "transform: none !important;"
-              in js
+              "transform:none!important;"
+              in compact_js
           )
 
           assert (
-              "contain: none !important;"
-              in js
+              "contain:none!important;"
+              in compact_js
           )
 
           assert (
-              "will-change: auto !important;"
-              in js
+              "will-change:auto!important;"
+              in compact_js
           )
 
           assert (
-              "refreshPipIsolation()"
-              in js
+              "functionrefreshPipIsolation()"
+              in compact_js
           )
 
           assert (
-              "pipVideo === video"
-              in js
+              "pipVideo===video"
+              in compact_js
           )
 
           assert (
-              "if (preferPlaying &&"
-              in js
-              or
-              (
-                  "preferPlaying &&\n"
-                  "                !playing.length"
-                  in js
-              )
+              "preferPlaying&&!playing.length"
+              in compact_js
+          )
+
+          assert (
+              "refreshPipIsolation();"
+              in compact_js
+          )
+
+          assert (
+              "object-fit:contain!important;"
+              in compact_js
           )
 
 
-          # Manifest PiP
+          # ========================================================
+          # MANIFEST
+          # ========================================================
+
           assert (
               'android:supportsPictureInPicture="true"'
               in manifest
           )
 
 
-          # Versión
+          # ========================================================
+          # VERSION
+          # ========================================================
+
           assert (
               'versionCode = 19'
               in gradle
@@ -973,17 +1046,21 @@ jobs:
           )
 
 
-          # GeckoView que ya usa el proyecto
+          # ========================================================
+          # GECKOVIEW
+          # ========================================================
+
           assert (
               "geckoview-omni:153.0.20260715202819"
               in gradle
           )
 
           print(
-              "✅ Validaciones v0.13.2 correctas"
+              "✅ Validaciones Nexo v0.13.2 correctas"
           )
 
           PY
+
 
       # ============================================================
       # JAVA
@@ -994,6 +1071,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+
 
       # ============================================================
       # ANDROID SDK
@@ -1014,6 +1092,7 @@ jobs:
             "platforms;android-${COMPILE_SDK}" \
             "build-tools;${BUILD_TOOLS}" \
             "platform-tools"
+
 
       # ============================================================
       # GRADLE
@@ -1038,8 +1117,11 @@ jobs:
             "$PWD/gradle-${GRADLE_VERSION}/bin" \
             >> "$GITHUB_PATH"
 
+          gradle --version
+
+
       # ============================================================
-      # COMPILACIÓN Y LINT
+      # COMPILAR
       # ============================================================
 
       - name: Build Debug Release and Lint
@@ -1056,8 +1138,59 @@ jobs:
             --no-daemon \
             2>&1 | tee full-build.log
 
+
       # ============================================================
-      # COMMIT SOLO SI TODO COMPILA
+      # VALIDAR APK GENERADOS
+      # ============================================================
+
+      - name: Validate generated APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "========================================"
+          echo " APK GENERADOS"
+          echo "========================================"
+
+          find app/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            -print
+
+          ARM64="$(
+            find \
+              app/build/outputs/apk/release \
+              -maxdepth 1 \
+              -type f \
+              -name '*arm64-v8a*.apk' \
+              | head -n 1
+          )"
+
+          ARM32="$(
+            find \
+              app/build/outputs/apk/release \
+              -maxdepth 1 \
+              -type f \
+              -name '*armeabi-v7a*.apk' \
+              | head -n 1
+          )"
+
+          if [ -z "$ARM64" ]; then
+            echo "❌ No se generó APK arm64-v8a"
+            exit 1
+          fi
+
+          if [ -z "$ARM32" ]; then
+            echo "❌ No se generó APK armeabi-v7a"
+            exit 1
+          fi
+
+          echo "✅ APK arm64-v8a detectado"
+          echo "✅ APK armeabi-v7a detectado"
+
+
+      # ============================================================
+      # COMMIT SOLO DESPUÉS DE COMPILAR
       # ============================================================
 
       - name: Save verified Nexo v0.13.2 source
@@ -1079,7 +1212,7 @@ jobs:
             app/src/main/assets/extensions/nexo_bridge/content_script.js
 
           if git diff --cached --quiet; then
-            echo "No hay cambios nuevos para guardar."
+            echo "ℹ️ No hay cambios nuevos para guardar."
           else
             git commit \
               -m "Nexo v0.13.2 YouTube PiP fix [skip ci]"
@@ -1087,10 +1220,13 @@ jobs:
             git push \
               origin \
               HEAD:main
+
+            echo "✅ Código v0.13.2 guardado en main"
           fi
 
+
       # ============================================================
-      # FIRMAR APK RELEASE
+      # FIRMAR RELEASE APK
       # ============================================================
 
       - name: Sign Release APKs
@@ -1159,29 +1295,68 @@ jobs:
             artifacts/release/Nexo-v0.13.2-armeabi-v7a.apk \
             "$ARM32"
 
+          echo ""
+          echo "========================================"
+          echo " VERIFICAR FIRMA ARM64"
+          echo "========================================"
+
           "$APKSIGNER" verify \
             --verbose \
             artifacts/release/Nexo-v0.13.2-arm64-v8a.apk
+
+          echo ""
+          echo "========================================"
+          echo " VERIFICAR FIRMA ARM32"
+          echo "========================================"
 
           "$APKSIGNER" verify \
             --verbose \
             artifacts/release/Nexo-v0.13.2-armeabi-v7a.apk
 
+
       # ============================================================
-      # ARTIFACTOS
+      # CHECKSUMS
+      # ============================================================
+
+      - name: Generate SHA256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd artifacts/release
+
+          sha256sum \
+            Nexo-v0.13.2-arm64-v8a.apk \
+            Nexo-v0.13.2-armeabi-v7a.apk \
+            > SHA256SUMS.txt
+
+          echo ""
+          echo "========================================"
+          echo " SHA256"
+          echo "========================================"
+
+          cat SHA256SUMS.txt
+
+
+      # ============================================================
+      # SUBIR APK
       # ============================================================
 
       - name: Upload Nexo v0.13.2 APKs
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-v0132-YouTube-PiP-Release-APKs
-          path: artifacts/release/*.apk
+          name: Nexo-v0132-YouTube-PiP-Release
+          path: |
+            artifacts/release/Nexo-v0.13.2-arm64-v8a.apk
+            artifacts/release/Nexo-v0.13.2-armeabi-v7a.apk
+            artifacts/release/SHA256SUMS.txt
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
 
+
       # ============================================================
-      # DIAGNÓSTICOS SI ALGO FALLA
+      # DIAGNÓSTICOS
       # ============================================================
 
       - name: Upload diagnostics
