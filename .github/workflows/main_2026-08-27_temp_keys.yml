@@ -1,0 +1,489 @@
+name: Nexo Secure CI, Update and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Acción a ejecutar"
+        required: true
+        type: choice
+        default: apply_update
+        options:
+          - apply_update
+          - build
+          - release
+      update_zip:
+        description: "ZIP de actualización en la raíz (solo apply_update)"
+        required: false
+        default: "NavegadorGecko_security_update_2026-08-27.zip"
+      tag:
+        description: "Tag opcional (solo release; vacío = v<versionName>)"
+        required: false
+        default: ""
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - ".github/workflows/main.yml"
+
+# Mínimo privilegio por defecto. Solo los jobs que realmente escriben
+# elevan contents a write de forma local.
+permissions:
+  contents: read
+
+concurrency:
+  group: nexo-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ANDROID_PLATFORM: "36"
+  BUILD_TOOLS: "36.0.0"
+  GRADLE_VERSION: "8.14.4"
+
+jobs:
+  ci:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'build' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout committed source
+        uses: actions/checkout@v5
+
+      - name: Security source policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+
+          if grep -R --line-number --fixed-strings 'useMultiprocess(false)' app/src/main/java; then
+            echo "::error::No se permite desactivar el multiproceso de Gecko"
+            exit 1
+          fi
+
+          if grep -R --line-number 'loadUri("javascript:' app/src/main/java; then
+            echo "::error::No se permite loadUri(javascript:...)"
+            exit 1
+          fi
+
+      - name: Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platforms;android-${ANDROID_PLATFORM}" \
+            "build-tools;${BUILD_TOOLS}" \
+            "platform-tools"
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Build and lint committed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle \
+            :app:assembleDebug \
+            :app:assembleRelease \
+            :app:lintDebug \
+            :app:lintRelease \
+            --stacktrace \
+            --no-daemon
+
+      - name: Confirm build did not mutate tracked source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+
+      - name: Upload CI outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-CI-${{ github.sha }}
+          path: |
+            app/build/outputs/apk/**/*.apk
+            app/build/reports/lint-results-*.html
+            app/build/reports/lint-results-*.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  apply-update:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'apply_update' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      UPDATE_ZIP: ${{ inputs.update_zip }}
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Require main branch and update ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main" || {
+            echo "::error::El update solo puede aplicarse desde main"
+            exit 1
+          }
+          test -f "$UPDATE_ZIP" || {
+            echo "::error::No existe $UPDATE_ZIP en la raíz del repositorio"
+            exit 1
+          }
+
+      - name: Validate and extract update ZIP
+        id: extract
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEST="$RUNNER_TEMP/nexo-security-update"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+
+          python3 - "$UPDATE_ZIP" "$DEST" <<'PY'
+          import pathlib
+          import stat
+          import sys
+          import zipfile
+
+          source = pathlib.Path(sys.argv[1])
+          dest = pathlib.Path(sys.argv[2])
+          max_files = 120
+          max_total = 8 * 1024 * 1024
+          total = 0
+
+          with zipfile.ZipFile(source) as zf:
+              infos = zf.infolist()
+              if len(infos) > max_files:
+                  raise SystemExit(f"ZIP rechazado: {len(infos)} entradas")
+
+              for info in infos:
+                  name = info.filename.replace("\\", "/")
+                  path = pathlib.PurePosixPath(name)
+                  mode = (info.external_attr >> 16) & 0xFFFF
+
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit(f"Ruta insegura: {name}")
+                  if stat.S_ISLNK(mode):
+                      raise SystemExit(f"Symlink no permitido: {name}")
+
+                  total += max(0, info.file_size)
+                  if total > max_total:
+                      raise SystemExit("ZIP supera 8 MiB sin comprimir")
+
+              zf.extractall(dest)
+
+          candidates = list(dest.rglob("apply_update.py"))
+          if len(candidates) != 1:
+              raise SystemExit(
+                  f"Se esperaba exactamente un apply_update.py; encontrados={len(candidates)}"
+              )
+
+          pathlib.Path(dest / "package_root.txt").write_text(
+              str(candidates[0].parent), encoding="utf-8"
+          )
+          PY
+
+          PACKAGE_ROOT="$(cat "$DEST/package_root.txt")"
+          echo "package_root=$PACKAGE_ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Apply audited source update
+        shell: bash
+        env:
+          PACKAGE_ROOT: ${{ steps.extract.outputs.package_root }}
+        run: |
+          set -euo pipefail
+          python3 "$PACKAGE_ROOT/apply_update.py" --repo "$GITHUB_WORKSPACE"
+          git diff --check
+
+      - name: Security policy checks after update
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "$(head -n1 .github/workflows/main.yml)" = \
+            "name: Nexo Secure CI, Update and Release" || {
+              echo "::error::El workflow seguro no está instalado"
+              exit 1
+            }
+
+          if grep -R --line-number 'loadUri("javascript:' app/src/main/java; then
+            echo "::error::Se detectó loadUri(javascript:...)"
+            exit 1
+          fi
+
+      - name: Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platforms;android-${ANDROID_PLATFORM}" \
+            "build-tools;${BUILD_TOOLS}" \
+            "platform-tools"
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Compile and lint updated source
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle \
+            :app:assembleDebug \
+            :app:assembleRelease \
+            :app:lintDebug \
+            :app:lintRelease \
+            --stacktrace \
+            --no-daemon
+
+      - name: Remove one-time ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files --error-unmatch "$UPDATE_ZIP" >/dev/null 2>&1; then
+            git rm -f "$UPDATE_ZIP"
+          else
+            rm -f "$UPDATE_ZIP"
+          fi
+
+      - name: Commit verified source update
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # El workflow ya fue reemplazado manualmente antes de esta ejecución;
+          # este commit solo contiene source/config y la retirada del ZIP temporal.
+          git add -A
+          git diff --cached --check
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios para guardar."
+            exit 0
+          fi
+
+          git commit -m "security: harden Nexo v0.13.6"
+          git push origin HEAD:main
+
+      - name: Update summary
+        shell: bash
+        run: |
+          {
+            echo "## Nexo v0.13.6 aplicado"
+            echo ""
+            echo "- Source actualizado y compilado antes del commit."
+            echo "- El ZIP temporal fue retirado del repositorio."
+            echo "- Para publicar, ejecuta este mismo workflow con mode=release."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout committed source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Require main branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main" || {
+            echo "::error::Las releases solo se publican desde main"
+            exit 1
+          }
+          test -z "$(git status --porcelain)"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION_NAME="$(sed -nE 's/.*versionName = "([^"]+)".*/\1/p' app/build.gradle.kts | head -n1)"
+          VERSION_CODE="$(sed -nE 's/.*versionCode = ([0-9]+).*/\1/p' app/build.gradle.kts | head -n1)"
+          test -n "$VERSION_NAME"
+          test -n "$VERSION_CODE"
+
+          TAG="${INPUT_TAG:-}"
+          if [ -z "$TAG" ]; then TAG="v${VERSION_NAME}"; fi
+
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Generate temporary signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYSTORE_PASSWORD="$(openssl rand -hex 24)"
+          KEY_PASSWORD="$KEYSTORE_PASSWORD"
+          KEY_ALIAS="nexo-temp"
+          KEYSTORE_PATH="$RUNNER_TEMP/nexo-release.jks"
+
+          keytool -genkeypair \
+            -v \
+            -keystore "$KEYSTORE_PATH" \
+            -storetype JKS \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            -keyalg RSA \
+            -keysize 4096 \
+            -validity 3650 \
+            -dname "CN=Nexo Temporary Release, OU=CI, O=Nexo, L=Bogota, C=CO"
+
+          echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platforms;android-${ANDROID_PLATFORM}" \
+            "build-tools;${BUILD_TOOLS}" \
+            "platform-tools"
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Build release from committed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:assembleRelease :app:lintRelease --stacktrace --no-daemon
+          git diff --exit-code
+
+      - name: Verify temporary keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -list \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" >/dev/null
+
+      - name: Sign ABI APKs
+        shell: bash
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+        run: |
+          set -euo pipefail
+          APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
+          mkdir -p artifacts/release
+
+          ARM64="$(find app/build/outputs/apk/release -type f -name '*arm64-v8a*.apk' | head -n1)"
+          ARM32="$(find app/build/outputs/apk/release -type f -name '*armeabi-v7a*.apk' | head -n1)"
+          test -n "$ARM64" || { echo "::error::No se generó arm64-v8a"; exit 1; }
+          test -n "$ARM32" || { echo "::error::No se generó armeabi-v7a"; exit 1; }
+
+          sign_one() {
+            local input="$1"
+            local output="$2"
+            "$APKSIGNER" sign \
+              --ks "$KEYSTORE_PATH" \
+              --ks-key-alias "$KEY_ALIAS" \
+              --ks-pass "pass:$KEYSTORE_PASSWORD" \
+              --key-pass "pass:$KEY_PASSWORD" \
+              --out "$output" \
+              "$input"
+            "$APKSIGNER" verify --verbose --print-certs "$output"
+          }
+
+          sign_one "$ARM64" "artifacts/release/Nexo-v${VERSION_NAME}-arm64-v8a.apk"
+          sign_one "$ARM32" "artifacts/release/Nexo-v${VERSION_NAME}-armeabi-v7a.apk"
+
+          cd artifacts/release
+          sha256sum *.apk > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload signed APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-v${{ steps.version.outputs.version_name }}-signed
+          path: artifacts/release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Nexo Browser v${{ steps.version.outputs.version_name }}
+          target_commitish: ${{ github.sha }}
+          draft: false
+          prerelease: false
+          make_latest: true
+          fail_on_unmatched_files: true
+          body: |
+            Nexo Browser v${{ steps.version.outputs.version_name }}
+
+            - Build generado exclusivamente desde source ya versionado.
+            - APKs firmados con una clave temporal generada exclusivamente para este release.
+            - Esta firma NO permite actualizar encima de otra release con una clave diferente; desinstala la versión anterior antes de instalar.
+            - SHA-256 incluido en SHA256SUMS.txt.
+          files: |
+            artifacts/release/Nexo-v${{ steps.version.outputs.version_name }}-arm64-v8a.apk
+            artifacts/release/Nexo-v${{ steps.version.outputs.version_name }}-armeabi-v7a.apk
+            artifacts/release/SHA256SUMS.txt
+
+      - name: Remove keystore from runner
+        if: always()
+        shell: bash
+        run: rm -f "${KEYSTORE_PATH:-$RUNNER_TEMP/nexo-release.jks}"
