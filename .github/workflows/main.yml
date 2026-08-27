@@ -1,1018 +1,75 @@
-name: Nexo v0.13.5 - Stable PiP and Local Extensions
+name: Nexo Secure CI, Update and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Acción a ejecutar"
+        required: true
+        type: choice
+        default: apply_update
+        options:
+          - apply_update
+          - build
+          - release
+      update_zip:
+        description: "ZIP de actualización en la raíz (solo apply_update)"
+        required: false
+        default: "NavegadorGecko_security_update_2026-08-26.zip"
+      tag:
+        description: "Tag opcional (solo release; vacío = v<versionName>)"
+        required: false
+        default: ""
+  pull_request:
+    branches: [main]
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
+      - "app/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
       - ".github/workflows/main.yml"
 
+# Mínimo privilegio por defecto. Solo los jobs que realmente escriben
+# elevan contents a write de forma local.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: nexo-v0135-stable-pip-local-extensions
-  cancel-in-progress: true
+  group: nexo-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ANDROID_PLATFORM: "36"
+  BUILD_TOOLS: "36.0.0"
+  GRADLE_VERSION: "8.14.4"
 
 jobs:
-  build:
+  ci:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'build' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-
-    env:
-      COMPILE_SDK: "36"
-      BUILD_TOOLS: "36.0.0"
-      GRADLE_VERSION: "8.14.4"
+    timeout-minutes: 60
 
     steps:
-      - name: Checkout Nexo
+      - name: Checkout committed source
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
-      - name: Apply Nexo v0.13.5 fixes
+      - name: Security source policy
         shell: bash
         run: |
           set -euo pipefail
-
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          ROOT = Path(".")
-          MAIN = ROOT / "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
-          TABS = ROOT / "app/src/main/java/com/ejemplo/navegador/TabManager.kt"
-          EXT = ROOT / "app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt"
-          EXT_ACTIVITY = ROOT / "app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt"
-          EXT_LAYOUT = ROOT / "app/src/main/res/layout/activity_extensions.xml"
-          BRIDGE_JS = ROOT / "app/src/main/assets/extensions/nexo_bridge/content_script.js"
-          GRADLE = ROOT / "app/build.gradle.kts"
-
-          main = MAIN.read_text(encoding="utf-8")
-          tabs = TABS.read_text(encoding="utf-8")
-          ext = EXT.read_text(encoding="utf-8")
-          ext_activity = EXT_ACTIVITY.read_text(encoding="utf-8")
-          ext_layout = EXT_LAYOUT.read_text(encoding="utf-8")
-          gradle = GRADLE.read_text(encoding="utf-8")
-
-          def must_replace(text, old, new, label, count=1):
-              if text.count(old) >= count:
-                  return text.replace(old, new, count)
-
-              tokens = re.split(r"\s+", old.strip())
-              pattern = r"\s+".join(
-                  re.escape(token)
-                  for token in tokens
-                  if token
-              )
-
-              updated, replaced = re.subn(
-                  pattern,
-                  lambda _: new.strip("\n") + "\n",
-                  text,
-                  count=count,
-                  flags=re.MULTILINE,
-              )
-
-              if replaced != count:
-                  raise RuntimeError(
-                      f"No se encontró bloque para: {label} "
-                      f"(esperado={count}, encontrado={replaced})"
-                  )
-
-              return updated
-
-          # ============================================================
-          # PiP: separar completamente PiP de la recuperación de audio.
-          # No llamar MediaSession.play() repetidamente durante PiP.
-          # ============================================================
-          main = must_replace(
-              main,
-              '''    if (pipPlaybackWasActive) {
-                  BrowserMediaController.holdPlayback(
-                      tab.id,
-                      10_000L
-                  )
-
-                  MediaPlaybackService.sync(this)
-              }
-
-          ''',
-              '''''',
-              "quitar hold/service del inicio PiP"
-          )
-
-          main = must_replace(
-              main,
-              '''            } else if (
-                  pipPlaybackWasActive
-              ) {
-                  /*
-                   * Algunos sitios (especialmente YouTube) envían
-                   * una pausa transitoria al cambiar de ventana.
-                   * Reanudamos únicamente porque sabemos que
-                   * estaba reproduciéndose antes de entrar a PiP.
-                   */
-                  geckoView.postDelayed(
-                      {
-                          BrowserMediaController
-                              .resumeIfRecent(
-                                  tab.id,
-                                  8_000L
-                              )
-                      },
-                      180L
-                  )
-
-                  geckoView.postDelayed(
-                      {
-                          BrowserMediaController
-                              .resumeIfRecent(
-                                  tab.id,
-                                  8_000L
-                              )
-                      },
-                      650L
-                  )
-              }
-          ''',
-              '''            }
-          ''',
-              "quitar reintentos play después de entrar a PiP"
-          )
-
-          main = must_replace(
-              main,
-              '''override fun onUserLeaveHint() {
-              val tab =
-                  TabManager.activeTab()
-
-              /*
-               * También cubre modo solo audio / segundo plano.
-               * Se captura antes de que el sitio reciba eventos de
-               * lifecycle y pueda marcarse temporalmente como pausado.
-               */
-              backgroundPlaybackWasActive =
-                  tab != null &&
-                  BrowserPrefs.backgroundMedia(this) &&
-                  BrowserMediaController
-                      .isPlaybackActive(tab.id)
-
-              if (
-                  backgroundPlaybackWasActive &&
-                  tab != null
-              ) {
-                  BrowserMediaController.holdPlayback(
-                      tab.id,
-                      10_000L
-                  )
-
-                  /*
-                   * Arrancar/refrescar el foreground service mientras
-                   * la Activity aún está visible. Así evitamos las
-                   * restricciones de inicio desde background y la pausa
-                   * transitoria de YouTube no lo apaga.
-                   */
-                  MediaPlaybackService.sync(this)
-              }
-
-              if (
-                  !suppressAutoPipOnce &&
-                  !isInPictureInPictureMode &&
-                  BrowserPrefs.smartPip(this) &&
-                  tab != null &&
-                  hasMiniVideo(tab) &&
-                  isMiniPlaybackActive(tab)
-              ) {
-                  startMiniPlayer(
-                      silent = true,
-                      requirePlayback = true,
-                      delayMs = 0L
-                  )
-              }
-
-              super.onUserLeaveHint()
-          }
-          ''',
-              '''override fun onUserLeaveHint() {
-              val tab =
-                  TabManager.activeTab()
-
-              /*
-               * Decidir ANTES de tocar el estado multimedia si vamos
-               * realmente a Android PiP. PiP permanece visible y no
-               * necesita foreground service ni reintentos de play().
-               */
-              val willEnterPip =
-                  !suppressAutoPipOnce &&
-                  !isInPictureInPictureMode &&
-                  BrowserPrefs.smartPip(this) &&
-                  tab != null &&
-                  hasMiniVideo(tab) &&
-                  isMiniPlaybackActive(tab)
-
-              /*
-               * El hold queda reservado exclusivamente para segundo
-               * plano real (audio/video sin PiP).
-               */
-              backgroundPlaybackWasActive =
-                  !willEnterPip &&
-                  tab != null &&
-                  BrowserPrefs.backgroundMedia(this) &&
-                  BrowserMediaController
-                      .isPlaybackActive(tab.id)
-
-              if (
-                  backgroundPlaybackWasActive &&
-                  tab != null
-              ) {
-                  BrowserMediaController.holdPlayback(
-                      tab.id,
-                      10_000L
-                  )
-
-                  MediaPlaybackService.sync(this)
-              }
-
-              if (willEnterPip) {
-                  startMiniPlayer(
-                      silent = true,
-                      requirePlayback = true,
-                      delayMs = 0L
-                  )
-              }
-
-              super.onUserLeaveHint()
-          }
-          ''',
-              "separar PiP de background audio"
-          )
-
-          main = must_replace(
-              main,
-              '''        if (isInPictureInPictureMode) {
-                  TabManager.prepareForPictureInPicture()
-
-                  val tab =
-                      TabManager.activeTab()
-
-                  if (
-                      pipPlaybackWasActive &&
-                      tab != null
-                  ) {
-                      geckoView.postDelayed(
-                          {
-                              BrowserMediaController
-                                  .resumeIfRecent(
-                                      tab.id,
-                                      8_000L
-                                  )
-                          },
-                          140L
-                      )
-                  }
-              } else {
-          ''',
-              '''        if (isInPictureInPictureMode) {
-                  /*
-                   * GeckoView mantiene la sesión/compositor activos.
-                   * No forzar MediaSession.play(): en YouTube puede
-                   * reiniciar el decoder y producir frames negros.
-                   */
-                  TabManager.prepareForPictureInPicture()
-              } else {
-          ''',
-              "quitar reintento play del callback PiP"
-          )
-
-          # ============================================================
-          # TabManager: PiP solo mantiene GeckoSession activa.
-          # El foreground service sigue reservado para background real.
-          # ============================================================
-          tabs = must_replace(
-              tabs,
-              '''        BrowserMediaController
-                  .resumeIfRecent(
-                      tab.id,
-                      8_000L
-                  )
-
-              MediaPlaybackService.sync(
-                  requireContext()
-              )
-          ''',
-              '''''',
-              "quitar play/service de prepareForPictureInPicture"
-          )
-
-          # ============================================================
-          # Bridge JS: aislamiento visual mínimo y estable.
-          # - Sin video.play() automático.
-          # - Sin position:static en todos los ancestros.
-          # - Sin reescribir document.hidden/visibilityState.
-          # ============================================================
-          BRIDGE_JS.write_text(r'''(() => {
-            "use strict";
-
-            let port = null;
-            let backgroundMedia = true;
-            let visibilityHandler = null;
-            let pipVideo = null;
-            let pipAncestors = [];
-            let pipActive = false;
-            let reportTimer = 0;
-
-            function installVisibilityGuard() {
-              if (visibilityHandler) return;
-
-              visibilityHandler = event => {
-                /*
-                 * PiP continúa visible para el usuario. Segundo plano
-                 * solo se protege si la opción correspondiente está activa.
-                 *
-                 * No llamamos play() aquí: dejamos al decoder/MediaSession
-                 * de Gecko mantener su estado sin carreras.
-                 */
-                if (pipActive || backgroundMedia) {
-                  event.stopImmediatePropagation();
-                }
-              };
-
-              window.addEventListener(
-                "visibilitychange",
-                visibilityHandler,
-                true
-              );
-
-              document.addEventListener(
-                "visibilitychange",
-                visibilityHandler,
-                true
-              );
-            }
-
-            function applyState(state) {
-              if (!state) return;
-              backgroundMedia = state.backgroundMedia !== false;
-              installVisibilityGuard();
-            }
-
-            installVisibilityGuard();
-
-            function collectVideos(root, output) {
-              if (!root) return output;
-
-              try {
-                if (root.querySelectorAll) {
-                  for (const video of root.querySelectorAll("video")) {
-                    if (!output.includes(video)) output.push(video);
-                  }
-
-                  for (const element of root.querySelectorAll("*")) {
-                    if (element.shadowRoot) {
-                      collectVideos(element.shadowRoot, output);
-                    }
-                  }
-                }
-              } catch (_) {}
-
-              return output;
-            }
-
-            function visibleEnough(video) {
-              try {
-                const rect = video.getBoundingClientRect();
-                const style = getComputedStyle(video);
-
-                return (
-                  rect.width >= 80 &&
-                  rect.height >= 45 &&
-                  style.display !== "none" &&
-                  style.visibility !== "hidden"
-                );
-              } catch (_) {
-                return true;
-              }
-            }
-
-            function videoArea(video) {
-              return (
-                Number(video.videoWidth || video.clientWidth || 0) *
-                Number(video.videoHeight || video.clientHeight || 0)
-              );
-            }
-
-            function videoList() {
-              return collectVideos(document, []).filter(visibleEnough);
-            }
-
-            function bestVideo(preferPlaying) {
-              const videos = videoList();
-              if (!videos.length) return null;
-
-              const playing = videos.filter(
-                video =>
-                  !video.paused &&
-                  !video.ended
-              );
-
-              if (preferPlaying && !playing.length) {
-                return null;
-              }
-
-              const candidates =
-                preferPlaying
-                  ? playing
-                  : videos;
-
-              return (
-                candidates
-                  .slice()
-                  .sort(
-                    (a, b) =>
-                      videoArea(b) -
-                      videoArea(a)
-                  )[0] || null
-              );
-            }
-
-            function ensurePipStyle() {
-              if (document.getElementById("nexo-pip-style")) {
-                return;
-              }
-
-              const style = document.createElement("style");
-              style.id = "nexo-pip-style";
-
-              style.textContent = `
-                html.nexo-pip-root,
-                html.nexo-pip-root body {
-                  background: #000 !important;
-                  overflow: hidden !important;
-                }
-
-                /*
-                 * Solo neutralizamos propiedades que pueden crear
-                 * containing blocks. No cambiamos position/z-index
-                 * de la jerarquía de YouTube porque eso puede romper
-                 * su compositor de video.
-                 */
-                html.nexo-pip-root .nexo-pip-ancestor {
-                  transform: none !important;
-                  contain: none !important;
-                  will-change: auto !important;
-                  filter: none !important;
-                  perspective: none !important;
-                  backdrop-filter: none !important;
-                  overflow: visible !important;
-                }
-
-                html.nexo-pip-root video.nexo-pip-video {
-                  position: fixed !important;
-                  inset: 0 !important;
-                  width: 100vw !important;
-                  height: 100vh !important;
-                  max-width: 100vw !important;
-                  max-height: 100vh !important;
-                  object-fit: contain !important;
-                  object-position: center center !important;
-                  z-index: 2147483647 !important;
-                  background: #000 !important;
-                  margin: 0 !important;
-                  padding: 0 !important;
-                  transform: none !important;
-                  opacity: 1 !important;
-                  visibility: visible !important;
-                }
-              `;
-
-              (
-                document.head ||
-                document.documentElement
-              ).appendChild(style);
-            }
-
-            function clearPipIsolation() {
-              document.documentElement.classList
-                .remove("nexo-pip-root");
-
-              if (pipVideo) {
-                pipVideo.classList.remove("nexo-pip-video");
-              }
-
-              for (const ancestor of pipAncestors) {
-                ancestor.classList.remove("nexo-pip-ancestor");
-              }
-
-              pipVideo = null;
-              pipAncestors = [];
-            }
-
-            function setPipIsolation(active) {
-              pipActive = active === true;
-
-              if (!pipActive) {
-                clearPipIsolation();
-                return;
-              }
-
-              const video =
-                bestVideo(true) ||
-                bestVideo(false);
-
-              if (!video) return;
-
-              clearPipIsolation();
-              ensurePipStyle();
-
-              pipVideo = video;
-
-              let current = video.parentElement;
-
-              while (
-                current &&
-                current !== document.body &&
-                current !== document.documentElement
-              ) {
-                current.classList.add("nexo-pip-ancestor");
-                pipAncestors.push(current);
-                current = current.parentElement;
-              }
-
-              document.documentElement.classList
-                .add("nexo-pip-root");
-
-              video.classList.add("nexo-pip-video");
-            }
-
-            function refreshPipIsolation() {
-              if (!pipActive) return;
-
-              const video =
-                bestVideo(true) ||
-                bestVideo(false);
-
-              if (!video) return;
-
-              const currentStillValid =
-                pipVideo === video &&
-                video.isConnected &&
-                pipAncestors.every(
-                  ancestor =>
-                    ancestor.isConnected &&
-                    ancestor.classList.contains(
-                      "nexo-pip-ancestor"
-                    )
-                );
-
-              if (!currentStillValid) {
-                setPipIsolation(true);
-              }
-            }
-
-            function reportVideoState() {
-              refreshPipIsolation();
-
-              if (!port) return;
-
-              const anyVideo = bestVideo(false);
-              const playingVideo = bestVideo(true);
-              const best = playingVideo || anyVideo;
-
-              try {
-                port.postMessage({
-                  type: "video_state",
-                  present: !!anyVideo,
-                  playing:
-                    !!playingVideo &&
-                    !playingVideo.paused &&
-                    !playingVideo.ended,
-                  width: best
-                    ? Number(
-                        best.videoWidth ||
-                        best.clientWidth ||
-                        0
-                      )
-                    : 0,
-                  height: best
-                    ? Number(
-                        best.videoHeight ||
-                        best.clientHeight ||
-                        0
-                      )
-                    : 0
-                });
-              } catch (_) {}
-            }
-
-            function scheduleVideoReport() {
-              clearTimeout(reportTimer);
-              reportTimer =
-                setTimeout(
-                  reportVideoState,
-                  120
-                );
-            }
-
-            [
-              "play",
-              "playing",
-              "pause",
-              "ended",
-              "emptied",
-              "loadedmetadata",
-              "canplay",
-              "waiting"
-            ].forEach(type => {
-              document.addEventListener(
-                type,
-                scheduleVideoReport,
-                true
-              );
-            });
-
-            try {
-              const observer =
-                new MutationObserver(
-                  scheduleVideoReport
-                );
-
-              observer.observe(
-                document.documentElement,
-                {
-                  childList: true,
-                  subtree: true
-                }
-              );
-            } catch (_) {}
-
-            setInterval(
-              reportVideoState,
-              1200
-            );
-
-            browser.runtime.sendNativeMessage(
-              "browser",
-              {
-                type: "page_loaded",
-                url: location.href,
-                title: document.title
-              }
-            ).then(applyState).catch(() => {});
-
-            try {
-              port =
-                browser.runtime
-                  .connectNative("browser");
-
-              port.onMessage.addListener(
-                message => {
-                  if (!message) return;
-
-                  if (
-                    message.type ===
-                    "browser_state"
-                  ) {
-                    applyState(message);
-                  }
-
-                  if (
-                    message.type ===
-                    "pip_mode"
-                  ) {
-                    setPipIsolation(
-                      message.active === true
-                    );
-                  }
-                }
-              );
-
-              port.postMessage({
-                type: "content_script_ready",
-                url: location.href
-              });
-
-              scheduleVideoReport();
-            } catch (_) {}
-          })();
-          ''', encoding="utf-8")
-
-          # ============================================================
-          # Extensiones locales:
-          # 1) Registrar de nuevo cuando Gecko diga onReady.
-          # 2) Conservar el XPI local en filesDir (no borrar al aceptar).
-          # 3) No ofrecer carpeta de código fuente como instalable.
-          # ============================================================
-          ext = must_replace(
-              ext,
-              '''        controller.setPromptDelegate(promptDelegate)
-          ''',
-              '''        controller.setPromptDelegate(promptDelegate)
-              controller.setAddonManagerDelegate(addonManagerDelegate)
-          ''',
-              "registrar AddonManagerDelegate"
-          )
-
-          ext = must_replace(
-              ext,
-              '''                    val cache =
-                          File(
-                              context.cacheDir,
-                              "extensions"
-                          )
-          ''',
-              '''                    val cache =
-                          File(
-                              context.filesDir,
-                              "imported_extensions"
-                          )
-          ''',
-              "guardar XPI local persistentemente"
-          )
-
-          ext = must_replace(
-              ext,
-              '''                        onDone,
-                          cleanup = {
-                              runCatching {
-                                  target.delete()
-                              }
-                          }
-          ''',
-              '''                        onDone
-          ''',
-              "no borrar XPI local al completar install"
-          )
-
-          ext = must_replace(
-              ext,
-              '''                    if (hasManifest) {
-                          candidates +=
-                              LocalExtensionCandidate(
-                                  label =
-                                      "Carpeta · " +
-                                          (
-                                              directory.name
-                                                  ?: "Extensión"
-                                              ),
-                                  document =
-                                      directory,
-                                  isFolder = true
-                              )
-                      }
-          ''',
-              '''                    /*
-                       * Una carpeta con manifest.json es código fuente,
-                       * no un paquete instalable normal en GeckoView
-                       * release. Seguimos recorriéndola para encontrar
-                       * XPI/ZIP firmados en subcarpetas, pero no la
-                       * mostramos como candidato instalable.
-                       */
-                      if (hasManifest) {
-                          android.util.Log.d(
-                              "NexoExtensions",
-                              "Carpeta de código fuente omitida: " +
-                                  (directory.name ?: "Extensión")
-                          )
-                      }
-          ''',
-              "no ofrecer carpetas fuente como instalables"
-          )
-
-          ext = must_replace(
-              ext,
-              '''    /* GeckoView 153 PromptDelegate */
-              private val promptDelegate =
-          ''',
-              '''    /*
-               * Esperar también onReady es importante para extensiones
-               * importadas desde archivo: en ese punto Gecko terminó
-               * de iniciar el add-on y ya puede resolver popup/opciones.
-               */
-              private val addonManagerDelegate =
-                  object :
-                      WebExtensionController.AddonManagerDelegate {
-
-                      override fun onInstalled(
-                          extension: WebExtension
-                      ) {
-                          registerExtension(extension)
-                      }
-
-                      override fun onReady(
-                          extension: WebExtension
-                      ) {
-                          registerExtension(extension)
-                      }
-
-                      override fun onEnabled(
-                          extension: WebExtension
-                      ) {
-                          registerExtension(extension)
-                      }
-                  }
-
-              /* GeckoView 153 PromptDelegate */
-              private val promptDelegate =
-          ''',
-              "AddonManagerDelegate onReady"
-          )
-
-          ext = must_replace(
-              ext,
-              '''        return "No se pudo instalar: $detail"
-          ''',
-              '''        return "No se pudo instalar [código ${install.code}]: $detail"
-          ''',
-              "mostrar código de error de instalación"
-          )
-
-          EXT.write_text(ext, encoding="utf-8")
-
-          ext_activity = ext_activity.replace(
-              '"Analizando XPI o ZIP…"',
-              '"Analizando XPI/ZIP firmado…"'
-          )
-          ext_activity = ext_activity.replace(
-              '"No encontré XPI, ZIP ni una carpeta con manifest.json."',
-              '"No encontré ningún XPI/ZIP instalable en esta carpeta."'
-          )
-          ext_activity = ext_activity.replace(
-              '"Prueba seleccionando la carpeta que contiene la extensión o su archivo XPI/ZIP."',
-              '"Busca un XPI firmado por Mozilla. Una carpeta/ZIP de código fuente sin firma no puede instalarse como extensión normal en GeckoView."'
-          )
-          EXT_ACTIVITY.write_text(
-              ext_activity,
-              encoding="utf-8"
-          )
-
-          ext_layout = ext_layout.replace(
-              'android:text="Archivo XPI / ZIP"',
-              'android:text="Importar XPI firmado"'
-          )
-          ext_layout = ext_layout.replace(
-              'android:text="Buscar en carpeta"',
-              'android:text="Buscar XPI en carpeta"'
-          )
-          EXT_LAYOUT.write_text(
-              ext_layout,
-              encoding="utf-8"
-          )
-
-          if 'versionCode = 21' in gradle:
-              gradle = gradle.replace(
-                  'versionCode = 21',
-                  'versionCode = 22',
-                  1
-              )
-          elif 'versionCode = 22' not in gradle:
-              raise RuntimeError("VersionCode base inesperado")
-
-          if 'versionName = "0.13.4"' in gradle:
-              gradle = gradle.replace(
-                  'versionName = "0.13.4"',
-                  'versionName = "0.13.5"',
-                  1
-              )
-          elif 'versionName = "0.13.5"' not in gradle:
-              raise RuntimeError("VersionName base inesperado")
-
-          GRADLE.write_text(
-              gradle,
-              encoding="utf-8"
-          )
-
-          MAIN.write_text(main, encoding="utf-8")
-          TABS.write_text(tabs, encoding="utf-8")
-
-          print("✅ Nexo v0.13.5 patch aplicado")
-          PY
-
-          # Normalizar espacios finales generados por reemplazos multilínea.
-          python3 - <<'PY_CLEAN'
-          from pathlib import Path
-          for raw in [
-              "app/src/main/java/com/ejemplo/navegador/MainActivity.kt",
-              "app/src/main/java/com/ejemplo/navegador/TabManager.kt",
-              "app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt",
-              "app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt",
-              "app/src/main/assets/extensions/nexo_bridge/content_script.js",
-              "app/src/main/res/layout/activity_extensions.xml",
-              "app/build.gradle.kts",
-          ]:
-              path = Path(raw)
-              text = path.read_text(encoding="utf-8")
-              cleaned = "\n".join(line.rstrip() for line in text.splitlines()) + "\n"
-              path.write_text(cleaned, encoding="utf-8")
-          print("✅ Espacios finales normalizados")
-          PY_CLEAN
-
-          echo ""
-          echo "========================================"
-          echo " CAMBIOS GENERADOS"
-          echo "========================================"
-          git diff --stat
-          echo ""
-          git diff --check
-
-      - name: Validate Nexo v0.13.5 source
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          main = Path(
-              "app/src/main/java/com/ejemplo/navegador/MainActivity.kt"
-          ).read_text(encoding="utf-8")
-
-          tabs = Path(
-              "app/src/main/java/com/ejemplo/navegador/TabManager.kt"
-          ).read_text(encoding="utf-8")
-
-          ext = Path(
-              "app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt"
-          ).read_text(encoding="utf-8")
-
-          ext_activity = Path(
-              "app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt"
-          ).read_text(encoding="utf-8")
-
-          ext_layout = Path(
-              "app/src/main/res/layout/activity_extensions.xml"
-          ).read_text(encoding="utf-8")
-
-          bridge = Path(
-              "app/src/main/assets/extensions/nexo_bridge/content_script.js"
-          ).read_text(encoding="utf-8")
-
-          service = Path(
-              "app/src/main/java/com/ejemplo/navegador/MediaPlaybackService.kt"
-          ).read_text(encoding="utf-8")
-
-          gradle = Path(
-              "app/build.gradle.kts"
-          ).read_text(encoding="utf-8")
-
-          compact_main = "".join(main.split())
-          compact_ext = "".join(ext.split())
-
-          assert "valwillEnterPip=" in compact_main
-          assert main.count("resumeIfRecent") == 2, (
-              "MainActivity debe conservar solo los 2 reintentos "
-              "de segundo plano real"
-          )
-
-          prepare_start = tabs.index(
-              "fun prepareForPictureInPicture()"
-          )
-          prepare_end = tabs.index(
-              "fun prepareForBackground()",
-              prepare_start
-          )
-          prepare = tabs[prepare_start:prepare_end]
-          assert "resumeIfRecent" not in prepare
-          assert "MediaPlaybackService.sync" not in prepare
-          assert "setSuspendMediaWhenInactive" in prepare
-          assert "session.setActive(true)" in prepare
-
-          assert "pipKeepPlaying" not in bridge
-          assert "pipRecoveryUntil" not in bridge
-          assert ".play()" not in bridge
-          assert "position: static" not in bridge
-          assert "nexo-pip-ancestor" in bridge
-          assert "position: fixed" in bridge
-
-          assert "buildBootstrapNotification()" in service
-          assert "snapshotForService()" in service
-          assert "startRequested" in service
-
-          assert (
-              "setAddonManagerDelegate(addonManagerDelegate)"
-              in compact_ext
-          )
-          assert "overridefunonReady(" in compact_ext
-          assert 'context.filesDir' in ext
-          assert '"imported_extensions"' in ext
-          import_slice = ext[
-              ext.index("fun importXpi("):
-              ext.index("private fun importFolder(")
-          ]
-          assert "target.delete()" not in import_slice
-          assert "código ${install.code}" in ext
-
-          assert "Analizando XPI/ZIP firmado" in ext_activity
-          assert "Importar XPI firmado" in ext_layout
-          assert "Buscar XPI en carpeta" in ext_layout
-
-          assert 'versionCode = 22' in gradle
-          assert 'versionName = "0.13.5"' in gradle
-          assert "geckoview-omni:153.0.20260715202819" in gradle
-
-          print("✅ Validaciones v0.13.5 correctas")
-          PY
+          test -z "$(git status --porcelain)"
+
+          if grep -R --line-number --fixed-strings 'useMultiprocess(false)' app/src/main/java; then
+            echo "::error::No se permite desactivar el multiproceso de Gecko"
+            exit 1
+          fi
+
+          if grep -R --line-number 'loadUri("javascript:' app/src/main/java; then
+            echo "::error::No se permite loadUri(javascript:...)"
+            exit 1
+          fi
 
       - name: Java 17
         uses: actions/setup-java@v5
@@ -1023,32 +80,22 @@ jobs:
       - name: Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android 36
+      - name: Install Android platform
         shell: bash
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager \
-            "platforms;android-${COMPILE_SDK}" \
+            "platforms;android-${ANDROID_PLATFORM}" \
             "build-tools;${BUILD_TOOLS}" \
             "platform-tools"
 
-      - name: Install Gradle
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl \
-            --retry 5 \
-            --retry-all-errors \
-            --retry-delay 3 \
-            -fsSL \
-            "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
-            -o gradle.zip
-          unzip -q gradle.zip
-          echo "$PWD/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
-          gradle --version
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
 
-      - name: Build Debug Release and Lint
+      - name: Build and lint committed source
         shell: bash
         run: |
           set -euo pipefail
@@ -1058,121 +105,347 @@ jobs:
             :app:lintDebug \
             :app:lintRelease \
             --stacktrace \
-            --no-daemon \
-            2>&1 | tee full-build.log
+            --no-daemon
 
-      - name: Validate generated APKs
+      - name: Confirm build did not mutate tracked source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+
+      - name: Upload CI outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexo-CI-${{ github.sha }}
+          path: |
+            app/build/outputs/apk/**/*.apk
+            app/build/reports/lint-results-*.html
+            app/build/reports/lint-results-*.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  apply-update:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'apply_update' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      UPDATE_ZIP: ${{ inputs.update_zip }}
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Require main branch and update ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main" || {
+            echo "::error::El update solo puede aplicarse desde main"
+            exit 1
+          }
+          test -f "$UPDATE_ZIP" || {
+            echo "::error::No existe $UPDATE_ZIP en la raíz del repositorio"
+            exit 1
+          }
+
+      - name: Validate and extract update ZIP
+        id: extract
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEST="$RUNNER_TEMP/nexo-security-update"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+
+          python3 - "$UPDATE_ZIP" "$DEST" <<'PY'
+          import pathlib
+          import stat
+          import sys
+          import zipfile
+
+          source = pathlib.Path(sys.argv[1])
+          dest = pathlib.Path(sys.argv[2])
+          max_files = 120
+          max_total = 8 * 1024 * 1024
+          total = 0
+
+          with zipfile.ZipFile(source) as zf:
+              infos = zf.infolist()
+              if len(infos) > max_files:
+                  raise SystemExit(f"ZIP rechazado: {len(infos)} entradas")
+
+              for info in infos:
+                  name = info.filename.replace("\\", "/")
+                  path = pathlib.PurePosixPath(name)
+                  mode = (info.external_attr >> 16) & 0xFFFF
+
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit(f"Ruta insegura: {name}")
+                  if stat.S_ISLNK(mode):
+                      raise SystemExit(f"Symlink no permitido: {name}")
+
+                  total += max(0, info.file_size)
+                  if total > max_total:
+                      raise SystemExit("ZIP supera 8 MiB sin comprimir")
+
+              zf.extractall(dest)
+
+          candidates = list(dest.rglob("apply_update.py"))
+          if len(candidates) != 1:
+              raise SystemExit(
+                  f"Se esperaba exactamente un apply_update.py; encontrados={len(candidates)}"
+              )
+
+          pathlib.Path(dest / "package_root.txt").write_text(
+              str(candidates[0].parent), encoding="utf-8"
+          )
+          PY
+
+          PACKAGE_ROOT="$(cat "$DEST/package_root.txt")"
+          echo "package_root=$PACKAGE_ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Apply audited source update
+        shell: bash
+        env:
+          PACKAGE_ROOT: ${{ steps.extract.outputs.package_root }}
+        run: |
+          set -euo pipefail
+          python3 "$PACKAGE_ROOT/apply_update.py" --repo "$GITHUB_WORKSPACE"
+          git diff --check
+
+      - name: Security policy checks after update
         shell: bash
         run: |
           set -euo pipefail
 
-          find app/build/outputs/apk -type f -name "*.apk" -print
+          test "$(head -n1 .github/workflows/main.yml)" = \
+            "name: Nexo Secure CI, Update and Release" || {
+              echo "::error::El workflow seguro no está instalado"
+              exit 1
+            }
 
-          ARM64="$(find app/build/outputs/apk/release -type f -name '*arm64-v8a*.apk' | head -n 1)"
-          ARM32="$(find app/build/outputs/apk/release -type f -name '*armeabi-v7a*.apk' | head -n 1)"
-
-          test -n "$ARM64" || {
-            echo "❌ No se generó APK arm64-v8a"
+          if grep -R --line-number 'loadUri("javascript:' app/src/main/java; then
+            echo "::error::Se detectó loadUri(javascript:...)"
             exit 1
-          }
+          fi
 
-          test -n "$ARM32" || {
-            echo "❌ No se generó APK armeabi-v7a"
-            exit 1
-          }
+      - name: Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
 
-          echo "✅ Ambos APK fueron generados"
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Save verified Nexo v0.13.5 source
+      - name: Install Android platform
         shell: bash
         run: |
           set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platforms;android-${ANDROID_PLATFORM}" \
+            "build-tools;${BUILD_TOOLS}" \
+            "platform-tools"
 
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Compile and lint updated source
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle \
+            :app:assembleDebug \
+            :app:assembleRelease \
+            :app:lintDebug \
+            :app:lintRelease \
+            --stacktrace \
+            --no-daemon
+
+      - name: Remove one-time ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files --error-unmatch "$UPDATE_ZIP" >/dev/null 2>&1; then
+            git rm -f "$UPDATE_ZIP"
+          else
+            rm -f "$UPDATE_ZIP"
+          fi
+
+      - name: Commit verified source update
+        shell: bash
+        run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add \
-            app/build.gradle.kts \
-            app/src/main/java/com/ejemplo/navegador/MainActivity.kt \
-            app/src/main/java/com/ejemplo/navegador/TabManager.kt \
-            app/src/main/java/com/ejemplo/navegador/ExtensionManager.kt \
-            app/src/main/java/com/ejemplo/navegador/ExtensionsActivity.kt \
-            app/src/main/res/layout/activity_extensions.xml \
-            app/src/main/assets/extensions/nexo_bridge/content_script.js
+          # El workflow ya fue reemplazado manualmente antes de esta ejecución;
+          # este commit solo contiene source/config y la retirada del ZIP temporal.
+          git add -A
+          git diff --cached --check
 
           if git diff --cached --quiet; then
-            echo "ℹ️ No hay cambios nuevos para guardar."
-          else
-            git commit -m "Nexo v0.13.5 stable PiP and local extensions [skip ci]"
-            git push origin HEAD:main
-            echo "✅ Código v0.13.5 guardado en main"
+            echo "No hay cambios para guardar."
+            exit 0
           fi
 
-      - name: Sign Release APKs
+          git commit -m "security: harden Nexo v0.13.6"
+          git push origin HEAD:main
+
+      - name: Update summary
+        shell: bash
+        run: |
+          {
+            echo "## Nexo v0.13.6 aplicado"
+            echo ""
+            echo "- Source actualizado y compilado antes del commit."
+            echo "- El ZIP temporal fue retirado del repositorio."
+            echo "- Para publicar, ejecuta este mismo workflow con mode=release."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout committed source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Require persistent signing secrets
         shell: bash
         run: |
           set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main" || {
+            echo "::error::Las releases solo se publican desde main"
+            exit 1
+          }
 
+          for name in KEYSTORE_B64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Falta el secret correspondiente a $name"
+              exit 1
+            fi
+          done
+
+          test -z "$(git status --porcelain)"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION_NAME="$(sed -nE 's/.*versionName = "([^"]+)".*/\1/p' app/build.gradle.kts | head -n1)"
+          VERSION_CODE="$(sed -nE 's/.*versionCode = ([0-9]+).*/\1/p' app/build.gradle.kts | head -n1)"
+          test -n "$VERSION_NAME"
+          test -n "$VERSION_CODE"
+
+          TAG="${INPUT_TAG:-}"
+          if [ -z "$TAG" ]; then TAG="v${VERSION_NAME}"; fi
+
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platforms;android-${ANDROID_PLATFORM}" \
+            "build-tools;${BUILD_TOOLS}" \
+            "platform-tools"
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Build release from committed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:assembleRelease :app:lintRelease --stacktrace --no-daemon
+          git diff --exit-code
+
+      - name: Restore persistent keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/nexo-release.jks"
+          keytool -list \
+            -keystore "$RUNNER_TEMP/nexo-release.jks" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" >/dev/null
+
+      - name: Sign ABI APKs
+        shell: bash
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+        run: |
+          set -euo pipefail
+          APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
           mkdir -p artifacts/release
 
-          keytool \
-            -genkeypair \
-            -keystore nexo-v0135-ci.jks \
-            -storepass android \
-            -alias nexo \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Nexo Browser v0.13.5,O=Nexo,C=CO"
+          ARM64="$(find app/build/outputs/apk/release -type f -name '*arm64-v8a*.apk' | head -n1)"
+          ARM32="$(find app/build/outputs/apk/release -type f -name '*armeabi-v7a*.apk' | head -n1)"
+          test -n "$ARM64" || { echo "::error::No se generó arm64-v8a"; exit 1; }
+          test -n "$ARM32" || { echo "::error::No se generó armeabi-v7a"; exit 1; }
 
-          APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
-          ARM64="$(find app/build/outputs/apk/release -type f -name '*arm64-v8a*.apk' | head -n 1)"
-          ARM32="$(find app/build/outputs/apk/release -type f -name '*armeabi-v7a*.apk' | head -n 1)"
+          sign_one() {
+            local input="$1"
+            local output="$2"
+            "$APKSIGNER" sign \
+              --ks "$RUNNER_TEMP/nexo-release.jks" \
+              --ks-key-alias "$KEY_ALIAS" \
+              --ks-pass "pass:$KEYSTORE_PASSWORD" \
+              --key-pass "pass:$KEY_PASSWORD" \
+              --out "$output" \
+              "$input"
+            "$APKSIGNER" verify --verbose --print-certs "$output"
+          }
 
-          "$APKSIGNER" sign \
-            --ks nexo-v0135-ci.jks \
-            --ks-key-alias nexo \
-            --ks-pass pass:android \
-            --key-pass pass:android \
-            --out artifacts/release/Nexo-v0.13.5-arm64-v8a.apk \
-            "$ARM64"
+          sign_one "$ARM64" "artifacts/release/Nexo-v${VERSION_NAME}-arm64-v8a.apk"
+          sign_one "$ARM32" "artifacts/release/Nexo-v${VERSION_NAME}-armeabi-v7a.apk"
 
-          "$APKSIGNER" sign \
-            --ks nexo-v0135-ci.jks \
-            --ks-key-alias nexo \
-            --ks-pass pass:android \
-            --key-pass pass:android \
-            --out artifacts/release/Nexo-v0.13.5-armeabi-v7a.apk \
-            "$ARM32"
-
-          "$APKSIGNER" verify --verbose \
-            artifacts/release/Nexo-v0.13.5-arm64-v8a.apk
-
-          "$APKSIGNER" verify --verbose \
-            artifacts/release/Nexo-v0.13.5-armeabi-v7a.apk
-
-      - name: Generate SHA256 checksums
-        shell: bash
-        run: |
-          set -euo pipefail
           cd artifacts/release
-
-          sha256sum \
-            Nexo-v0.13.5-arm64-v8a.apk \
-            Nexo-v0.13.5-armeabi-v7a.apk \
-            > SHA256SUMS.txt
-
+          sha256sum *.apk > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Upload Nexo v0.13.5 APKs
+      - name: Upload signed APKs
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-v0135-Stable-PiP-Local-Extensions
-          path: |
-            artifacts/release/Nexo-v0.13.5-arm64-v8a.apk
-            artifacts/release/Nexo-v0.13.5-armeabi-v7a.apk
-            artifacts/release/SHA256SUMS.txt
+          name: Nexo-v${{ steps.version.outputs.version_name }}-signed
+          path: artifacts/release/*
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
@@ -1180,43 +453,25 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.13.5
-          name: Nexo Browser v0.13.5
-          target_commitish: main
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Nexo Browser v${{ steps.version.outputs.version_name }}
+          target_commitish: ${{ github.sha }}
           draft: false
           prerelease: false
           make_latest: true
           fail_on_unmatched_files: true
           body: |
-            Nexo Browser v0.13.5
+            Nexo Browser v${{ steps.version.outputs.version_name }}
 
-            Cambios principales:
-            - PiP simplificado para evitar trabas y pantalla negra.
-            - Sin reintentos agresivos de MediaSession.play() durante PiP.
-            - Se conserva el audio de segundo plano estable de v0.13.4.
-            - XPI locales conservados en almacenamiento persistente.
-            - Extensiones locales re-enlazadas cuando Gecko confirma onReady.
-            - Importación deja claro que GeckoView release requiere XPI firmado.
-
-            Descargas:
-            - Nexo-v0.13.5-arm64-v8a.apk (Android 64 bits, recomendado)
-            - Nexo-v0.13.5-armeabi-v7a.apk (Android 32 bits)
-            - SHA256SUMS.txt
+            - Build generado exclusivamente desde source ya versionado.
+            - APKs firmados con la clave Android persistente del proyecto.
+            - SHA-256 incluido en SHA256SUMS.txt.
           files: |
-            artifacts/release/Nexo-v0.13.5-arm64-v8a.apk
-            artifacts/release/Nexo-v0.13.5-armeabi-v7a.apk
+            artifacts/release/Nexo-v${{ steps.version.outputs.version_name }}-arm64-v8a.apk
+            artifacts/release/Nexo-v${{ steps.version.outputs.version_name }}-armeabi-v7a.apk
             artifacts/release/SHA256SUMS.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Nexo-v0135-build-diagnostics
-          path: |
-            full-build.log
-            app/build/reports/
-            app/build/outputs/logs/
-          if-no-files-found: ignore
-          retention-days: 14
+      - name: Remove keystore from runner
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/nexo-release.jks"
