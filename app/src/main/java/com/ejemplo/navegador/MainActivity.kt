@@ -360,8 +360,17 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         }
         runCatching {
             val uri = Uri.parse(url)
-            val name = uri.lastPathSegment?.substringAfterLast('/')
-                ?.takeIf { it.isNotBlank() } ?: "nexo_${System.currentTimeMillis()}"
+            val rawName = uri.lastPathSegment
+                ?.substringAfterLast('/')
+                ?.takeIf { it.isNotBlank() }
+                ?: "nexo_${System.currentTimeMillis()}"
+            val name = rawName
+                .replace(Regex("""[\\/:*?"<>|\p{Cntrl}]"""), "_")
+                .replace("..", "_")
+                .trim()
+                .trimStart('.')
+                .take(120)
+                .ifBlank { "nexo_${System.currentTimeMillis()}" }
             val request = DownloadManager.Request(uri)
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 .setTitle(name)
@@ -432,9 +441,33 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         ).joinToString("|")
 
     private fun handleNavigationIntent(intent: Intent?) {
-        intent?.getStringExtra(EXTRA_OPEN_URL)?.takeIf { it.isNotBlank() }?.let {
-            TabManager.navigate(it)
+        val raw = intent
+            ?.getStringExtra(EXTRA_OPEN_URL)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: return
+
+        val scheme = runCatching { Uri.parse(raw).scheme?.lowercase() }
+            .getOrNull()
+
+        if (
+            scheme !in setOf(
+                "http",
+                "https",
+                "about",
+                "resource",
+                "moz-extension"
+            )
+        ) {
+            Toast.makeText(
+                this,
+                "Nexo bloqueó un enlace con esquema no permitido",
+                Toast.LENGTH_LONG
+            ).show()
+            return
         }
+
+        TabManager.navigate(raw)
     }
 
     override fun onNewIntent(intent: Intent?) {

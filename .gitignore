@@ -4,3 +4,30 @@ local.properties
 **/build/
 *.iml
 .DS_Store
+
+# Android / native build output
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.apks
+*.idsig
+
+# Signing material and local secrets
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+keystore.properties
+secrets.properties
+.env
+.env.*
+
+# Logs / temporary files
+*.log
+*.tmp
+*.swp
+*~

@@ -259,8 +259,14 @@ object ExtensionManager {
         val host = uri.host?.lowercase().orEmpty()
         val path = uri.path?.lowercase().orEmpty()
 
-        return path.endsWith(".xpi") ||
-            (host.endsWith("addons.mozilla.org") && path.contains("/downloads/"))
+        val trustedAmoHost =
+            host == "addons.mozilla.org" ||
+                host.endsWith(".addons.mozilla.org")
+
+        // No auto-instalar XPI desde hosts arbitrarios. GeckoView valida
+        // la firma, pero el origen también debe ser el AMO oficial.
+        return trustedAmoHost &&
+            (path.endsWith(".xpi") || path.contains("/downloads/"))
     }
 
     fun installUrl(
@@ -889,6 +895,38 @@ object ExtensionManager {
         ).use {
             zip ->
 
+            var entries = 0
+            var expandedBytes = 0L
+            val allEntries = zip.entries()
+
+            while (allEntries.hasMoreElements()) {
+                val entry = allEntries.nextElement()
+                entries += 1
+
+                if (entries > 4000) {
+                    error("La extensión contiene demasiadas entradas.")
+                }
+
+                val normalized = entry.name.replace('\\', '/')
+                val segments = normalized.split('/')
+
+                if (
+                    normalized.startsWith('/') ||
+                    normalized.startsWith("\\") ||
+                    segments.any { it == ".." } ||
+                    normalized.indexOf('\u0000') >= 0
+                ) {
+                    error("Ruta insegura dentro del paquete: ${entry.name}")
+                }
+
+                if (entry.size > 0L) {
+                    expandedBytes += entry.size
+                    if (expandedBytes > 250L * 1024L * 1024L) {
+                        error("El contenido expandido del XPI supera 250 MB.")
+                    }
+                }
+            }
+
             val manifest =
                 zip.getEntry(
                     "manifest.json"
@@ -1331,27 +1369,36 @@ object ExtensionManager {
                 message: Any,
                 sender: WebExtension.MessageSender
             ): GeckoResult<Any>? {
-                if (nativeApp != NATIVE_APP) return null
+                if (
+                    nativeApp != NATIVE_APP ||
+                    !sender.isTopLevel() ||
+                    sender.session == null
+                ) {
+                    return null
+                }
 
                 val context = AppContext.get()
-                val tab = sender.session?.let { TabManager.tabForSession(it) }
 
+                // Superficie mínima: el bridge solo necesita estado de
+                // reproducción/PiP. No exponer URL, id de pestaña ni modo privado.
                 return GeckoResult.fromValue(
                     JSONObject().apply {
                         put("ok", true)
-                        put("showBadge", false)
                         put("backgroundMedia", BrowserPrefs.backgroundMedia(context))
                         put("smartPip", BrowserPrefs.smartPip(context))
-                        put("theme", BrowserPrefs.theme(context))
-                        put("accent", BrowserPrefs.accent(context))
-                        put("tabId", tab?.id ?: "")
-                        put("private", tab?.isPrivate ?: false)
-                        put("url", tab?.url ?: "")
                     }
                 )
             }
 
             override fun onConnect(port: WebExtension.Port) {
+                if (
+                    !port.sender.isTopLevel() ||
+                    port.sender.session == null
+                ) {
+                    runCatching { port.disconnect() }
+                    return
+                }
+
                 ports += port
 
                 port.setDelegate(
@@ -1374,14 +1421,9 @@ object ExtensionManager {
                                 }
                                 return
                             }
-                            port.postMessage(
-                                JSONObject().apply {
-                                    put("type", "native_ack")
-                                    put("received", message.toString())
-                                    put("showBadge", false)
-                                    put("backgroundMedia", BrowserPrefs.backgroundMedia(AppContext.get()))
-                                }
-                            )
+                            // Los mensajes no reconocidos no se reflejan de vuelta
+                            // al contenido. Esto evita convertir el bridge en un eco de datos.
+                            return
                         }
 
                         override fun onDisconnect(port: WebExtension.Port) {

@@ -1,6 +1,7 @@
 package com.ejemplo.navegador
 
 import android.content.Context
+import android.net.Uri
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
@@ -11,6 +12,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.URLDecoder
 import java.util.UUID
+import java.util.concurrent.Executors
 
 data class DownloadEntry(
     val id: String,
@@ -25,6 +27,9 @@ data class DownloadEntry(
 object DownloadStore {
     private const val PREF = "nexo_downloads"
     private const val KEY = "entries"
+    private val io = Executors.newFixedThreadPool(2) { task ->
+        Thread(task, "NexoDownloadIO").apply { isDaemon = true }
+    }
 
     fun saveResponse(
         context: Context,
@@ -33,7 +38,7 @@ object DownloadStore {
     ) {
         val app = context.applicationContext
 
-        Thread {
+        io.execute {
             runCatching {
                 val body = response.body ?: error("Sin cuerpo descargable")
                 val headers = response.headers
@@ -48,15 +53,12 @@ object DownloadStore {
                     headers["Content-Disposition"]
                 )
 
-                val folder = app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                    ?: app.filesDir
-                folder.mkdirs()
-
+                val folder = downloadsFolder(app)
                 val file = uniqueFile(folder, requested)
 
                 body.use { input ->
                     FileOutputStream(file).use { output ->
-                        input.copyTo(output, 256 * 1024)
+                        input.copyTo(output, 512 * 1024)
                     }
                 }
 
@@ -66,7 +68,7 @@ object DownloadStore {
                         UUID.randomUUID().toString(),
                         file.name,
                         file.absolutePath,
-                        response.uri,
+                        redactSourceUrl(response.uri),
                         mime,
                         file.length(),
                         System.currentTimeMillis()
@@ -81,7 +83,7 @@ object DownloadStore {
                     callback(false, "Descarga fallida: ${it.message}")
                 }
             }
-        }.start()
+        }
     }
 
     @Synchronized
@@ -114,7 +116,13 @@ object DownloadStore {
     fun remove(context: Context, id: String) {
         val items = list(context).toMutableList()
         val item = items.firstOrNull { it.id == id } ?: return
-        runCatching { File(item.filePath).delete() }
+
+        runCatching {
+            val root = downloadsFolder(context).canonicalFile
+            val file = File(item.filePath).canonicalFile
+            if (isChildOf(root, file)) file.delete()
+        }
+
         items.remove(item)
         save(context, items)
     }
@@ -149,6 +157,13 @@ object DownloadStore {
             .edit().putString(KEY, arr.toString()).apply()
     }
 
+    private fun downloadsFolder(context: Context): File {
+        val folder = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: File(context.filesDir, "downloads")
+        folder.mkdirs()
+        return folder
+    }
+
     private fun resolveFileName(url: String, disposition: String?): String {
         val fromHeader = disposition
             ?.substringAfter("filename=", "")
@@ -171,22 +186,49 @@ object DownloadStore {
         )
     }
 
-    private fun sanitize(value: String) =
-        value.replace(Regex("""[\\/:*?"<>|]"""), "_")
+    private fun sanitize(value: String): String =
+        value
+            .replace(Regex("""[\/:*?"<>|\p{Cntrl}]"""), "_")
+            .replace("..", "_")
+            .trim()
+            .trimStart('.')
             .take(120)
             .ifBlank { "descarga.bin" }
 
     private fun uniqueFile(folder: File, requested: String): File {
-        val dot = requested.lastIndexOf('.')
-        val base = if (dot > 0) requested.substring(0, dot) else requested
-        val ext = if (dot > 0) requested.substring(dot) else ""
+        val root = folder.canonicalFile
+        val safeRequested = sanitize(requested)
+        val dot = safeRequested.lastIndexOf('.')
+        val base = if (dot > 0) safeRequested.substring(0, dot) else safeRequested
+        val ext = if (dot > 0) safeRequested.substring(dot) else ""
 
-        var candidate = File(folder, requested)
+        fun candidate(name: String): File {
+            val file = File(root, name).canonicalFile
+            require(isChildOf(root, file)) { "Nombre de archivo inseguro" }
+            return file
+        }
+
+        var file = candidate(safeRequested)
         var n = 1
-        while (candidate.exists()) {
-            candidate = File(folder, "$base ($n)$ext")
+        while (file.exists()) {
+            file = candidate("$base ($n)$ext")
             n++
         }
-        return candidate
+        return file
     }
+
+    private fun isChildOf(root: File, file: File): Boolean {
+        val rootPath = root.canonicalPath.trimEnd(File.separatorChar) + File.separator
+        return file.canonicalPath.startsWith(rootPath)
+    }
+
+    private fun redactSourceUrl(url: String): String =
+        runCatching {
+            val uri = Uri.parse(url)
+            uri.buildUpon()
+                .clearQuery()
+                .fragment(null)
+                .build()
+                .toString()
+        }.getOrDefault("")
 }

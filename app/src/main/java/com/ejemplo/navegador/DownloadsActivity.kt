@@ -35,10 +35,11 @@ class DownloadsActivity : Activity() {
         }
 
         listView.setOnItemClickListener { _, _, position, _ ->
-            open(entries[position])
+            if (position in entries.indices) open(entries[position])
         }
 
         listView.setOnItemLongClickListener { _, _, position, _ ->
+            if (position !in entries.indices) return@setOnItemLongClickListener true
             val entry = entries[position]
             AlertDialog.Builder(this)
                 .setTitle("Eliminar descarga")
@@ -61,8 +62,12 @@ class DownloadsActivity : Activity() {
         listView.adapter = ArrayAdapter(
             this,
             android.R.layout.simple_list_item_1,
-            entries.map {
-                "${it.fileName}\n${Formatter.formatShortFileSize(this, it.size)} · ${it.mimeType}"
+            if (entries.isEmpty()) {
+                listOf("No hay descargas guardadas")
+            } else {
+                entries.map {
+                    "${it.fileName}\n${Formatter.formatShortFileSize(this, it.size)} · ${it.mimeType}"
+                }
             }
         )
     }
@@ -74,28 +79,29 @@ class DownloadsActivity : Activity() {
             return
         }
 
-        val uri = FileProvider.getUriForFile(
-            this,
-            "$packageName.files",
-            file
-        )
-
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(
-                uri,
-                entry.mimeType.ifBlank { "application/octet-stream" }
+        runCatching {
+            val uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.files",
+                file
             )
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
 
-        runCatching { startActivity(intent) }
-            .onFailure {
-                Toast.makeText(
-                    this,
-                    "No hay aplicación para abrir este archivo",
-                    Toast.LENGTH_LONG
-                ).show()
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(
+                    uri,
+                    entry.mimeType.ifBlank { "application/octet-stream" }
+                )
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
+
+            startActivity(intent)
+        }.onFailure {
+            Toast.makeText(
+                this,
+                "No se pudo abrir este archivo con una aplicación instalada",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     private fun applyTheme() {

@@ -1,6 +1,7 @@
 package com.ejemplo.navegador
 
 import android.content.Context
+import android.net.Uri
 import java.net.URLEncoder
 
 object SearchResolver {
@@ -11,15 +12,7 @@ object SearchResolver {
         val input = inputRaw.trim()
         if (input.isBlank()) return BrowserPrefs.homePage(context)
 
-        if (
-            input.startsWith("https://", true) ||
-            input.startsWith("http://", true) ||
-            input.startsWith("about:", true) ||
-            input.startsWith("resource://", true) ||
-            input.startsWith("moz-extension://", true) ||
-            input.startsWith("file://", true)
-        ) return input
-
+        // Resolver primero hosts sin esquema (incluido localhost:puerto).
         if (
             input.equals("localhost", true) ||
             input.startsWith("localhost:", true) ||
@@ -27,6 +20,22 @@ object SearchResolver {
             ipv4.matches(input)
         ) return "https://$input"
 
+        val parsed = runCatching { Uri.parse(input) }.getOrNull()
+        val scheme = parsed?.scheme?.lowercase()
+
+        // javascript:, data:, file:, content: e intent: nunca deben ejecutarse
+        // desde la barra de direcciones o desde un intent externo.
+        if (scheme != null) {
+            return when (scheme) {
+                "https", "http", "about", "resource", "moz-extension" -> input
+                else -> search(context, input)
+            }
+        }
+
+        return search(context, input)
+    }
+
+    private fun search(context: Context, input: String): String {
         val q = URLEncoder.encode(input, "UTF-8")
         val free = BrowserPrefs.freeSearch(context)
 

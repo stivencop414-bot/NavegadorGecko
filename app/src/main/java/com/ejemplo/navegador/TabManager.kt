@@ -65,6 +65,14 @@ object TabManager {
     fun tabForSession(session: GeckoSession): BrowserTab? =
         tabs.firstOrNull { it.session === session }
 
+    private fun isSafeAppNavigationUrl(url: String): Boolean {
+        val uri = runCatching { Uri.parse(url.trim()) }.getOrNull() ?: return false
+        return when (uri.scheme?.lowercase()) {
+            "http", "https", "about", "resource", "moz-extension" -> true
+            else -> false
+        }
+    }
+
     private fun normalizeMobileUrl(
         url: String,
         desktopMode: Boolean
@@ -124,8 +132,16 @@ object TabManager {
         isPrivate: Boolean = false,
         activate: Boolean = true
     ): BrowserTab {
+        val initialUrl =
+            if (isSafeAppNavigationUrl(url)) {
+                url
+            } else {
+                listener?.onMessage("Nexo bloqueó un esquema de URL no permitido.")
+                BrowserPrefs.homePage(requireContext())
+            }
+
         val tab = BrowserTab(
-            url = url,
+            url = initialUrl,
             title = if (isPrivate) "Pestaña privada" else "Nueva pestaña",
             isPrivate = isPrivate
         )
@@ -295,6 +311,12 @@ object TabManager {
 
     fun navigate(url: String) {
         val tab = activeTab() ?: return
+
+        if (!isSafeAppNavigationUrl(url)) {
+            listener?.onMessage("Nexo bloqueó un esquema de URL no permitido.")
+            return
+        }
+
         val target =
             normalizeMobileUrl(
                 url,
@@ -931,9 +953,18 @@ object TabManager {
                                 "url",
                                 BrowserPrefs.homePage(context)
                             ).let { restoredUrl ->
-                                if (restoredUrl.startsWith("resource://android/assets/home/")) {
+                                val candidate =
+                                    if (restoredUrl.startsWith("resource://android/assets/home/")) {
+                                        BrowserPrefs.homePage(context)
+                                    } else {
+                                        restoredUrl
+                                    }
+
+                                if (isSafeAppNavigationUrl(candidate)) {
+                                    candidate
+                                } else {
                                     BrowserPrefs.homePage(context)
-                                } else restoredUrl
+                                }
                             },
                             title = o.optString("title", "Pestaña"),
                             isPrivate = false,
