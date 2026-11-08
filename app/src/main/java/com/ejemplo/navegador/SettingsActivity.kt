@@ -195,9 +195,13 @@ class SettingsActivity : Activity() {
     }
 
     private fun styleReadableTree(view: View) {
-        when (view) {
-            is Button -> Unit
-            is TextView -> ThemeManager.styleText(this, view)
+        when {
+            view.tag == "card" -> ThemeManager.styleCard(this, view)
+            view.tag == "divider" -> ThemeManager.styleDivider(this, view)
+            view is Button -> Unit
+            view is TextView && view.tag == "section" -> ThemeManager.styleSectionLabel(this, view)
+            view is TextView && view.tag == "muted" -> ThemeManager.styleText(this, view, muted = true)
+            view is TextView -> ThemeManager.styleText(this, view)
         }
         if (view is ViewGroup) {
             for (i in 0 until view.childCount) styleReadableTree(view.getChildAt(i))
@@ -220,6 +224,11 @@ class SettingsActivity : Activity() {
         }
         ThemeManager.styleText(this, findViewById(R.id.settingsTitle))
         ThemeManager.styleButton(this, findViewById(R.id.saveSettingsButton), primary = true)
-        ThemeManager.styleButton(this, findViewById(R.id.clearDataButton))
+        ThemeManager.styleButton(this, findViewById(R.id.clearDataButton), danger = true)
+        ThemeManager.styleBackButton(this, findViewById(R.id.backButton))
+        findViewById<View>(R.id.settingsFooter).background =
+            ThemeManager.barBackground(this, lineOnTop = true)
+        findViewById<View>(R.id.settingsHeader).setBackgroundColor(p.background)
+        ThemeManager.takeInitialFocus(settingsRoot)
     }
 }

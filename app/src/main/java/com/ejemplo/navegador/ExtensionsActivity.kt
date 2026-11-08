@@ -518,7 +518,11 @@ class ExtensionsActivity :
 
         status.text =
             if (term.isBlank()) {
-                "${extensions.size} extensiones instaladas"
+                when (extensions.size) {
+                    0 -> getString(R.string.empty_extensions)
+                    1 -> "1 extensión instalada"
+                    else -> "${extensions.size} extensiones instaladas"
+                }
             } else {
                 "${visibleExtensions.size} coincidencias de ${extensions.size}"
             }
@@ -1066,6 +1070,9 @@ class ExtensionsActivity :
             this,
             search
         )
+
+        ThemeManager.styleBackButton(this, findViewById(R.id.backButton))
+        ThemeManager.takeInitialFocus(findViewById(R.id.extensionsRoot))
 
         ThemeManager.styleButton(
             this,

@@ -7,4 +7,7 @@
     <string name="clear_address">Borrar dirección</string>
     <string name="empty_history">Aún no hay páginas en tu historial</string>
     <string name="empty_downloads">Tus descargas aparecerán aquí</string>
+    <string name="back">Volver</string>
+    <string name="mini_video">Mini video</string>
+    <string name="empty_extensions">Aún no tienes extensiones. Explora la tienda para instalar la primera.</string>
 </resources>

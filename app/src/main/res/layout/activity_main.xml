@@ -8,74 +8,79 @@
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="60dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="4dp">
 
+        <!-- Se conserva por compatibilidad (atajo a Inicio); el diseño actual
+             no muestra el logo en la barra para dar espacio a la dirección. -->
         <TextView
             android:id="@+id/brandText"
-            android:layout_width="34dp"
-            android:layout_height="34dp"
-            android:layout_marginEnd="8dp"
-            android:background="@drawable/ic_nexo_logo"
-            android:contentDescription="Nexo Browser"
-            android:gravity="center"
-            android:text="" />
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone" />
 
         <EditText
             android:id="@+id/omnibox"
             android:layout_width="0dp"
-            android:layout_height="42dp"
+            android:layout_height="44dp"
             android:layout_weight="1"
+            android:drawablePadding="10dp"
             android:gravity="center_vertical"
             android:hint="@string/omnibox_hint"
             android:imeOptions="actionGo"
             android:importantForAutofill="no"
             android:inputType="textUri"
             android:maxLines="1"
-            android:paddingStart="16dp"
-            android:paddingEnd="12dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:selectAllOnFocus="true"
             android:singleLine="true"
-            android:textSize="14.5sp" />
+            android:textSize="15sp" />
 
         <Button
             android:id="@+id/clearOmniboxButton"
-            android:layout_width="38dp"
-            android:layout_height="38dp"
-            android:layout_marginStart="6dp"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="2dp"
+            android:contentDescription="@string/clear_address"
             android:gravity="center"
             android:minWidth="0dp"
+            android:minHeight="0dp"
             android:padding="0dp"
             android:text="×"
             android:textAllCaps="false"
-            android:textSize="18sp"
+            android:textSize="22sp"
             android:visibility="gone" />
 
         <Button
             android:id="@+id/tabButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_marginStart="6dp"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="@string/open_tabs"
             android:gravity="center"
             android:minWidth="0dp"
+            android:minHeight="0dp"
             android:padding="0dp"
             android:text="1"
             android:textAllCaps="false"
-            android:textSize="13.5sp"
+            android:textSize="12sp"
             android:textStyle="bold" />
 
         <Button
             android:id="@+id/menuButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_marginStart="6dp"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:contentDescription="@string/open_menu"
             android:drawableTop="@drawable/ic_nav_menu"
             android:gravity="center"
             android:minWidth="0dp"
-            android:paddingTop="8dp"
-            android:paddingBottom="8dp"
+            android:minHeight="0dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
             android:text="" />
     </LinearLayout>
 
@@ -83,7 +88,7 @@
         android:id="@+id/pageProgress"
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
-        android:layout_height="3dp"
+        android:layout_height="2dp"
         android:max="100"
         android:visibility="gone" />
 
@@ -92,11 +97,11 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center"
-        android:letterSpacing="0.03"
-        android:paddingTop="5dp"
-        android:paddingBottom="5dp"
-        android:text="MODO PRIVADO ACTIVO"
-        android:textSize="11.5sp"
+        android:letterSpacing="0.02"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:text="Navegación privada"
+        android:textSize="12.5sp"
         android:textStyle="bold"
         android:visibility="gone" />
 
@@ -114,90 +119,75 @@
         <Button
             android:id="@+id/miniPlayerButton"
             android:layout_width="wrap_content"
-            android:layout_height="40dp"
+            android:layout_height="44dp"
             android:layout_gravity="bottom|end"
-            android:layout_marginEnd="14dp"
-            android:layout_marginBottom="14dp"
-            android:elevation="10dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="16dp"
+            android:drawableStart="@drawable/ic_pip"
+            android:drawablePadding="8dp"
             android:gravity="center"
             android:minWidth="0dp"
+            android:minHeight="0dp"
             android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:text="▣  Mini video"
+            android:paddingEnd="18dp"
+            android:text="@string/mini_video"
             android:textAllCaps="false"
-            android:textSize="13sp"
-            android:textStyle="bold"
+            android:textSize="14sp"
             android:visibility="gone" />
     </FrameLayout>
 
     <LinearLayout
         android:id="@+id/navBar"
         android:layout_width="match_parent"
-        android:layout_height="54dp"
+        android:layout_height="56dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingStart="12dp"
-        android:paddingTop="6dp"
-        android:paddingEnd="12dp"
-        android:paddingBottom="6dp">
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp">
 
         <ImageButton
             android:id="@+id/backButton"
             android:layout_width="0dp"
-            android:layout_height="40dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
-            android:background="@android:color/transparent"
             android:contentDescription="Atrás"
-            android:padding="8dp"
-            android:scaleType="centerInside"
+            android:scaleType="center"
             android:src="@drawable/ic_nav_back" />
 
         <ImageButton
             android:id="@+id/forwardButton"
             android:layout_width="0dp"
-            android:layout_height="40dp"
-            android:layout_marginStart="8dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
-            android:background="@android:color/transparent"
             android:contentDescription="Adelante"
-            android:padding="8dp"
-            android:scaleType="centerInside"
+            android:scaleType="center"
             android:src="@drawable/ic_nav_forward" />
 
         <ImageButton
             android:id="@+id/homeButton"
             android:layout_width="0dp"
-            android:layout_height="40dp"
-            android:layout_marginStart="8dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
-            android:background="@android:color/transparent"
             android:contentDescription="Inicio"
-            android:padding="8dp"
-            android:scaleType="centerInside"
+            android:scaleType="center"
             android:src="@drawable/ic_nav_home" />
 
         <ImageButton
             android:id="@+id/reloadButton"
             android:layout_width="0dp"
-            android:layout_height="40dp"
-            android:layout_marginStart="8dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
-            android:background="@android:color/transparent"
             android:contentDescription="Recargar"
-            android:padding="8dp"
-            android:scaleType="centerInside"
+            android:scaleType="center"
             android:src="@drawable/ic_nav_reload" />
 
         <ImageButton
             android:id="@+id/newTabButton"
             android:layout_width="0dp"
-            android:layout_height="40dp"
-            android:layout_marginStart="8dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
-            android:background="@android:color/transparent"
             android:contentDescription="Nueva pestaña"
-            android:padding="8dp"
-            android:scaleType="centerInside"
+            android:scaleType="center"
             android:src="@drawable/ic_nav_add" />
     </LinearLayout>
 </LinearLayout>
