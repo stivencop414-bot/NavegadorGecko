@@ -8,19 +8,35 @@
    * Privacidad: nunca envía URL, título ni contenido de la página.
    * Rendimiento: no trabaja en pestañas ocultas (salvo en PiP), limita el
    * escaneo de Shadow DOM y solo informa cuando el estado cambia.
+   *
+   * El aspecto del mini video vive en pip.css (declarado en el manifest),
+   * aquí solo se marcan el video y sus ancestros con clases.
    */
 
   const REPORT_DEBOUNCE_MS = 250;
   const POLL_INTERVAL_MS = 2000;
   const SHADOW_SCAN_INTERVAL_MS = 5000;
   const HEARTBEAT_MS = 10000;
+  const RECONNECT_MIN_MS = 500;
+  const RECONNECT_MAX_MS = 30000;
+
+  // Algunos sitios (YouTube) pausan el video al cambiar el tamaño de la
+  // ventana. Durante esta ventana tras entrar en PiP se reanuda solo.
+  const PIP_RESUME_WINDOW_MS = 6000;
+  const PIP_MAX_AUTO_RESUMES = 3;
 
   let port = null;
+  let reconnectTimer = 0;
+  let reconnectDelay = RECONNECT_MIN_MS;
   let backgroundMedia = true;
   let visibilityHandler = null;
   let pipVideo = null;
   let pipAncestors = [];
   let pipActive = false;
+  let pipStartedAt = 0;
+  let pipShouldResume = false;
+  let pipAutoResumes = 0;
+  let pipUserPaused = false;
   let reportTimer = 0;
   let lastStateKey = "";
   let lastReportAt = 0;
@@ -54,6 +70,10 @@
   }
 
   installVisibilityGuard();
+
+  // ---------------------------------------------------------------
+  // Búsqueda de video
+  // ---------------------------------------------------------------
 
   function collectShadowVideos(root, output, depth) {
     if (!root || depth > 8) return;
@@ -114,6 +134,10 @@
     return !video.paused && !video.ended;
   }
 
+  function hasMedia(video) {
+    return video.readyState > 0 || !!video.currentSrc;
+  }
+
   function bestVideo(videos, preferPlaying) {
     const candidates = preferPlaying ? videos.filter(isPlaying) : videos;
     if (!candidates.length) return null;
@@ -123,61 +147,53 @@
       .sort((a, b) => videoArea(b) - videoArea(a))[0] || null;
   }
 
-  function ensurePipStyle() {
-    if (document.getElementById("nexo-pip-style")) return;
+  function pickPipVideo() {
+    const all = collectVideos();
+    const visible = all.filter(visibleEnough);
 
-    const style = document.createElement("style");
-    style.id = "nexo-pip-style";
+    // Si el video actual sigue siendo válido, no saltar a otro.
+    if (pipVideo && pipVideo.isConnected && all.includes(pipVideo) && hasMedia(pipVideo)) {
+      return pipVideo;
+    }
 
-    style.textContent = `
-      html.nexo-pip-root,
-      html.nexo-pip-root body {
-        background: #000 !important;
-        overflow: hidden !important;
+    // En la ventana pequeña de PiP el sitio puede encoger u ocultar el
+    // reproductor: si ninguno es "visible", usar cualquiera con medios.
+    const withMedia = all.filter(hasMedia);
+    return (
+      bestVideo(visible, true) ||
+      bestVideo(withMedia, true) ||
+      bestVideo(visible, false) ||
+      bestVideo(withMedia, false)
+    );
+  }
+
+  // ---------------------------------------------------------------
+  // Mini video (PiP)
+  // ---------------------------------------------------------------
+
+  function onPipVideoPause() {
+    if (!pipActive || pipUserPaused || !pipShouldResume) return;
+    if (Date.now() - pipStartedAt > PIP_RESUME_WINDOW_MS) return;
+    if (pipAutoResumes >= PIP_MAX_AUTO_RESUMES) return;
+
+    const video = pipVideo;
+    if (!video) return;
+
+    pipAutoResumes++;
+    setTimeout(() => {
+      if (pipActive && !pipUserPaused && video === pipVideo && video.paused && !video.ended) {
+        video.play().catch(() => {});
       }
-
-      /*
-       * Solo neutralizamos propiedades que pueden crear
-       * containing blocks. No cambiamos position/z-index
-       * de la jerarquía del sitio porque eso puede romper
-       * su compositor de video.
-       */
-      html.nexo-pip-root .nexo-pip-ancestor {
-        transform: none !important;
-        contain: none !important;
-        will-change: auto !important;
-        filter: none !important;
-        perspective: none !important;
-        backdrop-filter: none !important;
-        overflow: visible !important;
-      }
-
-      html.nexo-pip-root video.nexo-pip-video {
-        position: fixed !important;
-        inset: 0 !important;
-        width: 100vw !important;
-        height: 100vh !important;
-        max-width: 100vw !important;
-        max-height: 100vh !important;
-        object-fit: contain !important;
-        object-position: center center !important;
-        z-index: 2147483647 !important;
-        background: #000 !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        transform: none !important;
-        opacity: 1 !important;
-        visibility: visible !important;
-      }
-    `;
-
-    (document.head || document.documentElement).appendChild(style);
+    }, 150);
   }
 
   function clearPipIsolation() {
     document.documentElement.classList.remove("nexo-pip-root");
 
-    if (pipVideo) pipVideo.classList.remove("nexo-pip-video");
+    if (pipVideo) {
+      pipVideo.classList.remove("nexo-pip-video");
+      pipVideo.removeEventListener("pause", onPipVideoPause, true);
+    }
 
     for (const ancestor of pipAncestors) {
       ancestor.classList.remove("nexo-pip-ancestor");
@@ -187,59 +203,98 @@
     pipAncestors = [];
   }
 
-  function pickPipVideo() {
-    const videos = collectVideos().filter(visibleEnough);
-    return bestVideo(videos, true) || bestVideo(videos, false);
+  function markAncestors(video) {
+    const ancestors = [];
+    let current = video.parentElement;
+
+    while (current) {
+      if (current === document.body || current === document.documentElement) break;
+      ancestors.push(current);
+
+      if (current.parentElement) {
+        current = current.parentElement;
+      } else {
+        // Salir de un Shadow DOM hacia su elemento anfitrión.
+        const root = current.getRootNode && current.getRootNode();
+        current = root && root.host ? root.host : null;
+      }
+    }
+
+    for (const ancestor of ancestors) ancestor.classList.add("nexo-pip-ancestor");
+    return ancestors;
   }
 
-  function setPipIsolation(active) {
+  function isolate(video) {
+    if (video === pipVideo &&
+        video.isConnected &&
+        pipAncestors.every(a => a.isConnected && a.classList.contains("nexo-pip-ancestor")) &&
+        video.classList.contains("nexo-pip-video")) {
+      return;
+    }
+
+    clearPipIsolation();
+    pipVideo = video;
+    pipAncestors = markAncestors(video);
+    video.classList.add("nexo-pip-video");
+    video.addEventListener("pause", onPipVideoPause, true);
+    document.documentElement.classList.add("nexo-pip-root");
+  }
+
+  function setPipIsolation(active, resume) {
+    const wasActive = pipActive;
     pipActive = active === true;
 
     if (!pipActive) {
       clearPipIsolation();
+      pipShouldResume = false;
+      pipUserPaused = false;
       return;
+    }
+
+    if (!wasActive) {
+      pipStartedAt = Date.now();
+      pipAutoResumes = 0;
+      pipUserPaused = false;
+      pipShouldResume = false;
     }
 
     const video = pickPipVideo();
     if (!video) return;
 
-    clearPipIsolation();
-    ensurePipStyle();
-
-    pipVideo = video;
-
-    let current = video.parentElement;
-    while (
-      current &&
-      current !== document.body &&
-      current !== document.documentElement
-    ) {
-      current.classList.add("nexo-pip-ancestor");
-      pipAncestors.push(current);
-      current = current.parentElement;
+    if (!wasActive || resume) {
+      pipShouldResume = pipShouldResume || resume === true || isPlaying(video);
     }
 
-    document.documentElement.classList.add("nexo-pip-root");
-    video.classList.add("nexo-pip-video");
+    isolate(video);
+
+    // Si el sitio ya pausó el video durante la transición, reanudarlo.
+    if (pipShouldResume && video.paused && !video.ended) onPipVideoPause();
   }
 
   function refreshPipIsolation() {
     if (!pipActive) return;
-
     const video = pickPipVideo();
+    if (video) isolate(video);
+  }
+
+  function pipCommand(command) {
+    const video = pipVideo || pickPipVideo();
     if (!video) return;
 
-    const currentStillValid =
-      pipVideo === video &&
-      video.isConnected &&
-      pipAncestors.every(
-        ancestor =>
-          ancestor.isConnected &&
-          ancestor.classList.contains("nexo-pip-ancestor")
-      );
-
-    if (!currentStillValid) setPipIsolation(true);
+    if (command === "pause" || (command === "toggle" && !video.paused)) {
+      pipUserPaused = true;
+      video.pause();
+    } else if (command === "play" || command === "toggle") {
+      pipUserPaused = false;
+      video.play().catch(() => {});
+    }
+    lastStateKey = "";
+    scheduleVideoReport();
   }
+
+  // ---------------------------------------------------------------
+  // Estado hacia Nexo
+  // ---------------------------------------------------------------
 
   function reportVideoState() {
     refreshPipIsolation();
@@ -250,8 +305,10 @@
     if (document.visibilityState === "hidden" && !pipActive) return;
 
     const videos = collectVideos().filter(visibleEnough);
-    const anyVideo = bestVideo(videos, false);
-    const playingVideo = bestVideo(videos, true);
+    const anyVideo = pipActive ? (pipVideo || bestVideo(videos, false)) : bestVideo(videos, false);
+    const playingVideo = pipActive
+      ? (pipVideo && isPlaying(pipVideo) ? pipVideo : null)
+      : bestVideo(videos, true);
     const best = playingVideo || anyVideo;
 
     const state = {
@@ -303,31 +360,76 @@
 
   setInterval(reportVideoState, POLL_INTERVAL_MS);
 
+  // ---------------------------------------------------------------
+  // Conexión con Nexo (con reconexión)
+  // ---------------------------------------------------------------
+
+  function onNativeMessage(message) {
+    if (!message || typeof message !== "object") return;
+
+    // Un mensaje recibido confirma que la conexión funciona.
+    reconnectDelay = RECONNECT_MIN_MS;
+
+    if (message.type === "browser_state") {
+      applyState(message);
+    }
+
+    if (message.type === "pip_mode") {
+      setPipIsolation(message.active === true, message.resume === true);
+      // Forzar un informe inmediato tras entrar/salir de PiP.
+      lastStateKey = "";
+      scheduleVideoReport();
+    }
+
+    if (message.type === "pip_command" && typeof message.command === "string") {
+      pipCommand(message.command);
+    }
+  }
+
+  function scheduleReconnect() {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+  }
+
+  /*
+   * Si la página carga antes de que Nexo registre el puente (por ejemplo,
+   * la pestaña restaurada al abrir la app), la primera conexión falla. En
+   * sitios de una sola página como YouTube el script vive mucho tiempo, así
+   * que sin reconexión el mini video nunca funcionaría en esa pestaña.
+   */
+  function connect() {
+    clearTimeout(reconnectTimer);
+
+    let candidate = null;
+    try {
+      candidate = browser.runtime.connectNative("browser");
+    } catch (_) {
+      port = null;
+      scheduleReconnect();
+      return;
+    }
+
+    port = candidate;
+    lastStateKey = "";
+
+    candidate.onMessage.addListener(onNativeMessage);
+    candidate.onDisconnect.addListener(() => {
+      if (port === candidate) port = null;
+      scheduleReconnect();
+    });
+
+    try {
+      candidate.postMessage({ type: "content_script_ready" });
+    } catch (_) {}
+
+    scheduleVideoReport();
+  }
+
   browser.runtime
     .sendNativeMessage("browser", { type: "get_state" })
     .then(applyState)
     .catch(() => {});
 
-  try {
-    port = browser.runtime.connectNative("browser");
-
-    port.onMessage.addListener(message => {
-      if (!message || typeof message !== "object") return;
-
-      if (message.type === "browser_state") {
-        applyState(message);
-      }
-
-      if (message.type === "pip_mode") {
-        setPipIsolation(message.active === true);
-        // Forzar un informe inmediato tras entrar/salir de PiP.
-        lastStateKey = "";
-        scheduleVideoReport();
-      }
-    });
-
-    port.postMessage({ type: "content_script_ready" });
-
-    scheduleVideoReport();
-  } catch (_) {}
+  connect();
 })();

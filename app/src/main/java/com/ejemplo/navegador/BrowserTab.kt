@@ -14,5 +14,6 @@ data class BrowserTab(
     var lastUsed: Long = System.currentTimeMillis(),
     var isLoading: Boolean = false,
     var sessionState: String? = null,
+    var isFullScreen: Boolean = false,
     var session: GeckoSession? = null
 )

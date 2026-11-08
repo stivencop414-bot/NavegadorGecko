@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base clara/oscura. El color de fondo real lo pone ThemeManager. -->
+    <style name="Theme.Nexo.Base.Light" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/nexo_light_background</item>
+        <item name="android:colorBackground">@color/nexo_light_background</item>
+        <item name="android:textColorPrimary">@color/nexo_light_text</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <style name="Theme.Nexo.Base.Dark" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/nexo_dark_background</item>
+        <item name="android:colorBackground">@color/nexo_dark_background</item>
+        <item name="android:textColorPrimary">@color/nexo_dark_text</item>
+    </style>
+
+    <style name="Theme.Nexo.Light.Violet" parent="Theme.Nexo.Base.Light">
+        <item name="android:colorAccent">#7C3AED</item>
+        <item name="android:colorPrimary">#7C3AED</item>
+        <item name="android:colorControlActivated">#7C3AED</item>
+        <item name="android:textColorHighlight">#7C3AED55</item>
+    </style>
+
+    <style name="Theme.Nexo.Light.Cyan" parent="Theme.Nexo.Base.Light">
+        <item name="android:colorAccent">#06B6D4</item>
+        <item name="android:colorPrimary">#06B6D4</item>
+        <item name="android:colorControlActivated">#06B6D4</item>
+        <item name="android:textColorHighlight">#06B6D455</item>
+    </style>
+
+    <style name="Theme.Nexo.Light.Lime" parent="Theme.Nexo.Base.Light">
+        <item name="android:colorAccent">#22C55E</item>
+        <item name="android:colorPrimary">#22C55E</item>
+        <item name="android:colorControlActivated">#22C55E</item>
+        <item name="android:textColorHighlight">#22C55E55</item>
+    </style>
+
+    <style name="Theme.Nexo.Light.Orange" parent="Theme.Nexo.Base.Light">
+        <item name="android:colorAccent">#F97316</item>
+        <item name="android:colorPrimary">#F97316</item>
+        <item name="android:colorControlActivated">#F97316</item>
+        <item name="android:textColorHighlight">#F9731655</item>
+    </style>
+
+    <style name="Theme.Nexo.Light.Pink" parent="Theme.Nexo.Base.Light">
+        <item name="android:colorAccent">#EC4899</item>
+        <item name="android:colorPrimary">#EC4899</item>
+        <item name="android:colorControlActivated">#EC4899</item>
+        <item name="android:textColorHighlight">#EC489955</item>
+    </style>
+
+    <style name="Theme.Nexo.Light.Red" parent="Theme.Nexo.Base.Light">
+        <item name="android:colorAccent">#EF4444</item>
+        <item name="android:colorPrimary">#EF4444</item>
+        <item name="android:colorControlActivated">#EF4444</item>
+        <item name="android:textColorHighlight">#EF444455</item>
+    </style>
+
+    <style name="Theme.Nexo.Dark.Violet" parent="Theme.Nexo.Base.Dark">
+        <item name="android:colorAccent">#7C3AED</item>
+        <item name="android:colorPrimary">#7C3AED</item>
+        <item name="android:colorControlActivated">#7C3AED</item>
+        <item name="android:textColorHighlight">#7C3AED55</item>
+    </style>
+
+    <style name="Theme.Nexo.Dark.Cyan" parent="Theme.Nexo.Base.Dark">
+        <item name="android:colorAccent">#06B6D4</item>
+        <item name="android:colorPrimary">#06B6D4</item>
+        <item name="android:colorControlActivated">#06B6D4</item>
+        <item name="android:textColorHighlight">#06B6D455</item>
+    </style>
+
+    <style name="Theme.Nexo.Dark.Lime" parent="Theme.Nexo.Base.Dark">
+        <item name="android:colorAccent">#22C55E</item>
+        <item name="android:colorPrimary">#22C55E</item>
+        <item name="android:colorControlActivated">#22C55E</item>
+        <item name="android:textColorHighlight">#22C55E55</item>
+    </style>
+
+    <style name="Theme.Nexo.Dark.Orange" parent="Theme.Nexo.Base.Dark">
+        <item name="android:colorAccent">#F97316</item>
+        <item name="android:colorPrimary">#F97316</item>
+        <item name="android:colorControlActivated">#F97316</item>
+        <item name="android:textColorHighlight">#F9731655</item>
+    </style>
+
+    <style name="Theme.Nexo.Dark.Pink" parent="Theme.Nexo.Base.Dark">
+        <item name="android:colorAccent">#EC4899</item>
+        <item name="android:colorPrimary">#EC4899</item>
+        <item name="android:colorControlActivated">#EC4899</item>
+        <item name="android:textColorHighlight">#EC489955</item>
+    </style>
+
+    <style name="Theme.Nexo.Dark.Red" parent="Theme.Nexo.Base.Dark">
+        <item name="android:colorAccent">#EF4444</item>
+        <item name="android:colorPrimary">#EF4444</item>
+        <item name="android:colorControlActivated">#EF4444</item>
+        <item name="android:textColorHighlight">#EF444455</item>
+    </style>
+
+</resources>

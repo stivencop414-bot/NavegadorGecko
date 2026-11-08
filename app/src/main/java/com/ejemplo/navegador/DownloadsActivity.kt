@@ -68,14 +68,24 @@ class DownloadsActivity : Activity() {
         if (listView.adapter != null && updated == entries) return
         entries = updated
         findViewById<Button>(R.id.listAction).isEnabled = entries.isNotEmpty()
-        listView.adapter = ThemeManager.listAdapter(
+        listView.adapter = ThemeManager.rowsAdapter(
             this,
             entries.map {
-                "${it.fileName}\n${Formatter.formatShortFileSize(this, it.size)} · ${it.mimeType}"
+                val ext = it.fileName.substringAfterLast('.', "").uppercase().take(4)
+                val source = runCatching { android.net.Uri.parse(it.sourceUrl).host }
+                    .getOrNull()
+                    ?.removePrefix("www.")
+                    .orEmpty()
+                ListRow(
+                    title = it.fileName,
+                    subtitle = listOf(Formatter.formatShortFileSize(this, it.size), source)
+                        .filter { part -> part.isNotBlank() }
+                        .joinToString(" · "),
+                    meta = android.text.format.DateFormat.format("dd/MM/yyyy · HH:mm", it.timestamp).toString(),
+                    badge = ext.ifBlank { "↓" }
+                )
             }
         )
-        listView.divider = null
-        listView.dividerHeight = (resources.displayMetrics.density * 8).toInt()
     }
 
     private fun open(entry: DownloadEntry) {
@@ -115,5 +125,6 @@ class DownloadsActivity : Activity() {
         findViewById<View>(R.id.listRoot).setBackgroundColor(p.background)
         ThemeManager.styleText(this, findViewById(R.id.listTitle))
         ThemeManager.styleButton(this, findViewById(R.id.listAction))
+        ThemeManager.styleBackButton(this, findViewById(R.id.backButton))
     }
 }

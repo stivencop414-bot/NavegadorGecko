@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base clara/oscura. El color de fondo real lo pone ThemeManager. -->
+    <style name="Theme.Nexo.Base.Light" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/nexo_light_background</item>
+        <item name="android:colorBackground">@color/nexo_light_background</item>
+        <item name="android:textColorPrimary">@color/nexo_light_text</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:dialogCornerRadius">24dp</item>
+    </style>
+
+    <style name="Theme.Nexo.Base.Dark" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/nexo_dark_background</item>
+        <item name="android:colorBackground">@color/nexo_dark_background</item>
+        <item name="android:textColorPrimary">@color/nexo_dark_text</item>
+        <item name="android:dialogCornerRadius">24dp</item>
+    </style>
+
+</resources>

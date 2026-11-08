@@ -26,12 +26,12 @@ object RemoteImageLoader {
     private val main = Handler(Looper.getMainLooper())
 
     fun load(url: String, target: ImageView) {
-        target.setImageResource(R.drawable.ic_extension_placeholder)
+        showPlaceholder(target)
         target.tag = url
         if (url.isBlank() || UrlSafety.scheme(url) != "https") return
 
         cache.get(url)?.let {
-            target.setImageBitmap(it)
+            showBitmap(target, it)
             return
         }
 
@@ -40,9 +40,24 @@ object RemoteImageLoader {
 
             cache.put(url, bitmap)
             main.post {
-                if (target.tag == url) target.setImageBitmap(bitmap)
+                if (target.tag == url) showBitmap(target, bitmap)
             }
         }
+    }
+
+    /** El icono genérico se tiñe con el color secundario del tema para que se vea. */
+    private fun showPlaceholder(target: ImageView) {
+        target.setImageResource(R.drawable.ic_extension_placeholder)
+        val activity = target.context as? android.app.Activity
+        target.imageTintList = activity?.let {
+            android.content.res.ColorStateList.valueOf(ThemeManager.palette(it).muted)
+        }
+    }
+
+    /** Un icono real no debe teñirse. */
+    private fun showBitmap(target: ImageView, bitmap: Bitmap) {
+        target.imageTintList = null
+        target.setImageBitmap(bitmap)
     }
 
     private fun fetch(url: String): Bitmap? {

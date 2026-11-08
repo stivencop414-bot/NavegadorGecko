@@ -57,6 +57,7 @@ class StoreAddonAdapter(
 
         val icon = ImageView(activity).apply {
             setImageResource(R.drawable.ic_extension_placeholder)
+            imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
             val sz = (42 * d).toInt()
             val padIcon = (8 * d).toInt()
             setPadding(padIcon, padIcon, padIcon, padIcon)

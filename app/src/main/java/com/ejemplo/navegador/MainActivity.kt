@@ -3,7 +3,12 @@ package com.ejemplo.navegador
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.PendingIntent
 import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import android.graphics.drawable.Icon
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
@@ -21,6 +26,8 @@ import android.util.Rational
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
@@ -32,6 +39,7 @@ import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
 
@@ -51,6 +59,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     private lateinit var viewModel: BrowserViewModel
     private var attachedSession: GeckoSession? = null
     private var settingsFingerprint = ""
+    private var themeKey = ""
     private var mediaNotificationPermissionAsked = false
     private var suppressAutoPipOnce = false
 
@@ -58,6 +67,27 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     // la Activity de foreground a PiP/background.
     private var pipPlaybackWasActive = false
     private var backgroundPlaybackWasActive = false
+
+    // onStop antes de salir de PiP = el usuario cerró la ventana mini.
+    private var activityStopped = false
+
+    // Un sitio puso un elemento (normalmente el video) en pantalla completa.
+    private var fullScreenActive = false
+
+    /** Botones reproducir/pausar de la ventana PiP. */
+    private val pipControlReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != ACTION_PIP_CONTROL) return
+            val command = intent.getStringExtra(EXTRA_PIP_COMMAND) ?: return
+            val tab = TabManager.activeTab() ?: return
+
+            if (!ExtensionManager.sendPipCommand(tab.session, command)) {
+                BrowserMediaController.togglePlayback(tab.id)
+            }
+            // El estado real llega desde la página; refrescar el icono en breve.
+            geckoView.postDelayed({ updatePipParams() }, 350)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeManager.applyWindow(this)
@@ -79,9 +109,16 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         BrowserMediaController.attach(this)
         applyTheme()
         configureUi()
+        ThemeManager.takeInitialFocus(root)
         TabManager.initialize(this)
         TabManager.attach(this)
         ExtensionManager.attachPromptActivity(this)
+        ContextCompat.registerReceiver(
+            this,
+            pipControlReceiver,
+            IntentFilter(ACTION_PIP_CONTROL),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
 
         // Al recrear la Activity (rotación, cambio de tema) no repetir la
         // navegación del intent original.
@@ -139,11 +176,18 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         }
 
         omnibox.setOnFocusChangeListener { _, focused ->
+            val tab = TabManager.activeTab()
             if (focused) {
+                // Al editar se muestra la URL completa, seleccionada.
+                tab?.let { omnibox.setText(it.url) }
                 omnibox.selectAll()
+                setOmniboxIcon(null)
                 clearOmniboxButton.visibility =
                     if (omnibox.text.isNullOrEmpty()) View.GONE else View.VISIBLE
-            } else clearOmniboxButton.visibility = View.GONE
+            } else {
+                clearOmniboxButton.visibility = View.GONE
+                tab?.let { renderOmnibox(it) }
+            }
         }
     }
 
@@ -376,15 +420,14 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     private fun applyTheme() {
         val p = ThemeManager.palette(this)
         root.setBackgroundColor(p.background)
-        topBar.setBackgroundColor(p.surface)
-        navBar.setBackgroundColor(p.surface)
+        topBar.background = ThemeManager.barBackground(this, lineOnTop = false)
+        navBar.background = ThemeManager.barBackground(this, lineOnTop = true)
         ThemeManager.styleEdit(this, omnibox)
         ThemeManager.styleButton(this, miniPlayerButton, primary = true)
-        listOf(
-            R.id.tabButton,
-            R.id.menuButton,
-            R.id.clearOmniboxButton
-        ).forEach { ThemeManager.styleButton(this, findViewById(it)) }
+        miniPlayerButton.elevation = 6f * resources.displayMetrics.density
+        ThemeManager.styleTabCounter(this, tabButton)
+        ThemeManager.styleFlatButton(this, findViewById(R.id.menuButton))
+        ThemeManager.styleFlatButton(this, clearOmniboxButton)
 
         listOf(
             backButton,
@@ -394,10 +437,13 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             findViewById<ImageButton>(R.id.newTabButton)
         ).forEach { ThemeManager.styleIconButton(this, it) }
 
-        privateBanner.setBackgroundColor(p.accent)
-        privateBanner.setTextColor(p.onAccent)
+        privateBanner.setBackgroundColor(p.accentSoft)
+        privateBanner.setTextColor(p.accent)
         progress.progressTintList = android.content.res.ColorStateList.valueOf(p.accent)
+        progress.progressBackgroundTintList =
+            android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
         settingsFingerprint = fingerprint()
+        themeKey = ThemeManager.themeKey(this)
     }
 
     private fun fingerprint(): String =
@@ -457,8 +503,65 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             geckoView.setSession(session)
             attachedSession = session
         }
+        if (fullScreenActive != tab.isFullScreen) {
+            fullScreenActive = tab.isFullScreen
+            applyChromeVisibility()
+        }
         renderTab(tab)
         updatePipParams()
+    }
+
+    override fun onFullScreenChanged(tab: BrowserTab, fullScreen: Boolean) {
+        fullScreenActive = fullScreen
+        applyChromeVisibility()
+    }
+
+    private val immersive: Boolean
+        get() = isInPictureInPictureMode || fullScreenActive
+
+    /**
+     * Barras de Nexo y del sistema según el modo: normal, pantalla completa
+     * de un video, o ventana PiP (solo el contenido web).
+     */
+    private fun applyChromeVisibility(forcePip: Boolean = false) {
+        val pip = forcePip || isInPictureInPictureMode
+        val hideChrome = pip || fullScreenActive
+        val tab = TabManager.activeTab()
+
+        topBar.visibility = if (hideChrome) View.GONE else View.VISIBLE
+        navBar.visibility = if (hideChrome) View.GONE else View.VISIBLE
+        privateBanner.visibility =
+            if (!hideChrome && tab?.isPrivate == true) View.VISIBLE else View.GONE
+        progress.visibility =
+            if (!hideChrome && tab?.isLoading == true) View.VISIBLE else View.GONE
+
+        setSystemBarsHidden(fullScreenActive && !pip)
+        updateMiniPlayerChip()
+        root.requestLayout()
+    }
+
+    private fun setSystemBarsHidden(hidden: Boolean) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val controller = window.insetsController ?: return
+            if (hidden) {
+                controller.systemBarsBehavior =
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsets.Type.systemBars())
+            } else {
+                controller.show(WindowInsets.Type.systemBars())
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            if (hidden) {
+                window.decorView.systemUiVisibility =
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                        View.SYSTEM_UI_FLAG_FULLSCREEN or
+                        View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            } else {
+                ThemeManager.applyWindow(this)
+            }
+        }
     }
 
     override fun onTabChanged(tab: BrowserTab) {
@@ -468,7 +571,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     override fun onProgress(tab: BrowserTab, progressValue: Int, loading: Boolean) {
         if (tab.id != TabManager.activeTab()?.id) return
         progress.progress = progressValue
-        progress.visibility = if (loading) View.VISIBLE else View.GONE
+        progress.visibility = if (loading && !immersive) View.VISIBLE else View.GONE
         if (!loading) captureCurrentTabPreview()
     }
 
@@ -499,18 +602,38 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         updatePipParams()
     }
 
+    /** Muestra el dominio (como Chrome/Firefox) y un candado si es HTTPS. */
+    private fun renderOmnibox(tab: BrowserTab) {
+        omnibox.setText(displayUrl(tab.url))
+        setOmniboxIcon(
+            if (UrlSafety.scheme(tab.url) == "https") R.drawable.ic_lock else R.drawable.ic_search
+        )
+    }
+
+    private fun setOmniboxIcon(icon: Int?) {
+        val drawable = icon?.let { getDrawable(it)?.mutate() }
+        omnibox.setCompoundDrawablesRelativeWithIntrinsicBounds(drawable, null, null, null)
+    }
+
+    private fun displayUrl(url: String): String {
+        if (!UrlSafety.isWebUrl(url)) return url
+        val host = runCatching { Uri.parse(url).host }.getOrNull()?.lowercase() ?: return url
+        return host.removePrefix("www.").removePrefix("m.")
+    }
+
     private fun renderTab(tab: BrowserTab) {
-        if (!omnibox.hasFocus()) omnibox.setText(tab.url)
+        if (!omnibox.hasFocus()) renderOmnibox(tab)
         backButton.isEnabled = TabManager.canGoBackOrPrevious()
         forwardButton.isEnabled = tab.canGoForward
         privateBanner.visibility =
-            if (!isInPictureInPictureMode && tab.isPrivate) View.VISIBLE else View.GONE
+            if (!immersive && tab.isPrivate) View.VISIBLE else View.GONE
         title = if (tab.isPrivate) "Privado · ${tab.title}" else tab.title
         updateMiniPlayerChip()
     }
 
     override fun onStart() {
         super.onStart()
+        activityStopped = false
         val tab = TabManager.activeTab()
         if (tab != null && tab.session == null) TabManager.switchTo(tab.id)
         else TabManager.resumeActive()
@@ -528,6 +651,12 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
         super.onResume()
         ExtensionManager.attachPromptActivity(this)
+        if (themeKey.isNotBlank() && themeKey != ThemeManager.themeKey(this)) {
+            // Diálogos, menús y controles del sistema dependen del tema de la
+            // Activity: recrearla para aplicarlo entero.
+            recreate()
+            return
+        }
         if (settingsFingerprint.isNotBlank() && settingsFingerprint != fingerprint()) {
             ThemeManager.applyWindow(this)
             applyTheme()
@@ -562,6 +691,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             }
         }
 
+        activityStopped = true
         super.onStop()
     }
 
@@ -600,7 +730,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
     private fun updateMiniPlayerChip() {
         miniPlayerButton.visibility =
-            if (!isInPictureInPictureMode && isMiniVideoAvailable()) View.VISIBLE
+            if (!immersive && isMiniVideoAvailable()) View.VISIBLE
             else View.GONE
     }
 
@@ -630,12 +760,17 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         // Mantener GeckoSession activa durante la transición a PiP.
         TabManager.prepareForPictureInPicture()
 
-        // Pedir al bridge JS que aísle únicamente el video HTML5.
-        ExtensionManager.setPipMode(session, true)
+        // Pedir al bridge JS que aísle únicamente el video HTML5 y que lo
+        // reanude si el sitio lo pausa al cambiar el tamaño de la ventana.
+        ExtensionManager.setPipMode(session, true, resumePlayback = pipPlaybackWasActive)
 
         miniPlayerButton.visibility = View.GONE
 
         val enterPip = Runnable {
+            // Ocultar las barras ANTES de entrar: el primer cuadro de la
+            // ventana mini ya debe ser solo el video.
+            applyChromeVisibility(forcePip = true)
+
             val entered = runCatching {
                 enterPictureInPictureMode(buildPipParams(tab.id))
             }.getOrDefault(false)
@@ -643,7 +778,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             if (!entered) {
                 pipPlaybackWasActive = false
                 ExtensionManager.setPipMode(session, false)
-                updateMiniPlayerChip()
+                applyChromeVisibility()
             }
         }
 
@@ -664,6 +799,8 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             if (geckoView.getGlobalVisibleRect(rect)) builder.setSourceRectHint(rect)
         }
 
+        builder.setActions(pipActions(tabId))
+
         if (Build.VERSION.SDK_INT >= 31) {
             /*
              * Nexo controla manualmente el PiP desde onUserLeaveHint().
@@ -676,6 +813,26 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         }
 
         return builder.build()
+    }
+
+    private fun pipActions(tabId: String?): List<RemoteAction> {
+        val playing = tabId != null && BrowserMediaController.isPlaybackActive(tabId)
+        val (icon, label, command) =
+            if (playing) Triple(R.drawable.ic_pip_pause, "Pausar", PIP_COMMAND_PAUSE)
+            else Triple(R.drawable.ic_pip_play, "Reproducir", PIP_COMMAND_PLAY)
+
+        val pending = PendingIntent.getBroadcast(
+            this,
+            REQUEST_PIP_CONTROL,
+            Intent(ACTION_PIP_CONTROL)
+                .setPackage(packageName)
+                .putExtra(EXTRA_PIP_COMMAND, command),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return listOf(
+            RemoteAction(Icon.createWithResource(this, icon), label, label, pending)
+        )
     }
 
     private fun updatePipParams() {
@@ -738,31 +895,55 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         newConfig: Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        ExtensionManager.setPipMode(attachedSession, isInPictureInPictureMode)
+        ExtensionManager.setPipMode(
+            attachedSession,
+            isInPictureInPictureMode,
+            resumePlayback = pipPlaybackWasActive
+        )
 
-        if (isInPictureInPictureMode) {
-            /*
-             * GeckoView mantiene la sesión/compositor activos.
-             * No forzar MediaSession.play(): en YouTube puede
-             * reiniciar el decoder y producir frames negros.
-             */
-            TabManager.prepareForPictureInPicture()
-        } else {
-            pipPlaybackWasActive = false
-            TabManager.resumeActive()
+        val tab = TabManager.activeTab()
+
+        when {
+            isInPictureInPictureMode -> {
+                /*
+                 * GeckoView mantiene la sesión/compositor activos.
+                 * No forzar MediaSession.play(): en YouTube puede
+                 * reiniciar el decoder y producir frames negros.
+                 */
+                TabManager.prepareForPictureInPicture()
+            }
+
+            activityStopped -> {
+                // El usuario cerró la ventana mini (la X o arrastrándola).
+                pipPlaybackWasActive = false
+                if (tab != null && BrowserPrefs.backgroundMedia(this) &&
+                    BrowserMediaController.isPlaybackActive(tab.id)
+                ) {
+                    // Seguir como audio en segundo plano, con notificación.
+                    BrowserMediaController.holdPlayback(tab.id, 10_000L)
+                    TabManager.prepareForBackground()
+                    MediaPlaybackService.sync(this)
+                } else {
+                    if (tab != null &&
+                        !ExtensionManager.sendPipCommand(tab.session, PIP_COMMAND_PAUSE)
+                    ) {
+                        BrowserMediaController.pause(tab.id)
+                    }
+                    TabManager.prepareForBackground()
+                }
+            }
+
+            else -> {
+                // Volvió a pantalla completa desde la ventana mini.
+                pipPlaybackWasActive = false
+                TabManager.resumeActive()
+            }
         }
 
         runCatching {
             attachedSession?.compositorController?.onPipModeChanged(isInPictureInPictureMode)
         }
-        topBar.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
-        navBar.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
-        progress.visibility = View.GONE
-        val current = TabManager.activeTab()
-        privateBanner.visibility =
-            if (!isInPictureInPictureMode && current?.isPrivate == true) View.VISIBLE else View.GONE
-        updateMiniPlayerChip()
-        root.requestLayout()
+        applyChromeVisibility()
     }
 
     override fun onRequestPermissionsResult(
@@ -775,6 +956,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     }
 
     override fun onDestroy() {
+        runCatching { unregisterReceiver(pipControlReceiver) }
         BrowserMediaController.attach(null)
         ExtensionManager.attachPromptActivity(null)
         TabManager.attach(null)
@@ -788,6 +970,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        if (TabManager.exitFullScreen()) return
         if (TabManager.canGoBackOrPrevious()) TabManager.goBackOrPrevious()
         else super.onBackPressed()
     }
@@ -795,6 +978,12 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     companion object {
         const val EXTRA_OPEN_URL = "nexo.open_url"
         private const val REQUEST_MEDIA_NOTIFICATIONS = 912
+        private const val REQUEST_PIP_CONTROL = 913
+
+        private const val ACTION_PIP_CONTROL = "com.ejemplo.navegador.action.PIP_CONTROL"
+        private const val EXTRA_PIP_COMMAND = "command"
+        private const val PIP_COMMAND_PLAY = "play"
+        private const val PIP_COMMAND_PAUSE = "pause"
 
         /** Alias no exportado declarado en AndroidManifest.xml. */
         private val INTERNAL_OPEN_ALIAS =

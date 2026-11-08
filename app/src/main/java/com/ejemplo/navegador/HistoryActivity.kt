@@ -53,14 +53,28 @@ class HistoryActivity : Activity() {
         if (listView.adapter != null && updated == entries) return
         entries = updated
         findViewById<Button>(R.id.listAction).isEnabled = entries.isNotEmpty()
-        listView.adapter = ThemeManager.listAdapter(
+        listView.adapter = ThemeManager.rowsAdapter(
             this,
             entries.map {
-                "${it.title.ifBlank { "Página web" }}\n${it.url}\n${DateFormat.format("dd/MM HH:mm", it.timestamp)}"
+                val host = runCatching { android.net.Uri.parse(it.url).host }
+                    .getOrNull()
+                    ?.removePrefix("www.")
+                    .orEmpty()
+                ListRow(
+                    title = it.title.ifBlank { host.ifBlank { "Página web" } },
+                    subtitle = host.ifBlank { it.url },
+                    meta = DateFormat.format("dd/MM/yyyy · HH:mm", it.timestamp).toString(),
+                    badge = siteInitial(host)
+                )
             }
         )
-        listView.divider = null
-        listView.dividerHeight = (resources.displayMetrics.density * 6).toInt()
+    }
+
+    /** Inicial del dominio principal: es.wikipedia.org → W, m.youtube.com → Y. */
+    private fun siteInitial(host: String): String {
+        val labels = host.split('.').filter { it.isNotBlank() }
+        val main = if (labels.size >= 2) labels[labels.size - 2] else labels.firstOrNull().orEmpty()
+        return main.take(1).uppercase()
     }
 
     private fun open(url: String) {
@@ -72,5 +86,6 @@ class HistoryActivity : Activity() {
         findViewById<View>(R.id.listRoot).setBackgroundColor(p.background)
         ThemeManager.styleText(this, findViewById(R.id.listTitle))
         ThemeManager.styleButton(this, findViewById(R.id.listAction))
+        ThemeManager.styleBackButton(this, findViewById(R.id.backButton))
     }
 }

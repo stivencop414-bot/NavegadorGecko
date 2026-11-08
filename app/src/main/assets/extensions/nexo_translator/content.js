@@ -195,24 +195,50 @@
     } catch (_) {}
   }
 
-  try {
-    port = browser.runtime.connectNative(NATIVE_APP);
+  function onNativeMessage(message) {
+    reconnectDelay = 500;
+    if (message && message.type === "translate_page") {
+      const target =
+        typeof message.target === "string" && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(message.target)
+          ? message.target
+          : "es";
+      translatePage(target);
+    }
+  }
 
-    port.onMessage.addListener(message => {
-      if (
-        message &&
-        message.type === "translate_page"
-      ) {
-        const target =
-          typeof message.target === "string" && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(message.target)
-            ? message.target
-            : "es";
-        translatePage(target);
-      }
+  // Reconectar si Nexo aún no había registrado el traductor cuando cargó
+  // la página (por ejemplo, la pestaña restaurada al abrir la app).
+  let reconnectTimer = 0;
+  let reconnectDelay = 500;
+
+  function scheduleReconnect() {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+  }
+
+  function connect() {
+    clearTimeout(reconnectTimer);
+    let candidate = null;
+    try {
+      candidate = browser.runtime.connectNative(NATIVE_APP);
+    } catch (_) {
+      port = null;
+      scheduleReconnect();
+      return;
+    }
+
+    port = candidate;
+    candidate.onMessage.addListener(onNativeMessage);
+    candidate.onDisconnect.addListener(() => {
+      if (port === candidate) port = null;
+      scheduleReconnect();
     });
 
-    port.postMessage({
-      type: "translator_ready"
-    });
-  } catch (_) {}
+    try {
+      candidate.postMessage({ type: "translator_ready" });
+    } catch (_) {}
+  }
+
+  connect();
 })();

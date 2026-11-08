@@ -488,6 +488,9 @@ class ExtensionStoreActivity :
             palette.background
         )
 
+        ThemeManager.styleBackButton(this, findViewById(R.id.backButton))
+        ThemeManager.takeInitialFocus(findViewById(R.id.storeRoot))
+
         ThemeManager.styleText(
             this,
             findViewById(
