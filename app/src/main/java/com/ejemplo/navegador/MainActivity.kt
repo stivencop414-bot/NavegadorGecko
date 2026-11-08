@@ -73,6 +73,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
     // Un sitio puso un elemento (normalmente el video) en pantalla completa.
     private var fullScreenActive = false
+    private var pendingPipEntry: Runnable? = null
 
     /** Botones reproducir/pausar de la ventana PiP. */
     private val pipControlReceiver = object : BroadcastReceiver() {
@@ -82,7 +83,10 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             val tab = TabManager.activeTab() ?: return
 
             if (!ExtensionManager.sendPipCommand(tab.session, command)) {
-                BrowserMediaController.togglePlayback(tab.id)
+                when (command) {
+                    PIP_COMMAND_PLAY -> BrowserMediaController.play(tab.id)
+                    PIP_COMMAND_PAUSE -> BrowserMediaController.pause(tab.id)
+                }
             }
             // El estado real llega desde la página; refrescar el icono en breve.
             geckoView.postDelayed({ updatePipParams() }, 350)
@@ -740,6 +744,13 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         delayMs: Long = 120L
     ) {
         if (isInPictureInPictureMode) return
+        pendingPipEntry?.let { pending ->
+            if (delayMs <= 0L) {
+                geckoView.removeCallbacks(pending)
+                pending.run()
+            }
+            return
+        }
 
         val tab = TabManager.activeTab() ?: return
         val session = tab.session ?: return
@@ -767,6 +778,12 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         miniPlayerButton.visibility = View.GONE
 
         val enterPip = Runnable {
+            pendingPipEntry = null
+            if (activityStopped || suppressAutoPipOnce || isFinishing || isDestroyed || attachedSession !== session ||
+                TabManager.activeTab()?.id != tab.id) {
+                ExtensionManager.setPipMode(session, false)
+                return@Runnable
+            }
             // Ocultar las barras ANTES de entrar: el primer cuadro de la
             // ventana mini ya debe ser solo el video.
             applyChromeVisibility(forcePip = true)
@@ -786,6 +803,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
          * Botón manual: 120 ms para que JS prepare el aislamiento.
          * Home / cambio de app: delay 0 para evitar carrera con onStop().
          */
+        pendingPipEntry = enterPip
         if (delayMs <= 0L) enterPip.run() else geckoView.postDelayed(enterPip, delayMs)
     }
 
@@ -821,17 +839,23 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             if (playing) Triple(R.drawable.ic_pip_pause, "Pausar", PIP_COMMAND_PAUSE)
             else Triple(R.drawable.ic_pip_play, "Reproducir", PIP_COMMAND_PLAY)
 
-        val pending = PendingIntent.getBroadcast(
-            this,
-            REQUEST_PIP_CONTROL,
-            Intent(ACTION_PIP_CONTROL)
-                .setPackage(packageName)
-                .putExtra(EXTRA_PIP_COMMAND, command),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        fun action(iconRes: Int, description: String, value: String, requestCode: Int) =
+            RemoteAction(
+                Icon.createWithResource(this, iconRes), description, description,
+                PendingIntent.getBroadcast(
+                    this, requestCode,
+                    Intent(ACTION_PIP_CONTROL).setPackage(packageName)
+                        .putExtra(EXTRA_PIP_COMMAND, value),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
 
+        val playback = action(icon, label, command, REQUEST_PIP_CONTROL)
+        if (!ExtensionManager.hasMediaBridge(TabManager.activeSession())) return listOf(playback)
         return listOf(
-            RemoteAction(Icon.createWithResource(this, icon), label, label, pending)
+            action(R.drawable.ic_pip_replay, getString(R.string.seek_backward), "seek_backward", 914),
+            playback,
+            action(R.drawable.ic_pip_forward, getString(R.string.seek_forward), "seek_forward", 915)
         )
     }
 
@@ -956,6 +980,8 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     }
 
     override fun onDestroy() {
+        pendingPipEntry?.let { geckoView.removeCallbacks(it) }
+        if (!isInPictureInPictureMode) ExtensionManager.setPipMode(attachedSession, false)
         runCatching { unregisterReceiver(pipControlReceiver) }
         BrowserMediaController.attach(null)
         ExtensionManager.attachPromptActivity(null)

@@ -87,11 +87,7 @@ object ThemeManager {
 
     fun palette(activity: Activity): BrowserPalette {
         val accent = accentColor(activity)
-        val onAccent = if (ColorUtils.calculateLuminance(accent) > 0.42) {
-            Color.rgb(15, 17, 26)
-        } else {
-            Color.WHITE
-        }
+        val onAccent = UiContrast.foreground(accent)
 
         return when (resolvedTheme(activity)) {
             BrowserPrefs.THEME_LIGHT -> BrowserPalette(

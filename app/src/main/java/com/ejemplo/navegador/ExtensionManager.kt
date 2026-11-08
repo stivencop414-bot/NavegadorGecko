@@ -32,6 +32,8 @@ object ExtensionManager {
     private var promptActivity = WeakReference<Activity>(null)
     private var bridge: WebExtension? = null
     private val ports = mutableSetOf<WebExtension.Port>()
+    private data class PipState(val resume: Boolean)
+    private val pipStates = java.util.WeakHashMap<GeckoSession, PipState>()
     private var initialized = false
 
     /*
@@ -817,31 +819,31 @@ object ExtensionManager {
         active: Boolean,
         resumePlayback: Boolean = false
     ) {
-        postToTopLevel(
-            session,
-            JSONObject().apply {
-                put("type", "pip_mode")
-                put("active", active)
-                put("resume", active && resumePlayback)
-            }
-        )
+        if (session == null) return
+        if (active) pipStates.putIfAbsent(session, PipState(resumePlayback))
+        else pipStates.remove(session)
+        postToTopLevel(session, pipModeMessage(active, pipStates[session]?.resume == true))
     }
 
-    /**
-     * Controla el video del mini reproductor ("play", "pause" o "toggle").
-     * Devuelve false si la página no tiene el puente conectado.
-     */
-    fun sendPipCommand(
-        session: GeckoSession?,
-        command: String
-    ): Boolean =
-        postToTopLevel(
-            session,
-            JSONObject().apply {
-                put("type", "pip_command")
-                put("command", command)
-            }
-        )
+    private fun pipModeMessage(active: Boolean, resume: Boolean) = JSONObject().apply {
+        put("type", "pip_mode")
+        put("active", active)
+        put("resume", active && resume)
+    }
+
+    fun sendPipCommand(session: GeckoSession?, command: String): Boolean {
+        if (session == null) return false
+        if (pipStates.containsKey(session) && command in listOf("play", "pause")) {
+            pipStates[session] = PipState(command == "play")
+        }
+        return postToTopLevel(session, JSONObject().apply {
+            put("type", "pip_command")
+            put("command", command)
+        })
+    }
+
+    fun hasMediaBridge(session: GeckoSession?): Boolean =
+        session != null && ports.any { it.sender.session === session && it.sender.isTopLevel() }
 
     private fun postToTopLevel(session: GeckoSession?, message: JSONObject): Boolean {
         if (session == null) return false
@@ -1180,6 +1182,17 @@ object ExtensionManager {
                 )
 
                 sendBrowserState(AppContext.get())
+                port.sender.session?.let { session ->
+                    pipStates[session]?.let { state ->
+                        runCatching {
+                            port.postMessage(pipModeMessage(true, state.resume))
+                            if (!state.resume) port.postMessage(JSONObject().apply {
+                                put("type", "pip_command")
+                                put("command", "pause")
+                            })
+                        }
+                    }
+                }
             }
         }
 

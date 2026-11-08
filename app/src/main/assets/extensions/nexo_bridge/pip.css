@@ -10,6 +10,10 @@
 
 html.nexo-pip-root,
 html.nexo-pip-root body {
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
   background: #000 !important;
   overflow: hidden !important;
 }
@@ -29,6 +33,10 @@ html.nexo-pip-root body *:not(.nexo-pip-ancestor):not(.nexo-pip-video) {
  * pueda ocupar toda la ventana.
  */
 html.nexo-pip-root .nexo-pip-ancestor {
+  /* Algunos reproductores ocultan su contenedor al estrechar la ventana. */
+  display: block !important;
+  isolation: auto !important;
+  z-index: auto !important;
   visibility: visible !important;
   transform: none !important;
   translate: none !important;
