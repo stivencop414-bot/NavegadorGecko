@@ -198,6 +198,7 @@
   }
 
   function clearPipIsolation() {
+    removePipMask();
     clearTimeout(pipResumeTimer);
     pipResumeTimer = 0;
     document.documentElement.classList.remove("nexo-pip-root");
@@ -243,6 +244,8 @@
         video.isConnected &&
         pipAncestors.every(a => a.isConnected && a.classList.contains("nexo-pip-ancestor")) &&
         video.classList.contains("nexo-pip-video")) {
+      // YouTube y otros reescriben className del <html>: volver a ponerla.
+      document.documentElement.classList.add("nexo-pip-root");
       return;
     }
 
@@ -255,9 +258,67 @@
     document.documentElement.classList.add("nexo-pip-root");
   }
 
-  function setPipIsolation(active, resume) {
+  /*
+   * isolateCss=false: Nexo hace zoom nativo sobre el rectángulo del video y la
+   * página no se modifica ni se redimensiona. Solo se vigilan las pausas.
+   */
+  let pipIsolateCss = true;
+
+  function trackWithoutIsolation(video) {
+    if (pipVideo !== video) {
+      clearPipIsolation();
+      pipVideo = video;
+      video.addEventListener("pause", onPipVideoPause, true);
+    }
+    updatePipMask();
+  }
+
+  /*
+   * Máscara negra con un hueco exacto sobre el video (modo recorte nativo).
+   * Android dibuja la ventana PiP con un margen para la sombra; sin máscara,
+   * en ese margen asomaba el encabezado del sitio. Es un elemento fijo y
+   * transparente en el centro: no cambia el layout ni el tamaño de la página.
+   */
+  let pipMask = null;
+
+  function updatePipMask() {
+    if (!pipActive || pipIsolateCss || !pipVideo || !pipVideo.isConnected) {
+      removePipMask();
+      return;
+    }
+    let r;
+    try { r = pipVideo.getBoundingClientRect(); } catch (_) { return; }
+
+    if (!pipMask || !pipMask.isConnected) {
+      pipMask = document.createElement("div");
+      pipMask.setAttribute("aria-hidden", "true");
+      document.documentElement.appendChild(pipMask);
+    }
+    const set = (name, value) => pipMask.style.setProperty(name, value, "important");
+    set("all", "initial");
+    set("position", "fixed");
+    set("left", `${r.left}px`);
+    set("top", `${r.top}px`);
+    set("width", `${r.width}px`);
+    set("height", `${r.height}px`);
+    set("box-shadow", "0 0 0 100vmax #000");
+    set("background", "transparent");
+    set("pointer-events", "none");
+    set("z-index", "2147483647");
+    set("display", "block");
+  }
+
+  function removePipMask() {
+    if (pipMask) {
+      try { pipMask.remove(); } catch (_) {}
+      pipMask = null;
+    }
+  }
+
+  function setPipIsolation(active, resume, isolateCss) {
     const wasActive = pipActive;
     pipActive = active === true;
+    if (pipActive) pipIsolateCss = isolateCss !== false;
 
     if (!pipActive) {
       clearPipIsolation();
@@ -279,7 +340,7 @@
       pipShouldResume = pipShouldResume || resume === true || isPlaying(video);
     }
 
-    isolate(video);
+    if (pipIsolateCss) isolate(video); else trackWithoutIsolation(video);
 
     // Si el sitio ya pausó el video durante la transición, reanudarlo.
     if (pipShouldResume && video.paused && !video.ended) onPipVideoPause();
@@ -289,7 +350,7 @@
     if (!pipActive) return;
     const video = pickPipVideo();
     if (video) {
-      isolate(video);
+      if (pipIsolateCss) isolate(video); else trackWithoutIsolation(video);
       onPipVideoPause();
     }
   }
@@ -341,15 +402,22 @@
       : bestVideo(videos, true);
     const best = playingVideo || anyVideo;
 
+    const rect = best ? screenRect(best) : null;
     const state = {
       type: "video_state",
       present: !!anyVideo,
       playing: !!playingVideo,
       width: best ? Number(best.videoWidth || best.clientWidth || 0) : 0,
-      height: best ? Number(best.videoHeight || best.clientHeight || 0) : 0
+      height: best ? Number(best.videoHeight || best.clientHeight || 0) : 0,
+      // Rectángulo del video en píxeles de la vista (para el mini video nativo).
+      rx: rect ? rect.x : 0,
+      ry: rect ? rect.y : 0,
+      rw: rect ? rect.w : 0,
+      rh: rect ? rect.h : 0
     };
 
-    const key = `${state.present}|${state.playing}|${state.width}|${state.height}`;
+    const key = `${state.present}|${state.playing}|${state.width}|${state.height}|` +
+      `${state.rx}|${state.ry}|${state.rw}|${state.rh}`;
     const now = Date.now();
 
     if (key === lastStateKey && now - lastReportAt < HEARTBEAT_MS) return;
@@ -360,6 +428,25 @@
     try {
       port.postMessage(state);
     } catch (_) {}
+  }
+
+  function screenRect(video) {
+    try {
+      const r = video.getBoundingClientRect();
+      const vv = window.visualViewport;
+      const zoom = vv ? vv.scale : 1;
+      const ox = vv ? vv.offsetLeft : 0;
+      const oy = vv ? vv.offsetTop : 0;
+      const dpr = window.devicePixelRatio || 1;
+      return {
+        x: Math.round((r.left - ox) * zoom * dpr),
+        y: Math.round((r.top - oy) * zoom * dpr),
+        w: Math.round(r.width * zoom * dpr),
+        h: Math.round(r.height * zoom * dpr)
+      };
+    } catch (_) {
+      return null;
+    }
   }
 
   function scheduleVideoReport() {
@@ -382,6 +469,8 @@
   ].forEach(type => {
     document.addEventListener(type, scheduleVideoReport, true);
   });
+
+  window.addEventListener("scroll", scheduleVideoReport, { passive: true, capture: true });
 
   try {
     const observer = new MutationObserver(scheduleVideoReport);
@@ -408,7 +497,7 @@
     }
 
     if (message.type === "pip_mode") {
-      setPipIsolation(message.active === true, message.resume === true);
+      setPipIsolation(message.active === true, message.resume === true, message.isolate !== false);
       // Forzar un informe inmediato tras entrar/salir de PiP.
       lastStateKey = "";
       scheduleVideoReport();
