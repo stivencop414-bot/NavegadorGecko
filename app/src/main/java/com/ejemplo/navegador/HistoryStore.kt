@@ -15,8 +15,18 @@ object HistoryStore {
     private const val KEY = "entries"
     private const val MAX = 500
 
-    @Synchronized
+    private val io = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+        Thread(task, "NexoHistory").apply { isDaemon = true }
+    }
+
+    /** Se llama al terminar cada carga: no bloquear el hilo principal. */
     fun add(context: Context, rawUrl: String, title: String) {
+        val app = context.applicationContext
+        io.execute { addNow(app, rawUrl, title) }
+    }
+
+    @Synchronized
+    private fun addNow(context: Context, rawUrl: String, title: String) {
         if (rawUrl.isBlank() || rawUrl.startsWith("resource://android/assets/home/")) return
         if (rawUrl.equals("about:blank", ignoreCase = true)) return
 

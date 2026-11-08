@@ -24,7 +24,6 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.util.Rational
 import android.view.KeyEvent
-import android.view.Menu
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -35,7 +34,6 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -54,6 +52,17 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     private lateinit var privateBanner: TextView
     private lateinit var miniPlayerButton: Button
     private lateinit var root: View
+    private lateinit var browserFrame: android.widget.FrameLayout
+    private lateinit var startPage: StartPageView
+    private var startPageKey = ""
+
+    /**
+     * Mini video nativo: rectángulo del video (px de la GeckoView) que se
+     * amplía para llenar la ventana PiP. Mientras no sea null, la GeckoView
+     * conserva su tamaño, así la página NO se redimensiona (YouTube pausaba
+     * y reorganizaba la página al achicarse) y no hace falta modificar su CSS.
+     */
+    private var pipCrop: Rect? = null
     private lateinit var topBar: View
     private lateinit var navBar: View
     private lateinit var viewModel: BrowserViewModel
@@ -134,6 +143,24 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         topBar = findViewById(R.id.topBar)
         navBar = findViewById(R.id.navBar)
         geckoView = findViewById(R.id.geckoView)
+        browserFrame = findViewById(R.id.browserFrame)
+        startPage = StartPageView(
+            this,
+            onSearch = { focusOmnibox() },
+            onOpen = { url -> TabManager.navigate(url) }
+        ).apply { visibility = View.GONE }
+        // Encima de la GeckoView y debajo del botón "Mini video".
+        browserFrame.addView(
+            startPage,
+            1,
+            android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        browserFrame.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (pipCrop != null && isInPictureInPictureMode) applyPipCrop()
+        }
         omnibox = findViewById(R.id.omnibox)
         progress = findViewById(R.id.pageProgress)
         tabButton = findViewById(R.id.tabButton)
@@ -183,7 +210,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             val tab = TabManager.activeTab()
             if (focused) {
                 // Al editar se muestra la URL completa, seleccionada.
-                tab?.let { omnibox.setText(it.url) }
+                tab?.takeUnless { BrowserPrefs.isNexoHome(it.url) }?.let { omnibox.setText(it.url) }
                 omnibox.selectAll()
                 setOmniboxIcon(null)
                 clearOmniboxButton.visibility =
@@ -202,44 +229,50 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         omnibox.clearFocus()
     }
 
-    private fun showMenu(anchor: View) {
-        val popup = PopupMenu(this, anchor)
+    /** Menú principal: hoja inferior con la página actual y una cuadrícula de acciones. */
+    private fun showMenu(@Suppress("UNUSED_PARAMETER") anchor: View) {
         val current = TabManager.activeTab()
-        val menu = popup.menu
+        var sheet: android.app.Dialog? = null
+        val dismiss = { sheet?.dismiss(); Unit }
 
-        menu.add(Menu.NONE, MENU_NEW_TAB, Menu.NONE, "Nueva pestaña")
-        menu.add(Menu.NONE, MENU_NEW_PRIVATE_TAB, Menu.NONE, "Nueva pestaña privada")
-        menu.add(Menu.NONE, MENU_DESKTOP, Menu.NONE, "Sitio de escritorio").apply {
-            isCheckable = true
-            isChecked = current?.desktopMode == true
-        }
-        menu.add(Menu.NONE, MENU_SHARE, Menu.NONE, "Compartir página")
-        menu.add(Menu.NONE, MENU_TRANSLATE, Menu.NONE, "Traducir página")
-        menu.add(Menu.NONE, MENU_EXTENSIONS, Menu.NONE, "Extensiones")
-        menu.add(Menu.NONE, MENU_HISTORY, Menu.NONE, "Historial")
-        menu.add(Menu.NONE, MENU_DOWNLOADS, Menu.NONE, "Descargas")
-        menu.add(Menu.NONE, MENU_SETTINGS, Menu.NONE, "Configuración")
-        menu.add(Menu.NONE, MENU_CLOSE_TAB, Menu.NONE, "Cerrar pestaña")
-
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                MENU_NEW_TAB -> viewModel.newTab(false)
-                MENU_NEW_PRIVATE_TAB -> viewModel.newTab(true)
-                MENU_DESKTOP -> TabManager.setDesktopMode(!(current?.desktopMode ?: false))
-                MENU_SHARE -> shareCurrent()
-                MENU_TRANSLATE -> TranslatorManager.translateActive(this) { _, message ->
+        val actions = listOf(
+            SheetAction(R.drawable.ic_nav_add, "Nueva pestaña") { viewModel.newTab(false) },
+            SheetAction(R.drawable.ic_menu_private, "Privada") { viewModel.newTab(true) },
+            SheetAction(R.drawable.ic_menu_history, "Historial") { openScreen(HistoryActivity::class.java) },
+            SheetAction(R.drawable.ic_menu_download, "Descargas") { openScreen(DownloadsActivity::class.java) },
+            SheetAction(R.drawable.ic_extension_placeholder, "Extensiones") {
+                openScreen(ExtensionStoreActivity::class.java)
+            },
+            SheetAction(R.drawable.ic_menu_translate, "Traducir") {
+                TranslatorManager.translateActive(this) { _, message ->
                     runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
                 }
-                MENU_EXTENSIONS -> openScreen(ExtensionStoreActivity::class.java)
-                MENU_HISTORY -> openScreen(HistoryActivity::class.java)
-                MENU_DOWNLOADS -> openScreen(DownloadsActivity::class.java)
-                MENU_SETTINGS -> openScreen(SettingsActivity::class.java)
-                MENU_CLOSE_TAB -> viewModel.closeCurrentTab()
-                else -> return@setOnMenuItemClickListener false
-            }
-            true
-        }
-        popup.show()
+            },
+            SheetAction(R.drawable.ic_menu_share, "Compartir") { shareCurrent() },
+            SheetAction(
+                R.drawable.ic_menu_desktop,
+                "Escritorio",
+                active = current?.desktopMode == true
+            ) { TabManager.setDesktopMode(!(current?.desktopMode ?: false)) },
+            SheetAction(R.drawable.ic_menu_copy, "Copiar enlace") {
+                current?.let { copyText("Enlace", it.url) }
+            },
+            SheetAction(R.drawable.ic_menu_tabs, "Pestañas") { showTabsDialog() },
+            SheetAction(R.drawable.ic_menu_settings, "Ajustes") { openScreen(SettingsActivity::class.java) },
+            SheetAction(R.drawable.ic_menu_close, "Cerrar", danger = true) { viewModel.closeCurrentTab() }
+        )
+
+        val content = NexoSheets.column(
+            this,
+            NexoSheets.header(
+                this,
+                if (BrowserPrefs.isNexoHome(current?.url)) "Página de inicio"
+                else current?.title?.ifBlank { null } ?: "Nexo Browser",
+                current?.url?.takeUnless { BrowserPrefs.isNexoHome(it) }
+            ),
+            NexoSheets.grid(this, actions, dismiss = dismiss)
+        )
+        sheet = NexoSheets.show(this, content)
     }
 
     private fun openScreen(screen: Class<out Activity>) {
@@ -251,6 +284,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         val tab = TabManager.activeTab() ?: return
         if (
             tab.isPrivate ||
+            BrowserPrefs.isNexoHome(tab.url) ||
             tab.isLoading ||
             BrowserMediaController.isPlaying(tab.id) ||
             geckoView.width <= 0 ||
@@ -270,109 +304,64 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
     private fun showTabsDialog() {
         captureCurrentTabPreview()
-        val p = ThemeManager.palette(this)
-        var dialog: AlertDialog? = null
-        val d = resources.displayMetrics.density
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding((10 * d).toInt(), (8 * d).toInt(), (10 * d).toInt(), (8 * d).toInt())
-            setBackgroundColor(p.surface)
-        }
-
-        TabManager.allTabs().forEach { tab ->
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = android.view.Gravity.CENTER_VERTICAL
-                background = ThemeManager.rounded(this@MainActivity, p.elevated, 18f)
-                setPadding((8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt())
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = (8 * d).toInt() }
-            }
-
-            val preview = ImageView(this).apply {
-                layoutParams = LinearLayout.LayoutParams((92 * d).toInt(), (70 * d).toInt())
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                val bitmap = if (tab.isPrivate) null else TabPreviewStore.load(this@MainActivity, tab.id)
-                if (bitmap != null) setImageBitmap(bitmap) else setImageResource(R.drawable.ic_nexo_logo)
-                setBackgroundColor(p.surface)
-            }
-
-            val text = TextView(this).apply {
-                this.text = (if (tab.isPrivate) "◉ Privada · " else "") + tab.title.take(70)
-                textSize = 14.5f
-                maxLines = 2
-                setTextColor(p.text)
-                setPadding((10 * d).toInt(), 0, (8 * d).toInt(), 0)
-                layoutParams = LinearLayout.LayoutParams(
-                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-                )
-            }
-
-            val close = Button(this).apply {
-                this.text = "×"
-                textSize = 20f
-                minWidth = 0
-                layoutParams = LinearLayout.LayoutParams((44 * d).toInt(), (44 * d).toInt())
-                ThemeManager.styleButton(this@MainActivity, this)
-                setOnClickListener {
-                    TabManager.closeTab(tab.id)
-                    dialog?.dismiss()
-                    showTabsDialog()
-                }
-            }
-
-            row.setOnClickListener {
-                captureCurrentTabPreview()
-                TabManager.switchTo(tab.id)
-                dialog?.dismiss()
-            }
-            preview.setOnClickListener { row.performClick() }
-            text.setOnClickListener { row.performClick() }
-            row.addView(preview)
-            row.addView(text)
-            row.addView(close)
-            container.addView(row)
-        }
-
-        dialog = AlertDialog.Builder(this)
-            .setTitle("Pestañas (${TabManager.allTabs().size})")
-            .setView(container)
-            .setNegativeButton("Cerrar", null)
-            .setNeutralButton("Privada") { _, _ -> viewModel.newTab(true) }
-            .setPositiveButton("Nueva") { _, _ -> viewModel.newTab(false) }
-            .create()
-        dialog?.show()
+        TabSwitcher.show(this) { private -> viewModel.newTab(private) }
     }
 
+    /** Mantener pulsado un enlace o imagen: hoja con las acciones disponibles. */
     override fun onContextElement(element: GeckoSession.ContentDelegate.ContextElement) {
         val link = element.linkUri.orEmpty()
         val image = element.srcUri.orEmpty()
-        val options = mutableListOf<String>()
+        if (link.isBlank() && image.isBlank()) return
 
-        if (link.isNotBlank()) options += listOf(
-            "Abrir enlace", "Abrir enlace en nueva pestaña", "Copiar enlace", "Descargar enlace"
-        )
-        if (image.isNotBlank()) options += listOf(
-            "Abrir imagen", "Abrir imagen en nueva pestaña", "Copiar URL de imagen", "Descargar imagen"
-        )
-        if (options.isEmpty()) return
+        var sheet: android.app.Dialog? = null
+        val dismiss = { sheet?.dismiss(); Unit }
+        val actions = mutableListOf<SheetAction>()
 
-        AlertDialog.Builder(this)
-            .setTitle("Acciones")
-            .setItems(options.toTypedArray()) { _, which ->
-                when (options[which]) {
-                    "Abrir enlace" -> TabManager.navigate(link)
-                    "Abrir enlace en nueva pestaña" -> TabManager.createTab(link)
-                    "Copiar enlace" -> copyText("Enlace", link)
-                    "Descargar enlace" -> downloadUrl(link)
-                    "Abrir imagen" -> TabManager.navigate(image)
-                    "Abrir imagen en nueva pestaña" -> TabManager.createTab(image)
-                    "Copiar URL de imagen" -> copyText("Imagen", image)
-                    "Descargar imagen" -> downloadUrl(image)
-                }
-            }.show()
+        if (link.isNotBlank()) {
+            actions += SheetAction(R.drawable.ic_menu_open, "Abrir en nueva pestaña") {
+                TabManager.createTab(link)
+            }
+            actions += SheetAction(R.drawable.ic_menu_private, "Abrir en pestaña privada") {
+                TabManager.createTab(link, isPrivate = true)
+            }
+            actions += SheetAction(R.drawable.ic_menu_link, "Abrir aquí") { TabManager.navigate(link) }
+            actions += SheetAction(R.drawable.ic_menu_copy, "Copiar enlace") { copyText("Enlace", link) }
+            actions += SheetAction(R.drawable.ic_menu_share, "Compartir enlace") { shareText(link) }
+            actions += SheetAction(R.drawable.ic_menu_download, "Descargar enlace") { downloadUrl(link) }
+        }
+        if (image.isNotBlank()) {
+            actions += SheetAction(R.drawable.ic_menu_image, "Abrir imagen en nueva pestaña") {
+                TabManager.createTab(image)
+            }
+            actions += SheetAction(R.drawable.ic_menu_copy, "Copiar dirección de la imagen") {
+                copyText("Imagen", image)
+            }
+            actions += SheetAction(R.drawable.ic_menu_download, "Descargar imagen") { downloadUrl(image) }
+        }
+
+        val title = element.title?.takeIf { it.isNotBlank() }
+            ?: element.altText?.takeIf { it.isNotBlank() }
+            ?: element.linkText?.takeIf { it.isNotBlank() }
+            ?: if (link.isNotBlank()) "Enlace" else "Imagen"
+
+        sheet = NexoSheets.show(
+            this,
+            NexoSheets.column(
+                this,
+                NexoSheets.header(this, title, link.ifBlank { image }),
+                NexoSheets.list(this, actions, dismiss)
+            )
+        )
+    }
+
+    private fun shareText(text: String) {
+        suppressAutoPipOnce = true
+        startActivity(Intent.createChooser(
+            Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, text)
+            }, "Compartir"
+        ))
     }
 
     private fun copyText(label: String, value: String) {
@@ -492,7 +481,10 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             return
         }
 
-        TabManager.navigate(raw)
+        // Enlaces de otras apps: pestaña nueva (como otros navegadores). Así,
+        // al abrir Nexo en frío, la restauración de la pestaña anterior no
+        // puede pisar la URL pedida.
+        if (internal) TabManager.navigate(raw) else TabManager.createTab(raw)
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -540,6 +532,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             if (!hideChrome && tab?.isLoading == true) View.VISIBLE else View.GONE
 
         setSystemBarsHidden(fullScreenActive && !pip)
+        if (hideChrome) startPage.visibility = View.GONE else tab?.let { updateStartPage(it) }
         updateMiniPlayerChip()
         root.requestLayout()
     }
@@ -604,10 +597,48 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         }
         updateMiniPlayerChip()
         updatePipParams()
+        followPipVideo()
+    }
+
+    /** Si el video cambia de sitio durante el PiP, mover el recorte con él. */
+    private fun followPipVideo() {
+        val current = pipCrop ?: return
+        if (!isInPictureInPictureMode) return
+        val tab = TabManager.activeTab() ?: return
+        val rect = BrowserMediaController.videoRect(tab.id) ?: return
+        if (!rect.intersect(0, 0, geckoView.width, geckoView.height)) return
+        if (rect == current || rect.width() < 40 || rect.height() < 40) return
+        pipCrop = rect
+        applyPipCrop()
+    }
+
+    private fun focusOmnibox() {
+        omnibox.requestFocus()
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+            .showSoftInput(omnibox, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    /** Página de inicio de Nexo en pestañas nuevas (about:blank). */
+    private fun updateStartPage(tab: BrowserTab) {
+        val show = BrowserPrefs.isNexoHome(tab.url) && !immersive
+        if (show) {
+            // Re-dibujar solo si cambió la pestaña, el tema o la privacidad.
+            val key = tab.id + "|" + tab.isPrivate + "|" + ThemeManager.themeKey(this)
+            if (key != startPageKey || startPage.visibility != View.VISIBLE) {
+                startPage.render(tab.isPrivate)
+                startPageKey = key
+            }
+        }
+        startPage.visibility = if (show) View.VISIBLE else View.GONE
     }
 
     /** Muestra el dominio (como Chrome/Firefox) y un candado si es HTTPS. */
     private fun renderOmnibox(tab: BrowserTab) {
+        if (BrowserPrefs.isNexoHome(tab.url)) {
+            omnibox.setText("")
+            setOmniboxIcon(R.drawable.ic_search)
+            return
+        }
         omnibox.setText(displayUrl(tab.url))
         setOmniboxIcon(
             if (UrlSafety.scheme(tab.url) == "https") R.drawable.ic_lock else R.drawable.ic_search
@@ -627,6 +658,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
     private fun renderTab(tab: BrowserTab) {
         if (!omnibox.hasFocus()) renderOmnibox(tab)
+        updateStartPage(tab)
         backButton.isEnabled = TabManager.canGoBackOrPrevious()
         forwardButton.isEnabled = tab.canGoForward
         privateBanner.visibility =
@@ -771,9 +803,15 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         // Mantener GeckoSession activa durante la transición a PiP.
         TabManager.prepareForPictureInPicture()
 
-        // Pedir al bridge JS que aísle únicamente el video HTML5 y que lo
-        // reanude si el sitio lo pausa al cambiar el tamaño de la ventana.
-        ExtensionManager.setPipMode(session, true, resumePlayback = pipPlaybackWasActive)
+        // Recorte nativo si conocemos el rectángulo del video; si no (p. ej.
+        // video en un iframe), aislar el video con CSS como respaldo.
+        val nativeCrop = lockForNativePip(tab)
+        ExtensionManager.setPipMode(
+            session,
+            true,
+            resumePlayback = pipPlaybackWasActive,
+            isolateCss = !nativeCrop
+        )
 
         miniPlayerButton.visibility = View.GONE
 
@@ -782,6 +820,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             if (activityStopped || suppressAutoPipOnce || isFinishing || isDestroyed || attachedSession !== session ||
                 TabManager.activeTab()?.id != tab.id) {
                 ExtensionManager.setPipMode(session, false)
+                releaseNativePip()
                 return@Runnable
             }
             // Ocultar las barras ANTES de entrar: el primer cuadro de la
@@ -795,6 +834,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             if (!entered) {
                 pipPlaybackWasActive = false
                 ExtensionManager.setPipMode(session, false)
+                releaseNativePip()
                 applyChromeVisibility()
             }
         }
@@ -807,14 +847,71 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         if (delayMs <= 0L) enterPip.run() else geckoView.postDelayed(enterPip, delayMs)
     }
 
+    private fun lockForNativePip(tab: BrowserTab): Boolean {
+        val w = geckoView.width
+        val h = geckoView.height
+        if (w <= 0 || h <= 0) return false
+
+        val rect = BrowserMediaController.videoRect(tab.id) ?: return false
+        if (!rect.intersect(0, 0, w, h)) return false
+        val minW = (80 * resources.displayMetrics.density).toInt()
+        val minH = (45 * resources.displayMetrics.density).toInt()
+        if (rect.width() < minW || rect.height() < minH) return false
+
+        pipCrop = rect
+        // Tamaño fijo: aunque la ventana se achique, Gecko sigue viendo la misma
+        // vista y la página no recibe ningún "resize".
+        geckoView.layoutParams = android.widget.FrameLayout.LayoutParams(w, h)
+        return true
+    }
+
+    /** Amplía el rectángulo del video para cubrir la ventana PiP. */
+    private fun applyPipCrop() {
+        val crop = pipCrop ?: return
+        val fw = browserFrame.width.toFloat()
+        val fh = browserFrame.height.toFloat()
+        if (fw <= 0f || fh <= 0f) return
+
+        val scale = maxOf(fw / crop.width(), fh / crop.height())
+        geckoView.pivotX = 0f
+        geckoView.pivotY = 0f
+        geckoView.scaleX = scale
+        geckoView.scaleY = scale
+        geckoView.translationX = -crop.left * scale + (fw - crop.width() * scale) / 2f
+        geckoView.translationY = -crop.top * scale + (fh - crop.height() * scale) / 2f
+    }
+
+    private fun releaseNativePip() {
+        if (pipCrop == null && geckoView.scaleX == 1f && geckoView.translationY == 0f) return
+        pipCrop = null
+        geckoView.scaleX = 1f
+        geckoView.scaleY = 1f
+        geckoView.translationX = 0f
+        geckoView.translationY = 0f
+        geckoView.layoutParams = android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        )
+    }
+
     private fun buildPipParams(tabId: String?): PictureInPictureParams {
+        val crop = pipCrop
         val builder = PictureInPictureParams.Builder()
-            .setAspectRatio(pipAspectRatio(tabId))
+            .setAspectRatio(
+                if (crop != null) clampAspect(crop.width(), crop.height())
+                else pipAspectRatio(tabId)
+            )
 
         if (geckoView.width > 0 && geckoView.height > 0) {
-            // El hint debe ir en coordenadas de ventana.
-            val rect = Rect()
-            if (geckoView.getGlobalVisibleRect(rect)) builder.setSourceRectHint(rect)
+            // El hint debe ir en coordenadas de ventana: solo el video.
+            val location = IntArray(2)
+            geckoView.getLocationInWindow(location)
+            val hint = if (crop != null) {
+                Rect(crop).apply { offset(location[0], location[1]) }
+            } else {
+                Rect().takeIf { geckoView.getGlobalVisibleRect(it) }
+            }
+            hint?.let { builder.setSourceRectHint(it) }
         }
 
         builder.setActions(pipActions(tabId))
@@ -866,7 +963,10 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     private fun pipAspectRatio(tabId: String?): Rational {
         val (rawWidth, rawHeight) =
             if (tabId != null) BrowserMediaController.videoAspect(tabId) else 16 to 9
+        return clampAspect(rawWidth, rawHeight)
+    }
 
+    private fun clampAspect(rawWidth: Int, rawHeight: Int): Rational {
         val width = rawWidth.coerceAtLeast(1)
         val height = rawHeight.coerceAtLeast(1)
         val ratio = width.toDouble() / height.toDouble()
@@ -926,6 +1026,8 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         )
 
         val tab = TabManager.activeTab()
+
+        if (isInPictureInPictureMode) applyPipCrop() else releaseNativePip()
 
         when {
             isInPictureInPictureMode -> {
@@ -1015,16 +1117,6 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         private val INTERNAL_OPEN_ALIAS =
             MainActivity::class.java.name.substringBeforeLast('.') + ".InternalOpenActivity"
 
-        private const val MENU_NEW_TAB = 1
-        private const val MENU_NEW_PRIVATE_TAB = 2
-        private const val MENU_DESKTOP = 3
-        private const val MENU_SHARE = 4
-        private const val MENU_TRANSLATE = 5
-        private const val MENU_EXTENSIONS = 6
-        private const val MENU_HISTORY = 7
-        private const val MENU_DOWNLOADS = 8
-        private const val MENU_SETTINGS = 9
-        private const val MENU_CLOSE_TAB = 10
 
         /**
          * Intent para que las pantallas propias abran una URL en el navegador.

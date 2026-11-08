@@ -2,239 +2,376 @@ package com.ejemplo.navegador
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import android.text.Editable
+import android.text.TextUtils
 import android.text.TextWatcher
+import android.text.format.Formatter
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
+import android.widget.HorizontalScrollView
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import org.mozilla.geckoview.WebExtension
 
-class ExtensionsActivity :
-    Activity() {
+/**
+ * Extensiones instaladas y todas las formas de agregar nuevas: tienda,
+ * archivo XPI, carpeta, enlace (directo o ficha de addons.mozilla.org) y
+ * paquetes descargados con Nexo. Los paquetes locales se analizan antes de
+ * instalarlos para mostrar permisos y avisar si no están firmados.
+ */
+class ExtensionsActivity : Activity() {
+    private lateinit var listView: ListView
+    private lateinit var progress: ProgressBar
+    private lateinit var status: TextView
+    private lateinit var search: EditText
+    private lateinit var downloadsSection: LinearLayout
+    private lateinit var downloadsRow: LinearLayout
 
-    private lateinit var listView:
-        ListView
+    private var extensions: List<WebExtension> = emptyList()
+    private var visible: List<WebExtension> = emptyList()
 
-    private lateinit var progress:
-        ProgressBar
+    private fun dp(value: Float): Int = (value * resources.displayMetrics.density).toInt()
 
-    private lateinit var status:
-        TextView
-
-    private lateinit var search:
-        EditText
-
-    private var extensions:
-        List<WebExtension> =
-        emptyList()
-
-    private var visibleExtensions:
-        List<WebExtension> =
-        emptyList()
-
-    private val fileRequestCode =
-        701
-
-    private val folderRequestCode =
-        702
-
-    override fun onCreate(
-        savedInstanceState: Bundle?
-    ) {
+    override fun onCreate(savedInstanceState: Bundle?) {
         ThemeManager.applyWindow(this)
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_extensions)
 
-        super.onCreate(
-            savedInstanceState
-        )
+        listView = findViewById(R.id.extensionsList)
+        progress = findViewById(R.id.extensionsProgress)
 
-        setContentView(
-            R.layout.activity_extensions
-        )
-
-        listView =
-            findViewById(
-                R.id.extensionsList
-            )
-
-        progress =
-            findViewById(
-                R.id.extensionsProgress
-            )
-
-        status =
-            findViewById(
-                R.id.extensionsStatus
-            )
-
-        search =
-            findViewById(
-                R.id.extensionsSearch
-            )
-
-        findViewById<Button>(
-            R.id.storeButton
-        ).setOnClickListener {
-            startActivity(
-                Intent(
-                    this,
-                    ExtensionStoreActivity::class.java
-                )
-            )
+        listView.addHeaderView(buildHeader(), null, false)
+        listView.setOnItemClickListener { _, _, position, _ ->
+            visible.getOrNull(position - listView.headerViewsCount)?.let { showDetails(it) }
         }
 
-        findViewById<Button>(
-            R.id.importButton
-        ).setOnClickListener {
-            openFilePicker()
-        }
-
-        findViewById<Button>(
-            R.id.folderButton
-        ).setOnClickListener {
-            openFolderPicker()
-        }
-
-        findViewById<Button>(
-            R.id.urlInstallButton
-        ).setOnClickListener {
-            showUrlInstaller()
-        }
-
-        findViewById<Button>(
-            R.id.updateAllButton
-        ).setOnClickListener {
-            updateAll()
-        }
-
-        search.addTextChangedListener(
-            object : TextWatcher {
-                override fun beforeTextChanged(
-                    s: CharSequence?,
-                    start: Int,
-                    count: Int,
-                    after: Int
-                ) = Unit
-
-                override fun onTextChanged(
-                    s: CharSequence?,
-                    start: Int,
-                    before: Int,
-                    count: Int
-                ) {
-                    filter()
-                }
-
-                override fun afterTextChanged(
-                    s: Editable?
-                ) = Unit
-            }
-        )
-
-        listView
-            .setOnItemClickListener {
-                    _,
-                    view,
-                    position,
-                    _ ->
-
-                showExtensionMenu(
-                    view,
-                    visibleExtensions[
-                        position
-                    ]
-                )
-            }
-
+        findViewById<Button>(R.id.updateAllButton).setOnClickListener { updateAll() }
         applyTheme()
-        load()
+        render()
     }
 
     override fun onResume() {
         super.onResume()
-
-        ExtensionManager
-            .attachPromptActivity(
-                this
-            )
-
+        ExtensionManager.attachPromptActivity(this)
         load()
+        refreshDownloads()
     }
 
     override fun onDestroy() {
-        ExtensionManager
-            .attachPromptActivity(
-                null
-            )
-
+        ExtensionManager.attachPromptActivity(null)
         super.onDestroy()
     }
 
-    @Deprecated(
-        "Deprecated in Java"
-    )
-    override fun onActivityResult(
-        requestCode: Int,
-        resultCode: Int,
-        data: Intent?
-    ) {
-        super.onActivityResult(
-            requestCode,
-            resultCode,
-            data
-        )
+    // ---------------------------------------------------------------
+    // Encabezado: formas de agregar, descargas y búsqueda
+    // ---------------------------------------------------------------
 
-        if (
-            resultCode != RESULT_OK
-        ) {
-            return
+    private fun buildHeader(): View {
+        val p = ThemeManager.palette(this)
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(4f), 0, dp(10f))
         }
 
-        when (requestCode) {
-            fileRequestCode -> {
-                val uri =
-                    data?.data
-                        ?: return
-
-                importFile(uri)
-            }
-
-            folderRequestCode -> {
-                val uri =
-                    data?.data
-                        ?: return
-
-                runCatching {
-                    contentResolver
-                        .takePersistableUriPermission(
-                            uri,
-                            Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        )
+        header.addView(sectionLabel("Agregar extensiones"))
+        val tiles = listOf(
+            Triple(R.drawable.ic_menu_store, "Tienda") {
+                startActivity(Intent(this, ExtensionStoreActivity::class.java))
+            },
+            Triple(R.drawable.ic_menu_file, "Archivo XPI") { openFilePicker() },
+            Triple(R.drawable.ic_menu_folder, "Carpeta") { openFolderPicker() },
+            Triple(R.drawable.ic_menu_link, "Enlace") { showUrlInstaller() }
+        )
+        val grid = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = tiles.size.toFloat()
+        }
+        tiles.forEachIndexed { index, (icon, label, action) ->
+            grid.addView(
+                tile(icon, label, primary = index == 0, onClick = action),
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    if (index > 0) marginStart = dp(8f)
                 }
+            )
+        }
+        header.addView(grid)
 
+        // Paquetes .xpi descargados (se muestran solo si hay alguno).
+        downloadsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        downloadsSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            addView(sectionLabel("Desde tus descargas"))
+            addView(HorizontalScrollView(this@ExtensionsActivity).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(downloadsRow)
+            })
+        }
+        header.addView(downloadsSection)
+
+        search = EditText(this).apply {
+            hint = "Buscar entre mis extensiones"
+            setSingleLine(true)
+            textSize = 15f
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+            setPadding(dp(18f), 0, dp(18f), 0)
+            ThemeManager.styleEdit(this@ExtensionsActivity, this)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = render()
+                override fun afterTextChanged(s: Editable?) = Unit
+            })
+        }
+        header.addView(search, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48f)).apply {
+            topMargin = dp(18f)
+        })
+
+        status = TextView(this).apply {
+            textSize = 13f
+            setTextColor(p.muted)
+            setPadding(dp(4f), dp(12f), dp(4f), 0)
+        }
+        header.addView(status)
+        return header
+    }
+
+    private fun sectionLabel(text: String): TextView =
+        TextView(this).apply {
+            this.text = text
+            textSize = 13f
+            ThemeManager.styleSectionLabel(this@ExtensionsActivity, this)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(4f), dp(14f), dp(4f), dp(10f))
+        }
+
+    private fun tile(icon: Int, label: String, primary: Boolean, onClick: () -> Unit): View {
+        val p = ThemeManager.palette(this)
+        val bg = if (primary) p.accent else p.surface
+        val fg = if (primary) p.onAccent else p.text
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(4f), dp(14f), dp(4f), dp(12f))
+            background = ThemeManager.ripple(
+                this@ExtensionsActivity,
+                ThemeManager.rounded(this@ExtensionsActivity, bg, 20f, if (!primary && p.isDark) p.outline else null),
+                20f
+            )
+            isClickable = true
+            contentDescription = label
+            setOnClickListener { onClick() }
+            addView(ImageView(this@ExtensionsActivity).apply {
+                setImageResource(icon)
+                imageTintList = ColorStateList.valueOf(if (primary) p.onAccent else p.accent)
+                layoutParams = LinearLayout.LayoutParams(dp(26f), dp(26f))
+            })
+            addView(TextView(this@ExtensionsActivity).apply {
+                text = label
+                textSize = 12.5f
+                setTextColor(fg)
+                gravity = Gravity.CENTER
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, dp(6f), 0, 0)
+            })
+        }
+    }
+
+    private fun refreshDownloads() {
+        val packages = ExtensionManager.downloadedPackages(this)
+        downloadsRow.removeAllViews()
+        downloadsSection.visibility = if (packages.isEmpty()) View.GONE else View.VISIBLE
+        val p = ThemeManager.palette(this)
+        packages.take(10).forEach { entry ->
+            downloadsRow.addView(TextView(this).apply {
+                text = entry.fileName
+                textSize = 13f
+                setTextColor(p.text)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.MIDDLE
+                maxWidth = dp(220f)
+                compoundDrawablePadding = dp(8f)
+                setCompoundDrawablesRelativeWithIntrinsicBounds(
+                    getDrawable(R.drawable.ic_extension_placeholder)?.mutate()?.apply { setTint(p.accent) },
+                    null, null, null
+                )
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(14f), 0, dp(16f), 0)
+                background = ThemeManager.ripple(
+                    this@ExtensionsActivity,
+                    ThemeManager.rounded(this@ExtensionsActivity, p.surface, 20f, p.outline),
+                    20f
+                )
+                isClickable = true
+                setOnClickListener {
+                    DownloadStore.fileFor(this@ExtensionsActivity, entry)?.let { inspect(Uri.fromFile(it)) }
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44f)).apply {
+                marginEnd = dp(8f)
+            })
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Lista
+    // ---------------------------------------------------------------
+
+    private fun load() {
+        setLoading(true)
+        ExtensionManager.list(
+            onSuccess = { items ->
+                extensions = items.sortedBy { (it.metaData.name ?: it.id).lowercase() }
+                runOnUiThread {
+                    setLoading(false)
+                    render()
+                }
+            },
+            onError = { error ->
+                runOnUiThread {
+                    setLoading(false)
+                    status.text = "No se pudieron cargar las extensiones"
+                    toast("No se pudieron listar: ${error.message ?: "error desconocido"}")
+                }
+            }
+        )
+    }
+
+    private fun render() {
+        val term = search.text.toString().trim().lowercase()
+        visible = if (term.isBlank()) extensions else extensions.filter { ext ->
+            listOfNotNull(ext.metaData.name, ext.metaData.description, ext.metaData.creatorName, ext.id)
+                .any { it.lowercase().contains(term) }
+        }
+
+        val active = extensions.count { it.metaData.enabled }
+        status.text = when {
+            term.isNotBlank() -> "${visible.size} de ${extensions.size} extensiones"
+            extensions.isEmpty() -> getString(R.string.empty_extensions)
+            extensions.size == 1 -> "1 extensión instalada · ${if (active == 1) "activa" else "desactivada"}"
+            else -> "${extensions.size} extensiones instaladas · $active activas"
+        }
+
+        listView.adapter = InstalledExtensionAdapter(this, visible) { ext, enabled ->
+            if (ext.metaData.enabled != enabled) setEnabled(ext, enabled)
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Detalle de una extensión
+    // ---------------------------------------------------------------
+
+    private fun showDetails(extension: WebExtension) {
+        val meta = extension.metaData
+        val p = ThemeManager.palette(this)
+        var sheet: Dialog? = null
+        val dismiss = { sheet?.dismiss(); Unit }
+
+        val info = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24f), 0, dp(24f), dp(8f))
+        }
+        meta.description?.takeIf { it.isNotBlank() }?.let {
+            info.addView(TextView(this).apply {
+                text = it
+                textSize = 14f
+                setTextColor(p.text)
+                setLineSpacing(0f, 1.15f)
+                maxLines = 4
+                ellipsize = TextUtils.TruncateAt.END
+            })
+        }
+        val permissions = describePermissions(
+            meta.requiredPermissions.toList() + meta.grantedOptionalPermissions.toList(),
+            meta.requiredOrigins.toList() + meta.grantedOptionalOrigins.toList()
+        )
+        if (permissions.isNotEmpty()) {
+            info.addView(TextView(this).apply {
+                text = "Puede: " + permissions.joinToString(" · ")
+                textSize = 13f
+                setTextColor(p.muted)
+                setLineSpacing(0f, 1.15f)
+                setPadding(0, dp(10f), 0, 0)
+            })
+        }
+
+        val actions = mutableListOf<SheetAction>()
+        if (meta.enabled) {
+            actions += SheetAction(R.drawable.ic_menu_play, "Ejecutar en esta pestaña") {
+                ExtensionManager.runAction(extension) { _, message -> toast(message) }
+            }
+        }
+        meta.optionsPageUrl?.takeIf { it.isNotBlank() }?.let { url ->
+            actions += SheetAction(R.drawable.ic_menu_settings, "Opciones de la extensión") { openInBrowser(url) }
+        }
+        actions += SheetAction(
+            R.drawable.ic_menu_private,
+            if (meta.allowedInPrivateBrowsing) "Bloquear en pestañas privadas" else "Permitir en pestañas privadas"
+        ) { setPrivate(extension, !meta.allowedInPrivateBrowsing) }
+        actions += SheetAction(R.drawable.ic_menu_update, "Buscar actualización") { updateOne(extension) }
+        (meta.amoListingUrl ?: meta.homepageUrl)?.takeIf { it.isNotBlank() }?.let { url ->
+            actions += SheetAction(R.drawable.ic_menu_open, "Ver página de la extensión") { openInBrowser(url) }
+        }
+        actions += SheetAction(R.drawable.ic_menu_close, "Desinstalar", danger = true) { confirmUninstall(extension) }
+
+        sheet = NexoSheets.show(
+            this,
+            NexoSheets.column(
+                this,
+                NexoSheets.header(
+                    this,
+                    meta.name ?: extension.id,
+                    listOfNotNull(
+                        meta.version?.let { "Versión $it" },
+                        meta.creatorName,
+                        if (meta.enabled) "Activa" else "Desactivada"
+                    ).joinToString(" · ")
+                ),
+                info,
+                NexoSheets.list(this, actions, dismiss)
+            )
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Instalación local con vista previa
+    // ---------------------------------------------------------------
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        when (requestCode) {
+            REQUEST_FILE -> inspect(uri)
+            REQUEST_FOLDER -> {
+                runCatching {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
                 scanFolder(uri)
             }
         }
     }
 
     private fun openFilePicker() {
-        val intent =
-            Intent(
-                Intent.ACTION_OPEN_DOCUMENT
-            ).apply {
-                addCategory(
-                    Intent.CATEGORY_OPENABLE
-                )
-
+        @Suppress("DEPRECATION")
+        startActivityForResult(
+            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
                 type = "*/*"
-
                 putExtra(
                     Intent.EXTRA_MIME_TYPES,
                     arrayOf(
@@ -244,854 +381,364 @@ class ExtensionsActivity :
                         "application/x-zip-compressed"
                     )
                 )
-            }
-
-        startActivityForResult(
-            intent,
-            fileRequestCode
+            },
+            REQUEST_FILE
         )
     }
 
     private fun openFolderPicker() {
-        val intent =
-            Intent(
-                Intent
-                    .ACTION_OPEN_DOCUMENT_TREE
-            ).apply {
-                addFlags(
-                    Intent
-                        .FLAG_GRANT_READ_URI_PERMISSION or
-                        Intent
-                            .FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-                )
-            }
-
+        @Suppress("DEPRECATION")
         startActivityForResult(
-            intent,
-            folderRequestCode
+            Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            },
+            REQUEST_FOLDER
         )
     }
 
-    private fun importFile(
-        uri: Uri
-    ) {
+    private fun scanFolder(uri: Uri) {
         setLoading(true)
-
-        status.text =
-            "Analizando XPI/ZIP firmado…"
-
-        ExtensionManager.importXpi(
-            this,
-            uri
-        ) {
-                ok,
-                message ->
-
+        status.text = "Buscando paquetes de extensión en la carpeta…"
+        ExtensionManager.scanExtensionFolder(this, uri) { result ->
             runOnUiThread {
                 setLoading(false)
-
-                status.text =
-                    if (ok) {
-                        "Importación completada"
-                    } else {
-                        "No se pudo importar"
-                    }
-
-                toast(message)
-
-                if (ok) {
-                    load()
-                }
-            }
-        }
-    }
-
-    private fun scanFolder(
-        uri: Uri
-    ) {
-        setLoading(true)
-
-        status.text =
-            "Buscando extensiones dentro de la carpeta…"
-
-        ExtensionManager
-            .scanExtensionFolder(
-                this,
-                uri
-            ) {
-                    result ->
-
-                runOnUiThread {
-                    setLoading(false)
-
-                    result.onSuccess {
-                        candidates ->
-
-                        if (
-                            candidates
-                                .isEmpty()
-                        ) {
-                            status.text =
-                                "No encontré ningún XPI/ZIP instalable en esta carpeta."
-
-                            toast(
-                                "Busca un XPI firmado por Mozilla. Una carpeta/ZIP de código fuente sin firma no puede instalarse como extensión normal en GeckoView."
-                            )
-                        } else {
-                            showCandidates(
-                                candidates
+                render()
+                result.onSuccess { candidates ->
+                    when (candidates.size) {
+                        0 -> toast("No hay archivos XPI/ZIP en esta carpeta.")
+                        1 -> inspect(candidates.first().document.uri)
+                        else -> {
+                            var sheet: Dialog? = null
+                            sheet = NexoSheets.show(
+                                this,
+                                NexoSheets.column(
+                                    this,
+                                    NexoSheets.header(this, "Paquetes encontrados", "${candidates.size} archivos"),
+                                    NexoSheets.list(
+                                        this,
+                                        candidates.map { candidate ->
+                                            SheetAction(R.drawable.ic_extension_placeholder, candidate.label) {
+                                                inspect(candidate.document.uri)
+                                            }
+                                        }
+                                    ) { sheet?.dismiss() }
+                                )
                             )
                         }
-                    }.onFailure {
-                        error ->
-
-                        status.text =
-                            "No se pudo revisar la carpeta"
-
-                        toast(
-                            error.message
-                                ?: "Error leyendo la carpeta"
-                        )
                     }
-                }
+                }.onFailure { toast(it.message ?: "No se pudo leer la carpeta") }
             }
-    }
-
-    private fun showCandidates(
-        candidates:
-            List<
-                ExtensionManager
-                    .LocalExtensionCandidate
-                >
-    ) {
-        if (
-            candidates.size == 1
-        ) {
-            installCandidate(
-                candidates.first()
-            )
-
-            return
         }
-
-        val labels =
-            candidates
-                .map {
-                    it.label
-                }
-                .toTypedArray()
-
-        AlertDialog.Builder(this)
-            .setTitle(
-                "Extensiones encontradas"
-            )
-            .setMessage(
-                "Selecciona qué extensión quieres instalar."
-            )
-            .setItems(
-                labels
-            ) {
-                    _,
-                    which ->
-
-                installCandidate(
-                    candidates[which]
-                )
-            }
-            .setNegativeButton(
-                "Cancelar",
-                null
-            )
-            .show()
     }
 
-    private fun installCandidate(
-        candidate:
-            ExtensionManager
-                .LocalExtensionCandidate
-    ) {
+    /** Analiza el paquete y muestra la vista previa antes de instalar. */
+    private fun inspect(uri: Uri) {
         setLoading(true)
-
-        status.text =
-            "Preparando ${candidate.label}…"
-
-        ExtensionManager
-            .importCandidate(
-                this,
-                candidate
-            ) {
-                    ok,
-                    message ->
-
-                runOnUiThread {
-                    setLoading(false)
-
-                    status.text =
-                        if (ok) {
-                            "Extensión instalada"
-                        } else {
-                            "Instalación rechazada"
-                        }
-
-                    toast(message)
-
-                    if (ok) {
-                        load()
-                    }
-                }
-            }
-    }
-
-    private fun load() {
-        setLoading(true)
-
-        ExtensionManager.list(
-            onSuccess = {
-                items ->
-
-                extensions =
-                    items.sortedBy {
-                        (
-                            it.metaData
-                                .name
-                                ?: it.id
-                            ).lowercase()
-                    }
-
-                runOnUiThread {
-                    filter()
-                    setLoading(false)
-                }
-            },
-            onError = {
-                error ->
-
-                runOnUiThread {
-                    setLoading(false)
-
-                    status.text =
-                        "No se pudieron cargar las extensiones"
-
-                    toast(
-                        "No se pudieron listar: " +
-                            (
-                                error.message
-                                    ?: "error desconocido"
-                                )
-                    )
-                }
-            }
-        )
-    }
-
-    private fun filter() {
-        val term =
-            search.text
-                .toString()
-                .trim()
-                .lowercase()
-
-        visibleExtensions =
-            if (term.isBlank()) {
-                extensions
-            } else {
-                extensions.filter {
-                    extension ->
-
-                    val meta =
-                        extension.metaData
-
-                    listOf(
-                        meta.name,
-                        meta.description,
-                        extension.id
-                    )
-                        .filterNotNull()
-                        .any {
-                            it.lowercase()
-                                .contains(
-                                    term
-                                )
-                        }
-                }
-            }
-
-        status.text =
-            if (term.isBlank()) {
-                when (extensions.size) {
-                    0 -> getString(R.string.empty_extensions)
-                    1 -> "1 extensión instalada"
-                    else -> "${extensions.size} extensiones instaladas"
-                }
-            } else {
-                "${visibleExtensions.size} coincidencias de ${extensions.size}"
-            }
-
-        listView.adapter =
-            InstalledExtensionAdapter(
-                this,
-                visibleExtensions
-            )
-
-        listView.divider = null
-
-        listView.dividerHeight =
-            (
-                resources
-                    .displayMetrics
-                    .density *
-                    8
-            ).toInt()
-    }
-
-    private fun showExtensionMenu(
-        anchor: View,
-        extension: WebExtension
-    ) {
-        val meta =
-            extension.metaData
-
-        val popup =
-            PopupMenu(
-                this,
-                anchor
-            )
-
-        popup.menu.add(
-            if (meta.enabled) {
-                "Desactivar"
-            } else {
-                "Activar"
-            }
-        )
-
-        popup.menu.add(
-            if (
-                meta
-                    .allowedInPrivateBrowsing
-            ) {
-                "Bloquear en navegación privada"
-            } else {
-                "Permitir en navegación privada"
-            }
-        )
-
-                if (meta.enabled) {
-        popup.menu.add(
-            "Ejecutar en esta pestaña"
-        )
-    }
-
-    popup.menu.add(
-        "Buscar actualización"
-    )
-
-
-        if (
-            !meta
-                .optionsPageUrl
-                .isNullOrBlank()
-        ) {
-            popup.menu.add(
-                "Opciones de la extensión"
-            )
-        }
-
-        popup.menu.add(
-            "Información"
-        )
-
-        popup.menu.add(
-            "Desinstalar"
-        )
-
-        popup
-            .setOnMenuItemClickListener {
-                item ->
-
-                when (
-                    item.title.toString()
-                ) {
-                    "Activar" -> {
-                        setEnabled(
-                            extension,
-                            true
-                        )
-                        true
-                    }
-
-                    "Desactivar" -> {
-                        setEnabled(
-                            extension,
-                            false
-                        )
-                        true
-                    }
-
-                    "Permitir en navegación privada" -> {
-                        setPrivate(
-                            extension,
-                            true
-                        )
-                        true
-                    }
-
-                    "Bloquear en navegación privada" -> {
-                        setPrivate(
-                            extension,
-                            false
-                        )
-                        true
-                    }
-
-                                    "Ejecutar en esta pestaña" -> {
-                runExtensionAction(
-                    extension
-                )
-                true
-            }
-
-            "Buscar actualización" -> {
-                updateOne(
-                    extension
-                )
-                true
-            }
-
-
-                    "Opciones de la extensión" -> {
-                        meta
-                            .optionsPageUrl
-                            ?.let {
-                                openInBrowser(it)
-                            }
-                        true
-                    }
-
-                    "Información" -> {
-                        showInfo(
-                            extension
-                        )
-                        true
-                    }
-
-                    "Desinstalar" -> {
-                        confirmUninstall(
-                            extension
-                        )
-                        true
-                    }
-
-                    else -> true
-                }
-            }
-
-        popup.show()
-    }
-
-    private fun runExtensionAction(
-        extension: WebExtension
-    ) {
-        ExtensionManager.runAction(
-            extension
-        ) {
-                ok,
-                message ->
-
-            runOnUiThread {
-                toast(message)
-
-                if (ok) {
-                    load()
-                }
-            }
+        status.text = "Analizando paquete…"
+        ExtensionManager.inspectPackage(this, uri) { result ->
+            setLoading(false)
+            render()
+            result
+                .onSuccess { showPreview(it) }
+                .onFailure { toast("No se pudo leer el paquete: ${it.message ?: "formato no válido"}") }
         }
     }
 
-    private fun setEnabled(
-        extension: WebExtension,
-        enabled: Boolean
-    ) {
-        ExtensionManager.setEnabled(
+    private fun showPreview(preview: ExtensionManager.PackagePreview) {
+        val p = ThemeManager.palette(this)
+        var installed = false
+        var sheet: Dialog? = null
+
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24f), 0, dp(24f), dp(8f))
+        }
+
+        // Estado de firma: GeckoView solo instala paquetes firmados por Mozilla.
+        body.addView(TextView(this).apply {
+            text = if (preview.signed) "✓  Firmado por Mozilla" else "✕  Sin firma de Mozilla"
+            textSize = 13f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            val color = if (preview.signed) p.accent else p.danger
+            setTextColor(color)
+            setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
+            background = ThemeManager.rounded(
+                this@ExtensionsActivity,
+                if (preview.signed) p.accentSoft else (p.danger and 0x00FFFFFF or 0x22000000),
+                12f
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        })
+
+        if (preview.description.isNotBlank()) {
+            body.addView(TextView(this).apply {
+                text = preview.description
+                textSize = 14f
+                setTextColor(p.text)
+                maxLines = 4
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, dp(12f), 0, 0)
+            })
+        }
+
+        val permissions = describePermissions(preview.permissions, preview.hosts)
+        body.addView(TextView(this).apply {
+            text = buildString {
+                append(if (permissions.isEmpty()) "No pide permisos especiales." else "Podrá: " + permissions.joinToString(" · "))
+                append("\n")
+                append(Formatter.formatShortFileSize(this@ExtensionsActivity, preview.sizeBytes))
+                if (preview.geckoId.isNotBlank()) append(" · ").append(preview.geckoId)
+            }
+            textSize = 13f
+            setTextColor(p.muted)
+            setLineSpacing(0f, 1.15f)
+            setPadding(0, dp(12f), 0, 0)
+        })
+
+        if (!preview.signed) {
+            body.addView(TextView(this).apply {
+                text = "GeckoView solo instala extensiones firmadas por Mozilla. Descarga la versión firmada " +
+                    "desde addons.mozilla.org (botón “Tienda” o “Enlace”), o intégrala en la app como " +
+                    "extensión interna si es tuya."
+                textSize = 13f
+                setTextColor(p.text)
+                setLineSpacing(0f, 1.15f)
+                setPadding(0, dp(12f), 0, 0)
+            })
+        }
+
+        val buttons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(16f), dp(16f), dp(16f), 0)
+        }
+        buttons.addView(Button(this).apply {
+            text = "Cancelar"
+            ThemeManager.styleButton(this@ExtensionsActivity, this)
+            setOnClickListener { sheet?.dismiss() }
+        }, LinearLayout.LayoutParams(0, dp(50f), 1f))
+        buttons.addView(Button(this).apply {
+            text = if (preview.signed) "Instalar" else "No se puede instalar"
+            isEnabled = preview.signed
+            ThemeManager.styleButton(this@ExtensionsActivity, this, primary = preview.signed)
+            setOnClickListener {
+                installed = true
+                sheet?.dismiss()
+                setLoading(true)
+                status.text = "Instalando ${preview.name}…"
+                ExtensionManager.installPreview(this@ExtensionsActivity, preview) { ok, message ->
+                    runOnUiThread {
+                        setLoading(false)
+                        toast(message)
+                        if (ok) load() else render()
+                    }
+                }
+            }
+        }, LinearLayout.LayoutParams(0, dp(50f), 1f).apply { marginStart = dp(10f) })
+
+        sheet = NexoSheets.show(
             this,
-            extension,
-            enabled
-        ) {
-                ok,
-                message ->
+            NexoSheets.column(
+                this,
+                NexoSheets.header(
+                    this,
+                    preview.name,
+                    listOf(
+                        preview.version.takeIf { it.isNotBlank() }?.let { "Versión $it" },
+                        preview.author.takeIf { it.isNotBlank() }
+                    ).filterNotNull().joinToString(" · ")
+                ),
+                body,
+                buttons
+            )
+        )
+        sheet.setOnDismissListener { if (!installed) ExtensionManager.discardPreview(preview) }
+    }
 
+    /** Traduce permisos del manifest a frases comprensibles. */
+    private fun describePermissions(permissions: List<String>, hosts: List<String>): List<String> {
+        val names = mapOf(
+            "tabs" to "ver tus pestañas",
+            "activeTab" to "acceder a la pestaña actual",
+            "storage" to "guardar datos",
+            "unlimitedStorage" to "guardar datos sin límite",
+            "cookies" to "leer y cambiar cookies",
+            "webRequest" to "ver el tráfico de red",
+            "webRequestBlocking" to "bloquear peticiones",
+            "declarativeNetRequest" to "bloquear contenido",
+            "downloads" to "gestionar descargas",
+            "notifications" to "mostrar notificaciones",
+            "clipboardRead" to "leer el portapapeles",
+            "clipboardWrite" to "escribir en el portapapeles",
+            "history" to "acceder al historial",
+            "bookmarks" to "acceder a marcadores",
+            "scripting" to "ejecutar scripts en páginas",
+            "privacy" to "cambiar ajustes de privacidad",
+            "proxy" to "controlar el proxy",
+            "nativeMessaging" to "comunicarse con otras apps",
+            "menus" to "añadir menús",
+            "contextMenus" to "añadir menús",
+            "alarms" to "programar tareas"
+        )
+        val result = permissions.mapNotNull { names[it] }.toMutableList()
+        val allSites = hosts.any { it == "<all_urls>" || it.startsWith("*://*/") || it == "http://*/*" || it == "https://*/*" }
+        when {
+            allSites -> result.add(0, "leer y cambiar datos en todos los sitios")
+            hosts.isNotEmpty() -> result.add(0, "acceder a ${hosts.size} sitio${if (hosts.size == 1) "" else "s"}")
+        }
+        return result.distinct()
+    }
+
+    // ---------------------------------------------------------------
+    // Instalación por enlace
+    // ---------------------------------------------------------------
+
+    private fun showUrlInstaller() {
+        val p = ThemeManager.palette(this)
+        var sheet: Dialog? = null
+        val input = EditText(this).apply {
+            hint = "https://addons.mozilla.org/…/addon/…"
+            setSingleLine(true)
+            textSize = 15f
+            setPadding(dp(18f), 0, dp(18f), 0)
+            ThemeManager.styleEdit(this@ExtensionsActivity, this)
+        }
+        val install = Button(this).apply {
+            text = "Instalar"
+            ThemeManager.styleButton(this@ExtensionsActivity, this, primary = true)
+        }
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24f), 0, dp(24f), 0)
+            addView(TextView(this@ExtensionsActivity).apply {
+                text = "Pega el enlace de la ficha en addons.mozilla.org o un enlace HTTPS directo a un XPI firmado."
+                textSize = 13.5f
+                setTextColor(p.muted)
+                setPadding(0, 0, 0, dp(12f))
+            })
+            addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50f)))
+            addView(install, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50f)).apply {
+                topMargin = dp(12f)
+            })
+        }
+        install.setOnClickListener {
+            val url = input.text.toString().trim()
+            if (!url.startsWith("https://")) {
+                toast("Usa una dirección HTTPS.")
+                return@setOnClickListener
+            }
+            sheet?.dismiss()
+            setLoading(true)
+            status.text = "Buscando la extensión…"
+            ExtensionManager.resolveAmoListing(url) { resolved ->
+                val target = resolved ?: url
+                ExtensionManager.installUrl(this, target) { ok, message ->
+                    runOnUiThread {
+                        setLoading(false)
+                        toast(message)
+                        if (ok) load() else render()
+                    }
+                }
+            }
+        }
+        sheet = NexoSheets.show(
+            this,
+            NexoSheets.column(this, NexoSheets.header(this, "Instalar desde un enlace"), body)
+        )
+        input.requestFocus()
+    }
+
+    // ---------------------------------------------------------------
+    // Acciones
+    // ---------------------------------------------------------------
+
+    private fun setEnabled(extension: WebExtension, enabled: Boolean) {
+        ExtensionManager.setEnabled(this, extension, enabled) { ok, message ->
             toast(message)
+            if (ok) load() else render()
+        }
+    }
 
-            if (ok) {
+    private fun setPrivate(extension: WebExtension, allowed: Boolean) {
+        ExtensionManager.setPrivateAllowed(this, extension, allowed) { ok, message ->
+            toast(message)
+            if (ok) load()
+        }
+    }
+
+    private fun updateOne(extension: WebExtension) {
+        setLoading(true)
+        ExtensionManager.updateExtension(this, extension) { _, message ->
+            runOnUiThread {
+                setLoading(false)
+                toast(message)
                 load()
             }
         }
     }
 
-    private fun setPrivate(
-        extension: WebExtension,
-        allowed: Boolean
-    ) {
-        ExtensionManager
-            .setPrivateAllowed(
-                this,
-                extension,
-                allowed
-            ) {
-                    ok,
-                    message ->
-
-                toast(message)
-
-                if (ok) {
-                    load()
-                }
-            }
-    }
-
-    private fun updateOne(
-        extension: WebExtension
-    ) {
-        setLoading(true)
-
-        status.text =
-            "Buscando actualización…"
-
-        ExtensionManager
-            .updateExtension(
-                this,
-                extension
-            ) {
-                    ok,
-                    message ->
-
-                runOnUiThread {
-                    setLoading(false)
-                    toast(message)
-                    load()
-                }
-            }
-    }
-
     private fun updateAll() {
-        if (
-            extensions.isEmpty()
-        ) {
-            toast(
-                "No hay extensiones para actualizar."
-            )
+        if (extensions.isEmpty()) {
+            toast("No hay extensiones para actualizar.")
             return
         }
-
         setLoading(true)
-
-        status.text =
-            "Revisando actualizaciones…"
-
+        val pending = extensions.toList()
         fun next(index: Int) {
-            if (
-                index >=
-                extensions.size
-            ) {
+            if (index >= pending.size) {
                 runOnUiThread {
                     setLoading(false)
-
-                    toast(
-                        "Revisión de actualizaciones completada."
-                    )
-
+                    toast("Revisión de actualizaciones completada.")
                     load()
                 }
-
                 return
             }
-
-            runOnUiThread {
-                status.text =
-                    "Revisando ${index + 1} de ${extensions.size}…"
-            }
-
-            ExtensionManager
-                .updateExtension(
-                    this,
-                    extensions[index]
-                ) {
-                        _,
-                        _ ->
-
-                    next(index + 1)
-                }
+            runOnUiThread { status.text = "Revisando ${index + 1} de ${pending.size}…" }
+            ExtensionManager.updateExtension(this, pending[index]) { _, _ -> next(index + 1) }
         }
-
         next(0)
     }
 
-    private fun showInfo(
-        extension: WebExtension
-    ) {
-        val meta =
-            extension.metaData
-
+    private fun confirmUninstall(extension: WebExtension) {
         AlertDialog.Builder(this)
-            .setTitle(
-                meta.name
-                    ?: "Extensión"
-            )
-            .setMessage(
-                buildString {
-                    append(
-                        "ID:\n${extension.id}"
-                    )
-
-                    append(
-                        "\n\nVersión: " +
-                            (
-                                meta.version
-                                    ?: "?"
-                                )
-                    )
-
-                    append(
-                        "\nEstado: " +
-                            if (
-                                meta.enabled
-                            ) {
-                                "Activa"
-                            } else {
-                                "Desactivada"
-                            }
-                    )
-
-                    append(
-                        "\nPrivado: " +
-                            if (
-                                meta
-                                    .allowedInPrivateBrowsing
-                            ) {
-                                "Permitida"
-                            } else {
-                                "No permitida"
-                            }
-                    )
-
-                    if (
-                        !meta.description
-                            .isNullOrBlank()
-                    ) {
-                        append(
-                            "\n\n" +
-                                meta.description
-                        )
-                    }
-                }
-            )
-            .setPositiveButton(
-                "Cerrar",
-                null
-            )
-            .show()
-    }
-
-    private fun confirmUninstall(
-        extension: WebExtension
-    ) {
-        AlertDialog.Builder(this)
-            .setTitle(
-                "Desinstalar extensión"
-            )
-            .setMessage(
-                extension.metaData.name
-                    ?: extension.id
-            )
-            .setNegativeButton(
-                "Cancelar",
-                null
-            )
-            .setPositiveButton(
-                "Desinstalar"
-            ) {
-                    _,
-                    _ ->
-
-                ExtensionManager
-                    .uninstall(
-                        this,
-                        extension
-                    ) {
-                            ok,
-                            message ->
-
-                        toast(message)
-
-                        if (ok) {
-                            load()
-                        }
-                    }
-            }
-            .show()
-    }
-
-    private fun showUrlInstaller() {
-        val input =
-            EditText(this).apply {
-                hint =
-                    "https://.../extension.xpi"
-
-                setSingleLine(true)
-
-                ThemeManager.styleEdit(
-                    this@ExtensionsActivity,
-                    this
-                )
-            }
-
-        AlertDialog.Builder(this)
-            .setTitle(
-                "Instalar desde una URL"
-            )
-            .setMessage(
-                "Introduce una URL HTTPS directa a un XPI firmado y compatible."
-            )
-            .setView(input)
-            .setNegativeButton(
-                "Cancelar",
-                null
-            )
-            .setPositiveButton(
-                "Instalar"
-            ) {
-                    _,
-                    _ ->
-
-                val url =
-                    input.text
-                        .toString()
-                        .trim()
-
-                if (
-                    url.startsWith(
-                        "https://"
-                    )
-                ) {
-                    setLoading(true)
-
-                    ExtensionManager
-                        .installUrl(
-                            this,
-                            url
-                        ) {
-                                ok,
-                                message ->
-
-                            runOnUiThread {
-                                setLoading(
-                                    false
-                                )
-
-                                toast(
-                                    message
-                                )
-
-                                if (ok) {
-                                    load()
-                                }
-                            }
-                        }
-                } else {
-                    toast(
-                        "Usa una dirección HTTPS válida."
-                    )
+            .setTitle("¿Desinstalar ${extension.metaData.name ?: "la extensión"}?")
+            .setMessage("Se eliminarán también sus datos guardados.")
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Desinstalar") { _, _ ->
+                ExtensionManager.uninstall(this, extension) { ok, message ->
+                    toast(message)
+                    if (ok) load()
                 }
             }
             .show()
     }
 
-    private fun openInBrowser(
-        url: String
-    ) {
+    private fun openInBrowser(url: String) {
         startActivity(MainActivity.openUrlIntent(this, url))
     }
 
-    private fun setLoading(
-        value: Boolean
-    ) {
-        progress.visibility =
-            if (value) {
-                View.VISIBLE
-            } else {
-                View.GONE
-            }
+    private fun setLoading(value: Boolean) {
+        progress.visibility = if (value) View.VISIBLE else View.GONE
     }
 
-    private fun toast(
-        message: String
-    ) {
-        runOnUiThread {
-            Toast.makeText(
-                this,
-                message,
-                Toast.LENGTH_LONG
-            ).show()
-        }
+    private fun toast(message: String) {
+        runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
     }
 
     private fun applyTheme() {
-        val palette =
-            ThemeManager.palette(this)
-
-        findViewById<View>(
-            R.id.extensionsRoot
-        ).setBackgroundColor(
-            palette.background
-        )
-
-        ThemeManager.styleText(
-            this,
-            findViewById(
-                R.id.extensionsTitle
-            )
-        )
-
-        ThemeManager.styleText(
-            this,
-            findViewById(
-                R.id.extensionsInfo
-            ),
-            muted = true
-        )
-
-        ThemeManager.styleText(
-            this,
-            status,
-            muted = true
-        )
-
-        ThemeManager.styleEdit(
-            this,
-            search
-        )
-
+        val p = ThemeManager.palette(this)
+        findViewById<View>(R.id.extensionsRoot).setBackgroundColor(p.background)
+        ThemeManager.styleText(this, findViewById(R.id.extensionsTitle))
         ThemeManager.styleBackButton(this, findViewById(R.id.backButton))
+        ThemeManager.styleButton(this, findViewById(R.id.updateAllButton))
+        progress.indeterminateTintList = ColorStateList.valueOf(p.accent)
         ThemeManager.takeInitialFocus(findViewById(R.id.extensionsRoot))
+    }
 
-        ThemeManager.styleButton(
-            this,
-            findViewById(
-                R.id.storeButton
-            ),
-            true
-        )
-
-        listOf(
-            R.id.importButton,
-            R.id.folderButton,
-            R.id.urlInstallButton,
-            R.id.updateAllButton
-        ).forEach {
-            ThemeManager.styleButton(
-                this,
-                findViewById(it)
-            )
-        }
+    companion object {
+        private const val REQUEST_FILE = 41
+        private const val REQUEST_FOLDER = 42
     }
 }

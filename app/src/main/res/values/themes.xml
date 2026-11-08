@@ -1,17 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Generado: temas de Nexo por modo (claro/oscuro) y color de acento. -->
 <resources>
-    <!-- Base clara/oscura. El color de fondo real lo pone ThemeManager. -->
     <style name="Theme.Nexo.Base.Light" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/nexo_light_background</item>
         <item name="android:colorBackground">@color/nexo_light_background</item>
+        <item name="android:colorBackgroundFloating">@color/nexo_light_surface</item>
         <item name="android:textColorPrimary">@color/nexo_light_text</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:popupMenuStyle">@style/Nexo.PopupMenu.Light</item>
+        <item name="android:listPopupWindowStyle">@style/Nexo.PopupMenu.Light</item>
+        <item name="android:spinnerDropDownItemStyle">@style/Nexo.DropDownItem</item>
+    </style>
+
+    <style name="Nexo.PopupMenu.Light" parent="android:Widget.Material.PopupMenu">
+        <item name="android:popupBackground">@drawable/nexo_popup_bg_light</item>
+        <item name="android:popupElevation">8dp</item>
+    </style>
+
+    <style name="Theme.Nexo.DialogBase.Light" parent="android:Theme.Material.Light.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/nexo_dialog_bg_light</item>
+        <item name="android:colorBackgroundFloating">@color/nexo_light_surface</item>
+        <item name="android:textColorPrimary">@color/nexo_light_text</item>
+        <item name="android:windowMinWidthMajor">88%</item>
+        <item name="android:windowMinWidthMinor">88%</item>
     </style>
 
     <style name="Theme.Nexo.Base.Dark" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/nexo_dark_background</item>
         <item name="android:colorBackground">@color/nexo_dark_background</item>
+        <item name="android:colorBackgroundFloating">@color/nexo_dark_surface</item>
         <item name="android:textColorPrimary">@color/nexo_dark_text</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:popupMenuStyle">@style/Nexo.PopupMenu.Dark</item>
+        <item name="android:listPopupWindowStyle">@style/Nexo.PopupMenu.Dark</item>
+        <item name="android:spinnerDropDownItemStyle">@style/Nexo.DropDownItem</item>
+    </style>
+
+    <style name="Nexo.PopupMenu.Dark" parent="android:Widget.Material.PopupMenu">
+        <item name="android:popupBackground">@drawable/nexo_popup_bg_dark</item>
+        <item name="android:popupElevation">8dp</item>
+    </style>
+
+    <style name="Theme.Nexo.DialogBase.Dark" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/nexo_dialog_bg_dark</item>
+        <item name="android:colorBackgroundFloating">@color/nexo_dark_surface</item>
+        <item name="android:textColorPrimary">@color/nexo_dark_text</item>
+        <item name="android:windowMinWidthMajor">88%</item>
+        <item name="android:windowMinWidthMinor">88%</item>
+    </style>
+
+    <style name="Nexo.DropDownItem" parent="android:Widget.Material.DropDownItem.Spinner">
+        <item name="android:paddingStart">18dp</item>
+        <item name="android:paddingEnd">18dp</item>
+    </style>
+
+    <style name="Theme.Nexo.Dialog.Light.Violet" parent="Theme.Nexo.DialogBase.Light">
+        <item name="android:colorAccent">#7C3AED</item>
+        <item name="android:colorControlActivated">#7C3AED</item>
     </style>
 
     <style name="Theme.Nexo.Light.Violet" parent="Theme.Nexo.Base.Light">
@@ -19,6 +64,13 @@
         <item name="android:colorPrimary">#7C3AED</item>
         <item name="android:colorControlActivated">#7C3AED</item>
         <item name="android:textColorHighlight">#7C3AED55</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Violet</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Violet</item>
+    </style>
+
+    <style name="Theme.Nexo.Dialog.Light.Cyan" parent="Theme.Nexo.DialogBase.Light">
+        <item name="android:colorAccent">#06B6D4</item>
+        <item name="android:colorControlActivated">#06B6D4</item>
     </style>
 
     <style name="Theme.Nexo.Light.Cyan" parent="Theme.Nexo.Base.Light">
@@ -26,6 +78,13 @@
         <item name="android:colorPrimary">#06B6D4</item>
         <item name="android:colorControlActivated">#06B6D4</item>
         <item name="android:textColorHighlight">#06B6D455</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Cyan</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Cyan</item>
+    </style>
+
+    <style name="Theme.Nexo.Dialog.Light.Lime" parent="Theme.Nexo.DialogBase.Light">
+        <item name="android:colorAccent">#22C55E</item>
+        <item name="android:colorControlActivated">#22C55E</item>
     </style>
 
     <style name="Theme.Nexo.Light.Lime" parent="Theme.Nexo.Base.Light">
@@ -33,6 +92,13 @@
         <item name="android:colorPrimary">#22C55E</item>
         <item name="android:colorControlActivated">#22C55E</item>
         <item name="android:textColorHighlight">#22C55E55</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Lime</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Lime</item>
+    </style>
+
+    <style name="Theme.Nexo.Dialog.Light.Orange" parent="Theme.Nexo.DialogBase.Light">
+        <item name="android:colorAccent">#F97316</item>
+        <item name="android:colorControlActivated">#F97316</item>
     </style>
 
     <style name="Theme.Nexo.Light.Orange" parent="Theme.Nexo.Base.Light">
@@ -40,6 +106,13 @@
         <item name="android:colorPrimary">#F97316</item>
         <item name="android:colorControlActivated">#F97316</item>
         <item name="android:textColorHighlight">#F9731655</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Orange</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Orange</item>
+    </style>
+
+    <style name="Theme.Nexo.Dialog.Light.Pink" parent="Theme.Nexo.DialogBase.Light">
+        <item name="android:colorAccent">#EC4899</item>
+        <item name="android:colorControlActivated">#EC4899</item>
     </style>
 
     <style name="Theme.Nexo.Light.Pink" parent="Theme.Nexo.Base.Light">
@@ -47,6 +120,13 @@
         <item name="android:colorPrimary">#EC4899</item>
         <item name="android:colorControlActivated">#EC4899</item>
         <item name="android:textColorHighlight">#EC489955</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Pink</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Pink</item>
+    </style>
+
+    <style name="Theme.Nexo.Dialog.Light.Red" parent="Theme.Nexo.DialogBase.Light">
+        <item name="android:colorAccent">#EF4444</item>
+        <item name="android:colorControlActivated">#EF4444</item>
     </style>
 
     <style name="Theme.Nexo.Light.Red" parent="Theme.Nexo.Base.Light">
@@ -54,6 +134,13 @@
         <item name="android:colorPrimary">#EF4444</item>
         <item name="android:colorControlActivated">#EF4444</item>
         <item name="android:textColorHighlight">#EF444455</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Red</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Red</item>
+    </style>
+
+    <style name="Theme.Nexo.Dialog.Dark.Violet" parent="Theme.Nexo.DialogBase.Dark">
+        <item name="android:colorAccent">#7C3AED</item>
+        <item name="android:colorControlActivated">#7C3AED</item>
     </style>
 
     <style name="Theme.Nexo.Dark.Violet" parent="Theme.Nexo.Base.Dark">
@@ -61,6 +148,13 @@
         <item name="android:colorPrimary">#7C3AED</item>
         <item name="android:colorControlActivated">#7C3AED</item>
         <item name="android:textColorHighlight">#7C3AED55</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Violet</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Violet</item>
+    </style>
+
+    <style name="Theme.Nexo.Dialog.Dark.Cyan" parent="Theme.Nexo.DialogBase.Dark">
+        <item name="android:colorAccent">#06B6D4</item>
+        <item name="android:colorControlActivated">#06B6D4</item>
     </style>
 
     <style name="Theme.Nexo.Dark.Cyan" parent="Theme.Nexo.Base.Dark">
@@ -68,6 +162,13 @@
         <item name="android:colorPrimary">#06B6D4</item>
         <item name="android:colorControlActivated">#06B6D4</item>
         <item name="android:textColorHighlight">#06B6D455</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Cyan</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Cyan</item>
+    </style>
+
+    <style name="Theme.Nexo.Dialog.Dark.Lime" parent="Theme.Nexo.DialogBase.Dark">
+        <item name="android:colorAccent">#22C55E</item>
+        <item name="android:colorControlActivated">#22C55E</item>
     </style>
 
     <style name="Theme.Nexo.Dark.Lime" parent="Theme.Nexo.Base.Dark">
@@ -75,6 +176,13 @@
         <item name="android:colorPrimary">#22C55E</item>
         <item name="android:colorControlActivated">#22C55E</item>
         <item name="android:textColorHighlight">#22C55E55</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Lime</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Lime</item>
+    </style>
+
+    <style name="Theme.Nexo.Dialog.Dark.Orange" parent="Theme.Nexo.DialogBase.Dark">
+        <item name="android:colorAccent">#F97316</item>
+        <item name="android:colorControlActivated">#F97316</item>
     </style>
 
     <style name="Theme.Nexo.Dark.Orange" parent="Theme.Nexo.Base.Dark">
@@ -82,6 +190,13 @@
         <item name="android:colorPrimary">#F97316</item>
         <item name="android:colorControlActivated">#F97316</item>
         <item name="android:textColorHighlight">#F9731655</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Orange</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Orange</item>
+    </style>
+
+    <style name="Theme.Nexo.Dialog.Dark.Pink" parent="Theme.Nexo.DialogBase.Dark">
+        <item name="android:colorAccent">#EC4899</item>
+        <item name="android:colorControlActivated">#EC4899</item>
     </style>
 
     <style name="Theme.Nexo.Dark.Pink" parent="Theme.Nexo.Base.Dark">
@@ -89,6 +204,13 @@
         <item name="android:colorPrimary">#EC4899</item>
         <item name="android:colorControlActivated">#EC4899</item>
         <item name="android:textColorHighlight">#EC489955</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Pink</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Pink</item>
+    </style>
+
+    <style name="Theme.Nexo.Dialog.Dark.Red" parent="Theme.Nexo.DialogBase.Dark">
+        <item name="android:colorAccent">#EF4444</item>
+        <item name="android:colorControlActivated">#EF4444</item>
     </style>
 
     <style name="Theme.Nexo.Dark.Red" parent="Theme.Nexo.Base.Dark">
@@ -96,6 +218,8 @@
         <item name="android:colorPrimary">#EF4444</item>
         <item name="android:colorControlActivated">#EF4444</item>
         <item name="android:textColorHighlight">#EF444455</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Red</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Red</item>
     </style>
 
 </resources>

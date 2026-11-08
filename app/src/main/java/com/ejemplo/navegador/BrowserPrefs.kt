@@ -57,7 +57,20 @@ object BrowserPrefs {
     fun freeSearch(c: Context) = p(c).getBoolean("free_search", false)
     fun setFreeSearch(c: Context, v: Boolean) = p(c).edit().putBoolean("free_search", v).apply()
 
+    /** URL de la página de inicio propia de Nexo (accesos rápidos). */
+    const val NEXO_HOME = "about:blank"
+
+    fun isNexoHome(url: String?): Boolean =
+        url.isNullOrBlank() || url.equals(NEXO_HOME, ignoreCase = true)
+
+    fun nexoHome(c: Context) = p(c).getBoolean("nexo_home", true)
+    fun setNexoHome(c: Context, v: Boolean) = p(c).edit().putBoolean("nexo_home", v).apply()
+
+    /** Inicio y nueva pestaña: página de Nexo o la del buscador elegido. */
     fun homePage(c: Context): String =
+        if (nexoHome(c)) NEXO_HOME else searchHome(c)
+
+    fun searchHome(c: Context): String =
         when (searchEngine(c)) {
             ENGINE_DDG -> "https://duckduckgo.com/"
             ENGINE_BING -> "https://www.bing.com/"

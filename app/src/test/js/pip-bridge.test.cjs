@@ -15,14 +15,20 @@ function harness() {
       super(); this.parentElement = parent; this.isConnected = true;
       const classes = new Set();
       this.classList = { add: x => classes.add(x), remove: x => classes.delete(x), contains: x => classes.has(x) };
+      this.styles = {}; this.children = [];
+      this.style = { setProperty: (name, value) => { this.styles[name] = value; } };
     }
-    getBoundingClientRect() { return { width: 640, height: 360 }; }
+    getBoundingClientRect() { return { left: 0, top: 48, width: 640, height: 360 }; }
+    appendChild(child) { child.parentElement = this; child.isConnected = true; this.children.push(child); return child; }
+    remove() { this.isConnected = false; }
+    setAttribute() {}
   }
   const html = new Element(), body = new Element(html), wrapper = new Element(body);
   const document = new Element();
   Object.assign(document, {
     documentElement: html, body, visibilityState: 'visible',
-    getElementsByTagName: () => videos, querySelectorAll: () => []
+    getElementsByTagName: () => videos, querySelectorAll: () => [],
+    createElement: () => new Element()
   });
   html.querySelectorAll = () => [];
   const port = { postMessage: value => reports.push(value), onMessage: { addListener: callback => onMessage = callback }, onDisconnect: { addListener() {} } };
@@ -57,8 +63,9 @@ function harness() {
     v.play = () => { v.plays++; v.paused = false; return Promise.resolve(); };
     videos.push(v); return v;
   }
-  return { video, tick, reports, wrapper, body, Element,
+  return { video, tick, reports, wrapper, body, html, Element,
     enter: resume => onMessage({ type: 'pip_mode', active: true, resume }),
+    enterNative: resume => onMessage({ type: 'pip_mode', active: true, resume, isolate: false }),
     leave: () => onMessage({ type: 'pip_mode', active: false }),
     command: command => onMessage({ type: 'pip_command', command }),
     changed: () => document.dispatchEvent(new Event('loadedmetadata')) };
@@ -128,4 +135,33 @@ test('duplicate PiP mode messages do not undo explicit pause', () => {
 test('resume intent survives a video arriving after the PiP mode message', () => {
   const h = harness(); h.enter(true); const v = h.video(); v.pause();
   h.tick(2300); assert.equal(v.paused, false); assert.equal(v.plays, 1);
+});
+
+test('native crop mode leaves the page classes untouched and masks the rest', () => {
+  const h = harness(), v = h.video(); h.enterNative(true); h.tick(2100);
+  assert.equal(h.html.classList.contains('nexo-pip-root'), false);
+  assert.equal(v.classList.contains('nexo-pip-video'), false);
+  assert.equal(h.wrapper.classList.contains('nexo-pip-ancestor'), false);
+  const mask = h.html.children.find(c => c.isConnected);
+  assert.ok(mask, 'mask overlay appended');
+  assert.equal(mask.styles['box-shadow'], '0 0 0 100vmax #000');
+  assert.equal(mask.styles.top, '48px');
+  h.leave(); assert.equal(mask.isConnected, false);
+});
+
+test('native crop mode still recovers a site pause', () => {
+  const h = harness(), v = h.video(); h.enterNative(true); h.tick(500);
+  v.pause(); h.tick(200); assert.equal(v.paused, false); assert.equal(v.plays, 1);
+});
+
+test('video state reports the on-screen rectangle', () => {
+  const h = harness(); h.video(); h.tick(2100);
+  const state = h.reports.filter(x => x.type === 'video_state').pop();
+  assert.deepEqual([state.rx, state.ry, state.rw, state.rh], [0, 48, 640, 360]);
+});
+
+test('css mode puts back the root class when the site rewrites it', () => {
+  const h = harness(); h.video(); h.enter(true); h.tick(100);
+  h.html.classList.remove('nexo-pip-root'); h.tick(2100);
+  assert.equal(h.html.classList.contains('nexo-pip-root'), true);
 });

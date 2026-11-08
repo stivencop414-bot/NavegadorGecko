@@ -122,7 +122,7 @@
                 android:layout_marginStart="4dp"
                 android:layout_marginBottom="10dp"
                 android:tag="muted"
-                android:text="Inicio y nueva pestaña abren directamente el motor seleccionado."
+                android:text="Elige qué ves al abrir una pestaña nueva o pulsar Inicio."
                 android:textSize="13sp" />
 
             <LinearLayout
@@ -148,6 +148,22 @@
                     android:layout_width="match_parent"
                     android:layout_height="48dp"
                     android:layout_marginBottom="12dp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+
+                <Switch
+                    android:id="@+id/nexoHomeSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="56dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:switchPadding="16dp"
+                    android:text="Página de inicio de Nexo con accesos rápidos"
+                    android:textSize="15sp" />
 
                 <View
                     android:layout_width="match_parent"

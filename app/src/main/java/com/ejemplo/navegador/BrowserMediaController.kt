@@ -46,7 +46,9 @@ object BrowserMediaController {
         var present: Boolean = false,
         var playing: Boolean = false,
         var width: Int = 0,
-        var height: Int = 0
+        var height: Int = 0,
+        /** Rectángulo del video dentro de la GeckoView, en píxeles. */
+        var rect: android.graphics.Rect? = null
     )
 
     private val entries = linkedMapOf<String, Entry>()
@@ -258,13 +260,15 @@ object BrowserMediaController {
         present: Boolean,
         playing: Boolean,
         width: Int,
-        height: Int
+        height: Int,
+        rect: android.graphics.Rect? = null
     ) {
         videos[tabId] = VideoState(
             present = present,
             playing = playing,
             width = width.coerceAtLeast(0),
-            height = height.coerceAtLeast(0)
+            height = height.coerceAtLeast(0),
+            rect = rect?.takeIf { it.width() > 0 && it.height() > 0 }
         )
 
         if (playing) {
@@ -273,6 +277,10 @@ object BrowserMediaController {
 
         listener?.onBrowserMediaStateChanged()
     }
+
+    /** Último rectángulo conocido del video (píxeles de la GeckoView). */
+    fun videoRect(tabId: String): android.graphics.Rect? =
+        videos[tabId]?.rect?.let { android.graphics.Rect(it) }
 
     fun resetVideo(tabId: String) {
         videos.remove(tabId)

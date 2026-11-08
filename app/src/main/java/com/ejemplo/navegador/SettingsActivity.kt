@@ -24,6 +24,7 @@ class SettingsActivity : Activity() {
     private lateinit var gpc: Switch
     private lateinit var httpsOnly: Switch
     private lateinit var freeSearch: Switch
+    private lateinit var nexoHome: Switch
     private lateinit var smartPip: Switch
     private lateinit var backgroundMedia: Switch
     private lateinit var translatorTarget: Spinner
@@ -89,6 +90,7 @@ class SettingsActivity : Activity() {
         gpc = findViewById(R.id.gpcSwitch)
         httpsOnly = findViewById(R.id.httpsOnlySwitch)
         freeSearch = findViewById(R.id.freeSearchSwitch)
+        nexoHome = findViewById(R.id.nexoHomeSwitch)
         smartPip = findViewById(R.id.smartPipSwitch)
         backgroundMedia = findViewById(R.id.backgroundMediaSwitch)
         translatorTarget = findViewById(R.id.translatorTargetSpinner)
@@ -123,6 +125,7 @@ class SettingsActivity : Activity() {
         gpc.isChecked = BrowserPrefs.globalPrivacyControl(this)
         httpsOnly.isChecked = BrowserPrefs.httpsOnly(this)
         freeSearch.isChecked = BrowserPrefs.freeSearch(this)
+        nexoHome.isChecked = BrowserPrefs.nexoHome(this)
         smartPip.isChecked = BrowserPrefs.smartPip(this)
         backgroundMedia.isChecked = BrowserPrefs.backgroundMedia(this)
         translatorTarget.setSelection(
@@ -144,6 +147,7 @@ class SettingsActivity : Activity() {
         BrowserPrefs.setGlobalPrivacyControl(this, gpc.isChecked)
         BrowserPrefs.setHttpsOnly(this, httpsOnly.isChecked)
         BrowserPrefs.setFreeSearch(this, freeSearch.isChecked)
+        BrowserPrefs.setNexoHome(this, nexoHome.isChecked)
         BrowserPrefs.setSmartPip(this, smartPip.isChecked)
         BrowserPrefs.setBackgroundMedia(this, backgroundMedia.isChecked)
         BrowserPrefs.setTranslatorTarget(
@@ -219,7 +223,7 @@ class SettingsActivity : Activity() {
         ).forEach {
             ThemeManager.styleSpinner(this, it)
         }
-        listOf(restore, tracking, gpc, httpsOnly, freeSearch, smartPip, backgroundMedia).forEach {
+        listOf(restore, tracking, gpc, httpsOnly, freeSearch, nexoHome, smartPip, backgroundMedia).forEach {
             ThemeManager.styleSwitch(this, it)
         }
         ThemeManager.styleText(this, findViewById(R.id.settingsTitle))

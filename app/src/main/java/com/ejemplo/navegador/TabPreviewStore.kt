@@ -11,7 +11,16 @@ object TabPreviewStore {
 
     private fun file(context: Context, id: String) = File(dir(context), "$id.jpg")
 
+    private val io = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+        Thread(task, "NexoPreviews").apply { isDaemon = true }
+    }
+
     fun save(context: Context, id: String, bitmap: Bitmap) {
+        val app = context.applicationContext
+        io.execute { saveNow(app, id, bitmap) }
+    }
+
+    private fun saveNow(context: Context, id: String, bitmap: Bitmap) {
         runCatching {
             val maxWidth = 480
             val scaled = if (bitmap.width > maxWidth) {
