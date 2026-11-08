@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="nexo_light_background">#FFF6F7FB</color>
+    <color name="nexo_light_surface">#FFFFFFFF</color>
     <color name="nexo_light_text">#FF0F172A</color>
     <color name="nexo_dark_background">#FF0E1017</color>
+    <color name="nexo_dark_surface">#FF171A24</color>
     <color name="nexo_dark_text">#FFF1F5F9</color>
 </resources>

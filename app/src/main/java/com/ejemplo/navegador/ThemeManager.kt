@@ -131,7 +131,7 @@ object ThemeManager {
         }
     }
 
-    private fun themeRes(activity: Activity): Int {
+    fun themeRes(activity: Activity): Int {
         val dark = isDark(activity)
         return when (BrowserPrefs.accent(activity)) {
             BrowserPrefs.ACCENT_CYAN -> if (dark) R.style.Theme_Nexo_Dark_Cyan else R.style.Theme_Nexo_Light_Cyan

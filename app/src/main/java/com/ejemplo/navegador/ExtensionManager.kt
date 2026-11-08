@@ -32,7 +32,7 @@ object ExtensionManager {
     private var promptActivity = WeakReference<Activity>(null)
     private var bridge: WebExtension? = null
     private val ports = mutableSetOf<WebExtension.Port>()
-    private data class PipState(val resume: Boolean)
+    private data class PipState(val resume: Boolean, val isolate: Boolean = true)
     private val pipStates = java.util.WeakHashMap<GeckoSession, PipState>()
     private var initialized = false
 
@@ -498,68 +498,173 @@ object ExtensionManager {
         }.start()
     }
 
-    fun importCandidate(
-        context: Context,
-        candidate:
-            LocalExtensionCandidate,
-        onDone:
-            (Boolean, String) -> Unit
-    ) {
-        if (candidate.isFolder) {
-            onDone(
-                false,
-                "Esta carpeta contiene código fuente. GeckoView solo instala extensiones normales con firma válida de Mozilla. Busca un XPI firmado dentro de la carpeta o instálalo directamente desde Mozilla Add-ons."
-            )
-        } else {
-            importXpi(
-                context,
-                candidate.document.uri,
-                onDone
-            )
-        }
-    }
+    /** Datos leídos de un XPI local antes de instalarlo. */
+    data class PackagePreview(
+        val file: File,
+        val name: String,
+        val version: String,
+        val description: String,
+        val author: String,
+        val geckoId: String,
+        val permissions: List<String>,
+        val hosts: List<String>,
+        val signed: Boolean,
+        val sizeBytes: Long
+    )
 
-    fun importXpi(
+    /**
+     * Copia y analiza un paquete local SIN instalarlo: nombre, versión,
+     * permisos y si está firmado por Mozilla (GeckoView rechaza los no
+     * firmados, así que se avisa antes de intentarlo).
+     */
+    fun inspectPackage(
         context: Context,
         source: Uri,
-        onDone: (Boolean, String) -> Unit
+        onDone: (Result<PackagePreview>) -> Unit
     ) {
         val app = context.applicationContext
-
         Thread {
             val cache = File(app.filesDir, IMPORT_DIR)
             purgeStaleImports(cache)
-
             val target = File(cache, "import-${System.currentTimeMillis()}.xpi")
 
-            val prepared = runCatching {
+            val result = runCatching {
                 cache.mkdirs()
                 copyUriWithLimit(app, source, target)
                 normalizeArchive(target)
-            }.onFailure {
-                runCatching { target.delete() }
-            }
+                readPreview(target)
+            }.onFailure { runCatching { target.delete() } }
 
-            Handler(Looper.getMainLooper()).post {
-                prepared.onSuccess { archive ->
-                    // GeckoView copia el paquete a su perfil; el temporal
-                    // se elimina tanto si la instalación funciona como si no.
-                    installInternal(
-                        app,
-                        Uri.fromFile(archive).toString(),
-                        WebExtensionController.INSTALLATION_METHOD_FROM_FILE,
-                        onDone,
-                        cleanup = { runCatching { archive.delete() } }
-                    )
-                }.onFailure { error ->
-                    onDone(
-                        false,
-                        "Importación fallida: " + (error.message ?: "paquete inválido")
-                    )
-                }
-            }
+            Handler(Looper.getMainLooper()).post { onDone(result) }
         }.start()
     }
+
+    /** Instala un paquete ya analizado con [inspectPackage]. */
+    fun installPreview(
+        context: Context,
+        preview: PackagePreview,
+        onDone: (Boolean, String) -> Unit
+    ) {
+        installInternal(
+            context.applicationContext,
+            Uri.fromFile(preview.file).toString(),
+            WebExtensionController.INSTALLATION_METHOD_FROM_FILE,
+            onDone,
+            cleanup = { runCatching { preview.file.delete() } }
+        )
+    }
+
+    fun discardPreview(preview: PackagePreview) {
+        runCatching { preview.file.delete() }
+    }
+
+    private fun readPreview(file: File): PackagePreview =
+        ZipFile(file).use { zip ->
+            val manifest = zip.getInputStream(zip.getEntry("manifest.json"))
+                .bufferedReader().use { JSONObject(it.readText()) }
+
+            // Nombres traducidos: "__MSG_extName__" → _locales/<idioma>/messages.json
+            val locale = manifest.optString("default_locale")
+            val messages = listOf(java.util.Locale.getDefault().language, locale, "en")
+                .filter { it.isNotBlank() }
+                .firstNotNullOfOrNull { lang ->
+                    zip.getEntry("_locales/$lang/messages.json")?.let { entry ->
+                        runCatching {
+                            JSONObject(zip.getInputStream(entry).bufferedReader().use { it.readText() })
+                        }.getOrNull()
+                    }
+                }
+
+            fun text(key: String): String {
+                val raw = manifest.optString(key).trim()
+                val msg = Regex("^__MSG_(.+)__$").find(raw)?.groupValues?.get(1) ?: return raw
+                return messages?.let { m ->
+                    m.keys().asSequence()
+                        .firstOrNull { it.equals(msg, ignoreCase = true) }
+                        ?.let { m.optJSONObject(it)?.optString("message") }
+                }.orEmpty().ifBlank { raw }
+            }
+
+            fun strings(key: String): List<String> =
+                manifest.optJSONArray(key)?.let { arr ->
+                    (0 until arr.length()).mapNotNull { arr.opt(it) as? String }
+                }.orEmpty()
+
+            val allPermissions = strings("permissions") + strings("host_permissions")
+            val hosts = allPermissions.filter { it.contains("://") || it == "<all_urls>" }
+            val apis = allPermissions.filterNot { it in hosts }
+
+            val gecko = manifest.optJSONObject("browser_specific_settings")?.optJSONObject("gecko")
+                ?: manifest.optJSONObject("applications")?.optJSONObject("gecko")
+
+            val signed = zip.getEntry("META-INF/mozilla.rsa") != null ||
+                zip.getEntry("META-INF/cose.sig") != null
+
+            PackagePreview(
+                file = file,
+                name = text("name").ifBlank { file.name },
+                version = manifest.optString("version"),
+                description = text("description"),
+                author = text("author"),
+                geckoId = gecko?.optString("id").orEmpty(),
+                permissions = apis,
+                hosts = hosts,
+                signed = signed,
+                sizeBytes = file.length()
+            )
+        }
+
+    /**
+     * Convierte la URL de una ficha de addons.mozilla.org
+     * (…/addon/ublock-origin/) en la URL de su XPI actual.
+     */
+    fun resolveAmoListing(url: String, onDone: (String?) -> Unit) {
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        val host = uri?.host?.lowercase().orEmpty()
+        val segments = uri?.pathSegments.orEmpty()
+        val slugIndex = segments.indexOf("addon")
+        if (host != "addons.mozilla.org" || slugIndex < 0 || slugIndex + 1 >= segments.size) {
+            onDone(null)
+            return
+        }
+        val slug = segments[slugIndex + 1]
+
+        Thread {
+            val xpi = runCatching {
+                val connection = java.net.URL(
+                    "https://addons.mozilla.org/api/v5/addons/addon/" +
+                        java.net.URLEncoder.encode(slug, "UTF-8") + "/?app=android"
+                ).openConnection() as java.net.HttpURLConnection
+                try {
+                    connection.connectTimeout = 8000
+                    connection.readTimeout = 12000
+                    if (connection.responseCode !in 200..299) return@runCatching null
+                    val json = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+                    json.optJSONObject("current_version")
+                        ?.optJSONObject("file")
+                        ?.optString("url")
+                        ?.takeIf { isRemoteExtensionPackage(it) }
+                } finally {
+                    connection.disconnect()
+                }
+            }.getOrNull()
+            Handler(Looper.getMainLooper()).post { onDone(xpi) }
+        }.start()
+    }
+
+    /** Icono real de una extensión instalada (o null si no tiene). */
+    fun loadIcon(extension: WebExtension, sizePx: Int, onDone: (android.graphics.Bitmap?) -> Unit) {
+        val icon = extension.metaData.icon
+        runCatching {
+            icon.getBitmap(sizePx).accept({ onDone(it) }, { onDone(null) })
+        }.onFailure { onDone(null) }
+    }
+
+    /** Paquetes .xpi que el usuario descargó con Nexo. */
+    fun downloadedPackages(context: Context): List<DownloadEntry> =
+        DownloadStore.list(context).filter {
+            it.fileName.endsWith(".xpi", ignoreCase = true) && DownloadStore.fileFor(context, it) != null
+        }
 
     /** Borra importaciones antiguas que hayan quedado de versiones anteriores. */
     private fun purgeStaleImports(folder: File) {
@@ -814,27 +919,38 @@ object ExtensionManager {
      * pausa durante la transición a PiP (YouTube lo hace al cambiar el
      * tamaño de la ventana).
      */
+    /**
+     * [isolateCss] = false cuando Nexo recorta el video de forma nativa: la
+     * página no se toca (YouTube reescribe clases y pausa al redimensionar).
+     */
     fun setPipMode(
         session: GeckoSession?,
         active: Boolean,
-        resumePlayback: Boolean = false
+        resumePlayback: Boolean = false,
+        isolateCss: Boolean = true
     ) {
         if (session == null) return
-        if (active) pipStates.putIfAbsent(session, PipState(resumePlayback))
+        if (active) pipStates.putIfAbsent(session, PipState(resumePlayback, isolateCss))
         else pipStates.remove(session)
-        postToTopLevel(session, pipModeMessage(active, pipStates[session]?.resume == true))
+        val state = pipStates[session]
+        postToTopLevel(
+            session,
+            pipModeMessage(active, state?.resume == true, state?.isolate ?: isolateCss)
+        )
     }
 
-    private fun pipModeMessage(active: Boolean, resume: Boolean) = JSONObject().apply {
-        put("type", "pip_mode")
-        put("active", active)
-        put("resume", active && resume)
-    }
+    private fun pipModeMessage(active: Boolean, resume: Boolean, isolate: Boolean = true) =
+        JSONObject().apply {
+            put("type", "pip_mode")
+            put("active", active)
+            put("resume", active && resume)
+            put("isolate", isolate)
+        }
 
     fun sendPipCommand(session: GeckoSession?, command: String): Boolean {
         if (session == null) return false
         if (pipStates.containsKey(session) && command in listOf("play", "pause")) {
-            pipStates[session] = PipState(command == "play")
+            pipStates[session] = PipState(command == "play", pipStates[session]?.isolate ?: true)
         }
         return postToTopLevel(session, JSONObject().apply {
             put("type", "pip_command")
@@ -1165,7 +1281,13 @@ object ExtensionManager {
                                         json.optBoolean("present", false),
                                         json.optBoolean("playing", false),
                                         json.optInt("width", 0),
-                                        json.optInt("height", 0)
+                                        json.optInt("height", 0),
+                                        android.graphics.Rect(
+                                            json.optInt("rx", 0),
+                                            json.optInt("ry", 0),
+                                            json.optInt("rx", 0) + json.optInt("rw", 0),
+                                            json.optInt("ry", 0) + json.optInt("rh", 0)
+                                        )
                                     )
                                 }
                                 return
@@ -1185,7 +1307,7 @@ object ExtensionManager {
                 port.sender.session?.let { session ->
                     pipStates[session]?.let { state ->
                         runCatching {
-                            port.postMessage(pipModeMessage(true, state.resume))
+                            port.postMessage(pipModeMessage(true, state.resume, state.isolate))
                             if (!state.resume) port.postMessage(JSONObject().apply {
                                 put("type", "pip_command")
                                 put("command", "pause")

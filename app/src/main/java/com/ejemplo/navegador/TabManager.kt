@@ -494,7 +494,7 @@ object TabManager {
             )
         }
 
-        persist()
+        persistNow()
     }
 
     fun resumeActive() {
@@ -516,7 +516,7 @@ object TabManager {
     }
 
     fun closeAllSessionsKeepingState() {
-        persist()
+        persistNow()
 
         tabs.forEach { tab ->
             tab.session?.let { closeSession(it) }
@@ -997,7 +997,22 @@ object TabManager {
         persist()
     }
 
+    private val persistHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val persistTask = Runnable { persistNow() }
+
+    /*
+     * Se llama en cada título, progreso o cambio de estado de sesión. Agrupar
+     * las escrituras evita serializar todas las pestañas (con su historial)
+     * decenas de veces por segundo en el hilo principal.
+     */
     private fun persist() {
+        persistHandler.removeCallbacks(persistTask)
+        persistHandler.postDelayed(persistTask, 500L)
+    }
+
+    /** Escritura inmediata: al ir a segundo plano o cerrar sesiones. */
+    fun persistNow() {
+        persistHandler.removeCallbacks(persistTask)
         val context = appContext ?: return
         val array = JSONArray()
 
