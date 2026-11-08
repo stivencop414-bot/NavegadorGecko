@@ -18,6 +18,10 @@ class HistoryActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_list)
         listView = findViewById(R.id.listView)
+        listView.emptyView = findViewById<TextView>(R.id.listEmpty).apply {
+            setText(R.string.empty_history)
+            ThemeManager.styleText(this@HistoryActivity, this, muted = true)
+        }
         findViewById<TextView>(R.id.listTitle).text = "Historial"
 
         findViewById<Button>(R.id.listAction).apply {
@@ -37,11 +41,18 @@ class HistoryActivity : Activity() {
             entries.getOrNull(position)?.let { open(it.url) }
         }
         applyTheme()
+    }
+
+    override fun onResume() {
+        super.onResume()
         refresh()
     }
 
     private fun refresh() {
-        entries = HistoryStore.list(this)
+        val updated = HistoryStore.list(this)
+        if (listView.adapter != null && updated == entries) return
+        entries = updated
+        findViewById<Button>(R.id.listAction).isEnabled = entries.isNotEmpty()
         listView.adapter = ThemeManager.listAdapter(
             this,
             entries.map {

@@ -9,8 +9,8 @@ android {
         applicationId = "com.ejemplo.navegador"
         minSdk = 26
         targetSdk = 34
-        versionCode = 24
-        versionName = "0.13.7"
+        versionCode = 25
+        versionName = "0.13.8"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

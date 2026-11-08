@@ -5,6 +5,7 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.view.View
 import android.view.ViewGroup
@@ -15,6 +16,13 @@ import android.widget.ImageButton
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.StyleSpan
+import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
+import android.graphics.Typeface
+import androidx.core.graphics.ColorUtils
 
 data class BrowserPalette(
     val background: Int,
@@ -49,15 +57,15 @@ object ThemeManager {
         return when (resolvedTheme(activity)) {
             BrowserPrefs.THEME_LIGHT -> BrowserPalette(
                 Color.rgb(246, 247, 251), Color.WHITE, Color.rgb(233, 235, 243),
-                Color.rgb(25, 27, 35), Color.rgb(95, 99, 112), accent, Color.WHITE
+                Color.rgb(25, 27, 35), Color.rgb(95, 99, 112), accent, UiContrast.foreground(accent)
             )
             BrowserPrefs.THEME_OLED -> BrowserPalette(
                 Color.BLACK, Color.rgb(8, 8, 10), Color.rgb(22, 22, 25),
-                Color.WHITE, Color.rgb(170, 170, 178), accent, Color.WHITE
+                Color.WHITE, Color.rgb(170, 170, 178), accent, UiContrast.foreground(accent)
             )
             else -> BrowserPalette(
                 Color.rgb(17, 18, 27), Color.rgb(25, 27, 39), Color.rgb(37, 39, 54),
-                Color.rgb(245, 245, 250), Color.rgb(175, 178, 194), accent, Color.WHITE
+                Color.rgb(245, 245, 250), Color.rgb(175, 178, 194), accent, UiContrast.foreground(accent)
             )
         }
     }
@@ -82,20 +90,32 @@ object ThemeManager {
         }
     }
 
+    private fun controlColors(enabled: Int, disabled: Int) = ColorStateList(
+        arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
+        intArrayOf(ColorUtils.setAlphaComponent(disabled, 110), enabled)
+    )
+
+    private fun interactiveBackground(activity: Activity, color: Int, foreground: Int) =
+        RippleDrawable(
+            ColorStateList.valueOf(ColorUtils.setAlphaComponent(foreground, 36)),
+            rounded(activity, color, 16f),
+            rounded(activity, Color.WHITE, 16f)
+        )
+
     fun styleButton(activity: Activity, button: Button, primary: Boolean = false) {
         val p = palette(activity)
         val foreground = if (primary) p.onAccent else p.text
-        button.background = rounded(activity, if (primary) p.accent else p.elevated, 16f)
-        button.setTextColor(foreground)
-        button.compoundDrawableTintList = ColorStateList.valueOf(foreground)
+        button.background = interactiveBackground(activity, if (primary) p.accent else p.elevated, foreground)
+        button.setTextColor(controlColors(foreground, p.muted))
+        button.compoundDrawableTintList = controlColors(foreground, p.muted)
         button.backgroundTintList = null
         button.stateListAnimator = null
     }
 
     fun styleIconButton(activity: Activity, button: ImageButton, active: Boolean = false) {
         val p = palette(activity)
-        button.background = rounded(activity, if (active) p.accent else p.elevated, 18f)
-        button.imageTintList = ColorStateList.valueOf(if (active) p.onAccent else p.text)
+        button.background = interactiveBackground(activity, if (active) p.accent else p.surface, p.text)
+        button.imageTintList = controlColors(if (active) p.onAccent else p.text, p.muted)
         button.backgroundTintList = null
         button.stateListAnimator = null
         button.elevation = 0f
@@ -136,7 +156,17 @@ object ThemeManager {
                 val p = palette(activity)
                 (v as? TextView)?.apply {
                     setTextColor(p.text)
-                    textSize = 14f
+                    val label = items[position]
+                    val titleEnd = label.indexOf('\n').let { if (it < 0) label.length else it }
+                    text = SpannableString(label).apply {
+                        setSpan(StyleSpan(Typeface.BOLD), 0, titleEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        if (titleEnd < length) {
+                            setSpan(ForegroundColorSpan(p.muted), titleEnd, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                            setSpan(RelativeSizeSpan(0.85f), titleEnd, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
+                    }
+                    textSize = 16f
+                    setLineSpacing(3 * resources.displayMetrics.density, 1f)
                     val d = resources.displayMetrics.density
                     setPadding((16*d).toInt(), (14*d).toInt(), (16*d).toInt(), (14*d).toInt())
                     background = rounded(activity, p.surface, 16f)

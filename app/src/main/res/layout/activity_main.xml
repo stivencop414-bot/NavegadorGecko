@@ -8,7 +8,7 @@
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="64dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="8dp"
@@ -16,6 +16,7 @@
 
         <TextView
             android:id="@+id/brandText"
+            android:visibility="gone"
             android:layout_width="36dp"
             android:layout_height="36dp"
             android:background="@drawable/ic_nexo_logo"
@@ -26,7 +27,7 @@
         <EditText
             android:id="@+id/omnibox"
             android:layout_width="0dp"
-            android:layout_height="40dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
             android:hint="@string/omnibox_hint"
             android:imeOptions="actionGo"
@@ -40,8 +41,9 @@
 
         <Button
             android:id="@+id/clearOmniboxButton"
-            android:layout_width="38dp"
-            android:layout_height="38dp"
+            android:contentDescription="@string/clear_address"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:layout_marginStart="4dp"
             android:minWidth="0dp"
             android:padding="0dp"
@@ -52,8 +54,9 @@
 
         <Button
             android:id="@+id/tabButton"
-            android:layout_width="40dp"
-            android:layout_height="38dp"
+            android:contentDescription="@string/open_tabs"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:layout_marginStart="4dp"
             android:minWidth="0dp"
             android:padding="0dp"
@@ -63,8 +66,9 @@
 
         <Button
             android:id="@+id/menuButton"
-            android:layout_width="40dp"
-            android:layout_height="38dp"
+            android:contentDescription="@string/open_menu"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:layout_marginStart="4dp"
             android:drawableTop="@drawable/ic_nav_menu"
             android:gravity="center"
@@ -105,7 +109,7 @@
         <Button
             android:id="@+id/miniPlayerButton"
             android:layout_width="wrap_content"
-            android:layout_height="38dp"
+            android:layout_height="48dp"
             android:layout_gravity="bottom|end"
             android:layout_marginEnd="12dp"
             android:layout_marginBottom="12dp"
@@ -122,7 +126,7 @@
     <LinearLayout
         android:id="@+id/navBar"
         android:layout_width="match_parent"
-        android:layout_height="50dp"
+        android:layout_height="64dp"
         android:gravity="center"
         android:orientation="horizontal"
         android:paddingStart="8dp"
@@ -132,8 +136,8 @@
 
         <ImageButton
             android:id="@+id/backButton"
-            android:layout_width="44dp"
-            android:layout_height="38dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
 
             android:background="@android:color/transparent"
             android:contentDescription="Atrás"
@@ -143,8 +147,8 @@
 
         <ImageButton
             android:id="@+id/forwardButton"
-            android:layout_width="44dp"
-            android:layout_height="38dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:layout_marginStart="8dp"
 
             android:background="@android:color/transparent"
@@ -155,8 +159,8 @@
 
         <ImageButton
             android:id="@+id/homeButton"
-            android:layout_width="44dp"
-            android:layout_height="38dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:layout_marginStart="8dp"
 
             android:background="@android:color/transparent"
@@ -167,8 +171,8 @@
 
         <ImageButton
             android:id="@+id/reloadButton"
-            android:layout_width="44dp"
-            android:layout_height="38dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:layout_marginStart="8dp"
 
             android:background="@android:color/transparent"
@@ -179,8 +183,8 @@
 
         <ImageButton
             android:id="@+id/newTabButton"
-            android:layout_width="44dp"
-            android:layout_height="38dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:layout_marginStart="8dp"
 
             android:background="@android:color/transparent"
