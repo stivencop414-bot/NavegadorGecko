@@ -16,11 +16,31 @@ object BrowserMediaController {
         val playing: Boolean
     )
 
-    private data class Entry(
+    private class Entry(
         val mediaSession: MediaSession,
-        var title: String,
+        title: String,
+        val isPrivate: Boolean,
         var playing: Boolean = false
-    )
+    ) {
+        /*
+         * El título se muestra en la notificación (incluida la pantalla de
+         * bloqueo). En pestañas privadas nunca se expone el título real.
+         */
+        var title: String = displayTitle(title, isPrivate)
+            set(value) {
+                field = displayTitle(value, isPrivate)
+            }
+    }
+
+    private const val DEFAULT_TITLE = "Multimedia en Nexo"
+    private const val PRIVATE_TITLE = "Reproducción en pestaña privada"
+
+    private fun displayTitle(title: String, isPrivate: Boolean): String =
+        when {
+            isPrivate -> PRIVATE_TITLE
+            title.isBlank() -> DEFAULT_TITLE
+            else -> title
+        }
 
     private data class VideoState(
         var present: Boolean = false,
@@ -104,9 +124,6 @@ object BrowserMediaController {
         }
     }
 
-    fun isPlaybackHoldActive(tabId: String): Boolean =
-        hasActiveHold(tabId)
-
     fun attach(value: Listener?) {
         listener = value
         listener?.onBrowserMediaStateChanged()
@@ -120,9 +137,8 @@ object BrowserMediaController {
 
         entries[tab.id] = Entry(
             mediaSession = media,
-            title = tab.title.ifBlank {
-                previous?.title ?: "Multimedia en Nexo"
-            },
+            title = tab.title.ifBlank { previous?.title ?: DEFAULT_TITLE },
+            isPrivate = tab.isPrivate,
             playing = previous?.playing == true
         )
 
@@ -159,9 +175,8 @@ object BrowserMediaController {
         if (entry == null || entry.mediaSession !== media) {
             entries[tab.id] = Entry(
                 mediaSession = media,
-                title = tab.title.ifBlank {
-                    "Multimedia en Nexo"
-                },
+                title = tab.title,
+                isPrivate = tab.isPrivate,
                 playing = true
             )
         } else {
@@ -368,15 +383,10 @@ object BrowserMediaController {
 
         return Snapshot(
             tabId = selectedId,
-            title = entry.title.ifBlank {
-                "Multimedia en Nexo"
-            },
+            title = entry.title,
             playing = isPlaybackActive(selectedId)
         )
     }
-
-    fun snapshot(): Snapshot? =
-        snapshotFor(allowHold = false)
 
     fun snapshotForService(): Snapshot? =
         snapshotFor(allowHold = true)

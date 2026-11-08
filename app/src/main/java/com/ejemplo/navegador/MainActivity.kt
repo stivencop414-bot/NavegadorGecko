@@ -1,32 +1,32 @@
 package com.ejemplo.navegador
 
-import android.app.Activity
 import android.Manifest
+import android.app.Activity
+import android.app.AlertDialog
 import android.app.PictureInPictureParams
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Rect
-import android.os.Build
-import android.util.Rational
-import android.app.AlertDialog
-import android.app.DownloadManager
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Rational
 import android.view.KeyEvent
+import android.view.Menu
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
-import android.widget.ImageView
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.ProgressBar
@@ -82,7 +82,10 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         TabManager.initialize(this)
         TabManager.attach(this)
         ExtensionManager.attachPromptActivity(this)
-        handleNavigationIntent(intent)
+
+        // Al recrear la Activity (rotación, cambio de tema) no repetir la
+        // navegación del intent original.
+        if (savedInstanceState == null) handleNavigationIntent(intent)
     }
 
     private fun bindViews() {
@@ -128,7 +131,8 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         omnibox.setOnEditorActionListener { _, actionId, event ->
             val enter = event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN
             if (actionId == EditorInfo.IME_ACTION_GO ||
-                actionId == EditorInfo.IME_ACTION_SEARCH || enter) {
+                actionId == EditorInfo.IME_ACTION_SEARCH || enter
+            ) {
                 navigateOmnibox()
                 true
             } else false
@@ -153,50 +157,46 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     private fun showMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         val current = TabManager.activeTab()
-        popup.menu.add("Nueva pestaña")
-        popup.menu.add("Nueva pestaña privada")
-        val desktop = popup.menu.add("Sitio de escritorio")
-        desktop.isCheckable = true
-        desktop.isChecked = current?.desktopMode == true
-        popup.menu.add("Compartir página")
-        popup.menu.add("Traducir página")
-        popup.menu.add("Extensiones")
-        popup.menu.add("Historial")
-        popup.menu.add("Descargas")
-        popup.menu.add("Configuración")
-        popup.menu.add("Cerrar pestaña")
+        val menu = popup.menu
+
+        menu.add(Menu.NONE, MENU_NEW_TAB, Menu.NONE, "Nueva pestaña")
+        menu.add(Menu.NONE, MENU_NEW_PRIVATE_TAB, Menu.NONE, "Nueva pestaña privada")
+        menu.add(Menu.NONE, MENU_DESKTOP, Menu.NONE, "Sitio de escritorio").apply {
+            isCheckable = true
+            isChecked = current?.desktopMode == true
+        }
+        menu.add(Menu.NONE, MENU_SHARE, Menu.NONE, "Compartir página")
+        menu.add(Menu.NONE, MENU_TRANSLATE, Menu.NONE, "Traducir página")
+        menu.add(Menu.NONE, MENU_EXTENSIONS, Menu.NONE, "Extensiones")
+        menu.add(Menu.NONE, MENU_HISTORY, Menu.NONE, "Historial")
+        menu.add(Menu.NONE, MENU_DOWNLOADS, Menu.NONE, "Descargas")
+        menu.add(Menu.NONE, MENU_SETTINGS, Menu.NONE, "Configuración")
+        menu.add(Menu.NONE, MENU_CLOSE_TAB, Menu.NONE, "Cerrar pestaña")
 
         popup.setOnMenuItemClickListener { item ->
-            when (item.title.toString()) {
-                "Nueva pestaña" -> { viewModel.newTab(false); true }
-                "Nueva pestaña privada" -> { viewModel.newTab(true); true }
-                "Sitio de escritorio" -> {
-                    TabManager.setDesktopMode(!(current?.desktopMode ?: false)); true
+            when (item.itemId) {
+                MENU_NEW_TAB -> viewModel.newTab(false)
+                MENU_NEW_PRIVATE_TAB -> viewModel.newTab(true)
+                MENU_DESKTOP -> TabManager.setDesktopMode(!(current?.desktopMode ?: false))
+                MENU_SHARE -> shareCurrent()
+                MENU_TRANSLATE -> TranslatorManager.translateActive(this) { _, message ->
+                    runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
                 }
-                "Compartir página" -> { shareCurrent(); true }
-                "Traducir página" -> {
-                    TranslatorManager.translateActive(
-                        this
-                    ) { _, message ->
-                        runOnUiThread {
-                            Toast.makeText(
-                                this,
-                                message,
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                    }
-                    true
-                }
-                "Extensiones" -> { suppressAutoPipOnce = true; startActivity(Intent(this, ExtensionStoreActivity::class.java)); true }
-                "Historial" -> { suppressAutoPipOnce = true; startActivity(Intent(this, HistoryActivity::class.java)); true }
-                "Descargas" -> { suppressAutoPipOnce = true; startActivity(Intent(this, DownloadsActivity::class.java)); true }
-                "Configuración" -> { suppressAutoPipOnce = true; startActivity(Intent(this, SettingsActivity::class.java)); true }
-                "Cerrar pestaña" -> { viewModel.closeCurrentTab(); true }
-                else -> false
+                MENU_EXTENSIONS -> openScreen(ExtensionStoreActivity::class.java)
+                MENU_HISTORY -> openScreen(HistoryActivity::class.java)
+                MENU_DOWNLOADS -> openScreen(DownloadsActivity::class.java)
+                MENU_SETTINGS -> openScreen(SettingsActivity::class.java)
+                MENU_CLOSE_TAB -> viewModel.closeCurrentTab()
+                else -> return@setOnMenuItemClickListener false
             }
+            true
         }
         popup.show()
+    }
+
+    private fun openScreen(screen: Class<out Activity>) {
+        suppressAutoPipOnce = true
+        startActivity(Intent(this, screen))
     }
 
     private fun captureCurrentTabPreview() {
@@ -227,7 +227,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         val d = resources.displayMetrics.density
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding((10*d).toInt(), (8*d).toInt(), (10*d).toInt(), (8*d).toInt())
+            setPadding((10 * d).toInt(), (8 * d).toInt(), (10 * d).toInt(), (8 * d).toInt())
             setBackgroundColor(p.surface)
         }
 
@@ -236,15 +236,15 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
                 orientation = LinearLayout.HORIZONTAL
                 gravity = android.view.Gravity.CENTER_VERTICAL
                 background = ThemeManager.rounded(this@MainActivity, p.elevated, 18f)
-                setPadding((8*d).toInt(), (8*d).toInt(), (8*d).toInt(), (8*d).toInt())
+                setPadding((8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt())
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = (8*d).toInt() }
+                ).apply { bottomMargin = (8 * d).toInt() }
             }
 
             val preview = ImageView(this).apply {
-                layoutParams = LinearLayout.LayoutParams((92*d).toInt(), (70*d).toInt())
+                layoutParams = LinearLayout.LayoutParams((92 * d).toInt(), (70 * d).toInt())
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 val bitmap = if (tab.isPrivate) null else TabPreviewStore.load(this@MainActivity, tab.id)
                 if (bitmap != null) setImageBitmap(bitmap) else setImageResource(R.drawable.ic_nexo_logo)
@@ -252,12 +252,11 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             }
 
             val text = TextView(this).apply {
-                this.text = (if (tab.isPrivate) "◉ Privada · " else "") +
-                    tab.title.take(70)
+                this.text = (if (tab.isPrivate) "◉ Privada · " else "") + tab.title.take(70)
                 textSize = 14.5f
                 maxLines = 2
                 setTextColor(p.text)
-                setPadding((10*d).toInt(), 0, (8*d).toInt(), 0)
+                setPadding((10 * d).toInt(), 0, (8 * d).toInt(), 0)
                 layoutParams = LinearLayout.LayoutParams(
                     0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
                 )
@@ -267,7 +266,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
                 this.text = "×"
                 textSize = 20f
                 minWidth = 0
-                layoutParams = LinearLayout.LayoutParams((44*d).toInt(), (44*d).toInt())
+                layoutParams = LinearLayout.LayoutParams((44 * d).toInt(), (44 * d).toInt())
                 ThemeManager.styleButton(this@MainActivity, this)
                 setOnClickListener {
                     TabManager.closeTab(tab.id)
@@ -336,59 +335,35 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
     private fun downloadUrl(url: String) {
         if (ExtensionManager.isRemoteExtensionPackage(url)) {
-            Toast.makeText(
-                this,
-                "Abriendo instalador de extensión…",
-                Toast.LENGTH_SHORT
-            ).show()
-
+            Toast.makeText(this, "Abriendo instalador de extensión…", Toast.LENGTH_SHORT).show()
             ExtensionManager.installUrl(this, url) { _, message ->
-                runOnUiThread {
-                    Toast.makeText(
-                        this,
-                        message,
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
+                runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
             }
             return
         }
 
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        if (!UrlSafety.isWebUrl(url)) {
             Toast.makeText(this, "Este recurso no se puede descargar directamente", Toast.LENGTH_LONG).show()
             return
         }
-        runCatching {
-            val uri = Uri.parse(url)
-            val rawName = uri.lastPathSegment
-                ?.substringAfterLast('/')
-                ?.takeIf { it.isNotBlank() }
-                ?: "nexo_${System.currentTimeMillis()}"
-            val name = rawName
-                .replace(Regex("""[\\/:*?"<>|\p{Cntrl}]"""), "_")
-                .replace("..", "_")
-                .trim()
-                .trimStart('.')
-                .take(120)
-                .ifBlank { "nexo_${System.currentTimeMillis()}" }
-            val request = DownloadManager.Request(uri)
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setTitle(name)
-                .setDescription(uri.host ?: "Nexo Browser")
-                .setAllowedOverMetered(true)
-                .setAllowedOverRoaming(true)
-                .addRequestHeader("User-Agent", GeckoSession.getDefaultUserAgent())
-                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
-            (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-            Toast.makeText(this, "Descarga iniciada", Toast.LENGTH_SHORT).show()
-        }.onFailure {
-            Toast.makeText(this, "No se pudo descargar: ${it.message}", Toast.LENGTH_LONG).show()
+
+        // Descargar con Gecko (cookies de la sesión, modo privado) en lugar de
+        // DownloadManager, que no tiene acceso a la sesión del navegador.
+        val tab = TabManager.activeTab()
+        Toast.makeText(this, "Descarga iniciada", Toast.LENGTH_SHORT).show()
+        DownloadStore.download(
+            this,
+            url,
+            isPrivate = tab?.isPrivate == true,
+            referrer = tab?.url
+        ) { _, message ->
+            runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
         }
     }
 
     private fun shareCurrent() {
-        suppressAutoPipOnce = true
         val tab = TabManager.activeTab() ?: return
+        suppressAutoPipOnce = true
         startActivity(Intent.createChooser(
             Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
@@ -404,11 +379,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         topBar.setBackgroundColor(p.surface)
         navBar.setBackgroundColor(p.surface)
         ThemeManager.styleEdit(this, omnibox)
-        ThemeManager.styleButton(
-            this,
-            miniPlayerButton,
-            primary = true
-        )
+        ThemeManager.styleButton(this, miniPlayerButton, primary = true)
         listOf(
             R.id.tabButton,
             R.id.menuButton,
@@ -440,25 +411,29 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             BrowserPrefs.smartPip(this).toString(), BrowserPrefs.backgroundMedia(this).toString()
         ).joinToString("|")
 
+    /*
+     * MainActivity está exportada (launcher), así que cualquier app puede
+     * enviarle EXTRA_OPEN_URL. Solo las pantallas propias, que llegan por el
+     * alias NO exportado InternalOpenActivity, pueden abrir páginas internas
+     * (about:, moz-extension:…). Desde fuera solo se aceptan http/https.
+     */
     private fun handleNavigationIntent(intent: Intent?) {
+        if (intent == null) return
         val raw = intent
-            ?.getStringExtra(EXTRA_OPEN_URL)
+            .getStringExtra(EXTRA_OPEN_URL)
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: return
 
-        val scheme = runCatching { Uri.parse(raw).scheme?.lowercase() }
-            .getOrNull()
+        // Consumir el extra para no reabrirlo al volver a la Activity.
+        intent.removeExtra(EXTRA_OPEN_URL)
 
-        if (
-            scheme !in setOf(
-                "http",
-                "https",
-                "about",
-                "resource",
-                "moz-extension"
-            )
-        ) {
+        val internal = intent.component?.className == INTERNAL_OPEN_ALIAS
+        val allowed =
+            if (internal) UrlSafety.isAppNavigable(raw)
+            else UrlSafety.isExternallyOpenable(raw)
+
+        if (!allowed) {
             Toast.makeText(
                 this,
                 "Nexo bloqueó un enlace con esquema no permitido",
@@ -512,7 +487,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             BrowserMediaController.isAnyPlaying() &&
             !mediaNotificationPermissionAsked &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
-                PackageManager.PERMISSION_GRANTED
+            PackageManager.PERMISSION_GRANTED
         ) {
             mediaNotificationPermissionAsked = true
             requestPermissions(
@@ -568,8 +543,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         captureCurrentTabPreview()
 
         if (!isInPictureInPictureMode) {
-            val tab =
-                TabManager.activeTab()
+            val tab = TabManager.activeTab()
 
             TabManager.prepareForBackground()
 
@@ -578,441 +552,208 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
              * reproduciéndose, damos a Gecko una segunda
              * oportunidad de continuar después de la transición.
              */
-            if (
-                backgroundPlaybackWasActive &&
-                BrowserPrefs.backgroundMedia(this) &&
-                tab != null
-            ) {
-                geckoView.postDelayed(
-                    {
-                        BrowserMediaController
-                            .resumeIfRecent(
-                                tab.id,
-                                8_000L
-                            )
-                    },
-                    180L
-                )
-
-                geckoView.postDelayed(
-                    {
-                        BrowserMediaController
-                            .resumeIfRecent(
-                                tab.id,
-                                8_000L
-                            )
-                    },
-                    650L
-                )
+            if (backgroundPlaybackWasActive && BrowserPrefs.backgroundMedia(this) && tab != null) {
+                listOf(180L, 650L).forEach { delay ->
+                    geckoView.postDelayed(
+                        { BrowserMediaController.resumeIfRecent(tab.id, 8_000L) },
+                        delay
+                    )
+                }
             }
         }
 
         super.onStop()
     }
 
-    private fun isYoutubeVideoPage(
-    url: String
-): Boolean {
-    val uri =
-        runCatching {
-            Uri.parse(url)
-        }.getOrNull()
-            ?: return false
+    // ---------------------------------------------------------------
+    // Mini reproductor / Picture-in-Picture
+    // ---------------------------------------------------------------
 
-    val host =
-        uri.host
-            ?.lowercase()
-            .orEmpty()
+    private fun isYoutubeVideoPage(url: String): Boolean {
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase().orEmpty()
+        val path = uri.path?.lowercase().orEmpty()
 
-    val path =
-        uri.path
-            ?.lowercase()
-            .orEmpty()
-
-    return when (host) {
-        "youtu.be" ->
-            path.length > 1
-
-        "youtube.com",
-        "www.youtube.com",
-        "m.youtube.com" ->
-            path == "/watch" ||
-                path.startsWith("/shorts/") ||
-                path.startsWith("/live/")
-
-        else ->
-            false
-    }
-}
-
-private fun isMiniPlaybackActive(
-    tab: BrowserTab
-): Boolean =
-    BrowserMediaController
-        .isVideoPlaying(tab.id) ||
-        BrowserMediaController
-            .isPlaying(tab.id)
-
-private fun hasMiniVideo(
-    tab: BrowserTab
-): Boolean =
-    BrowserMediaController
-        .isVideoPresent(tab.id) ||
-        BrowserMediaController
-            .isVideoPlaying(tab.id) ||
-        (
-            isYoutubeVideoPage(tab.url) &&
-                BrowserMediaController
-                    .isPlaying(tab.id)
-        )
-
-private fun isMiniVideoAvailable(): Boolean {
-    val tab =
-        TabManager.activeTab()
-            ?: return false
-
-    return BrowserPrefs
-        .smartPip(this) &&
-        hasMiniVideo(tab)
-}
-
-private fun updateMiniPlayerChip() {
-    miniPlayerButton.visibility =
-        if (
-            !isInPictureInPictureMode &&
-            isMiniVideoAvailable()
-        ) {
-            View.VISIBLE
-        } else {
-            View.GONE
+        return when (host) {
+            "youtu.be" -> path.length > 1
+            "youtube.com", "www.youtube.com", "m.youtube.com" ->
+                path == "/watch" ||
+                    path.startsWith("/shorts/") ||
+                    path.startsWith("/live/")
+            else -> false
         }
-}
-
-private fun startMiniPlayer(
-    silent: Boolean = false,
-    requirePlayback: Boolean = false,
-    delayMs: Long = 120L
-) {
-    if (Build.VERSION.SDK_INT < 26) {
-        if (!silent) {
-            Toast.makeText(
-                this,
-                "Mini reproductor requiere Android 8 o superior",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        return
     }
 
-    if (isInPictureInPictureMode) {
-        return
+    private fun isMiniPlaybackActive(tab: BrowserTab): Boolean =
+        BrowserMediaController.isVideoPlaying(tab.id) ||
+            BrowserMediaController.isPlaying(tab.id)
+
+    private fun hasMiniVideo(tab: BrowserTab): Boolean =
+        BrowserMediaController.isVideoPresent(tab.id) ||
+            BrowserMediaController.isVideoPlaying(tab.id) ||
+            (isYoutubeVideoPage(tab.url) && BrowserMediaController.isPlaying(tab.id))
+
+    private fun isMiniVideoAvailable(): Boolean {
+        val tab = TabManager.activeTab() ?: return false
+        return BrowserPrefs.smartPip(this) && hasMiniVideo(tab)
     }
 
-    val tab =
-        TabManager.activeTab()
-            ?: return
-
-    val session =
-        tab.session
-            ?: return
-
-    /*
-     * Capturar el estado antes de tocar CSS, GeckoSession
-     * o Picture-in-Picture.
-     */
-    pipPlaybackWasActive =
-        isMiniPlaybackActive(tab)
-
-    if (!hasMiniVideo(tab)) {
-        if (!silent) {
-            Toast.makeText(
-                this,
-                "No se detectó un video para abrir Mini.",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        updateMiniPlayerChip()
-        return
+    private fun updateMiniPlayerChip() {
+        miniPlayerButton.visibility =
+            if (!isInPictureInPictureMode && isMiniVideoAvailable()) View.VISIBLE
+            else View.GONE
     }
 
-    if (
-        requirePlayback &&
-        !isMiniPlaybackActive(tab)
+    private fun startMiniPlayer(
+        silent: Boolean = false,
+        requirePlayback: Boolean = false,
+        delayMs: Long = 120L
     ) {
-        return
-    }
+        if (isInPictureInPictureMode) return
 
-    /*
-     * Mantener GeckoSession activa durante
-     * la transición a Android PiP.
-     */
-    TabManager.prepareForPictureInPicture()
+        val tab = TabManager.activeTab() ?: return
+        val session = tab.session ?: return
 
-    /*
-     * Pedir al bridge JS que aisle
-     * únicamente el video HTML5.
-     */
-    ExtensionManager.setPipMode(
-        session,
-        true
-    )
+        // Capturar el estado antes de tocar CSS, GeckoSession o PiP.
+        pipPlaybackWasActive = isMiniPlaybackActive(tab)
 
-    miniPlayerButton.visibility =
-        View.GONE
-
-    val enterPip =
-        Runnable {
-            val builder =
-                PictureInPictureParams
-                    .Builder()
-                    .setAspectRatio(
-                        pipAspectRatio(
-                            tab.id
-                        )
-                    )
-
-            if (
-                geckoView.width > 0 &&
-                geckoView.height > 0
-            ) {
-                builder.setSourceRectHint(
-                    Rect(
-                        geckoView.left,
-                        geckoView.top,
-                        geckoView.right,
-                        geckoView.bottom
-                    )
-                )
+        if (!hasMiniVideo(tab)) {
+            if (!silent) {
+                Toast.makeText(this, "No se detectó un video para abrir Mini.", Toast.LENGTH_SHORT).show()
             }
+            updateMiniPlayerChip()
+            return
+        }
 
-            if (
-                Build.VERSION.SDK_INT >= 31
-            ) {
-                /*
-                 * Nexo controla manualmente el PiP
-                 * desde onUserLeaveHint().
-                 *
-                 * Se mantiene autoEnter desactivado
-                 * para no activar PiP al entrar en
-                 * Configuración, Historial, etc.
-                 */
-                builder
-                    .setAutoEnterEnabled(false)
-                    .setSeamlessResizeEnabled(true)
-            }
+        if (requirePlayback && !isMiniPlaybackActive(tab)) return
 
-            val entered =
-                runCatching {
-                    enterPictureInPictureMode(
-                        builder.build()
-                    )
-                }.getOrDefault(false)
+        // Mantener GeckoSession activa durante la transición a PiP.
+        TabManager.prepareForPictureInPicture()
+
+        // Pedir al bridge JS que aísle únicamente el video HTML5.
+        ExtensionManager.setPipMode(session, true)
+
+        miniPlayerButton.visibility = View.GONE
+
+        val enterPip = Runnable {
+            val entered = runCatching {
+                enterPictureInPictureMode(buildPipParams(tab.id))
+            }.getOrDefault(false)
 
             if (!entered) {
                 pipPlaybackWasActive = false
-
-                ExtensionManager.setPipMode(
-                    session,
-                    false
-                )
-
+                ExtensionManager.setPipMode(session, false)
                 updateMiniPlayerChip()
-                        }
-
+            }
         }
 
-    /*
-     * Botón manual:
-     * 120 ms para permitir que JS prepare
-     * el aislamiento.
-     *
-     * Home / cambio de app:
-     * delay 0 para evitar carrera con onStop().
-     */
-    if (delayMs <= 0L) {
-        enterPip.run()
-    } else {
-        geckoView.postDelayed(
-            enterPip,
-            delayMs
-        )
-    }
-}
-
-private fun updatePipParams() {
-    if (Build.VERSION.SDK_INT < 26) {
-        return
+        /*
+         * Botón manual: 120 ms para que JS prepare el aislamiento.
+         * Home / cambio de app: delay 0 para evitar carrera con onStop().
+         */
+        if (delayMs <= 0L) enterPip.run() else geckoView.postDelayed(enterPip, delayMs)
     }
 
-    val tab =
-        TabManager.activeTab()
+    private fun buildPipParams(tabId: String?): PictureInPictureParams {
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(pipAspectRatio(tabId))
 
-    val builder =
-        PictureInPictureParams
-            .Builder()
-            .setAspectRatio(
-                pipAspectRatio(
-                    tab?.id
-                )
-            )
-
-    if (
-        geckoView.width > 0 &&
-        geckoView.height > 0
-    ) {
-        builder.setSourceRectHint(
-            Rect(
-                geckoView.left,
-                geckoView.top,
-                geckoView.right,
-                geckoView.bottom
-            )
-        )
-    }
-
-    if (
-        Build.VERSION.SDK_INT >= 31
-    ) {
-        builder
-            .setAutoEnterEnabled(false)
-            .setSeamlessResizeEnabled(true)
-    }
-
-    runCatching {
-        setPictureInPictureParams(
-            builder.build()
-        )
-    }
-}
-
-private fun pipAspectRatio(
-    tabId: String?
-): Rational {
-    val (rawWidth, rawHeight) =
-        if (tabId != null) {
-            BrowserMediaController
-                .videoAspect(tabId)
-        } else {
-            16 to 9
+        if (geckoView.width > 0 && geckoView.height > 0) {
+            // El hint debe ir en coordenadas de ventana.
+            val rect = Rect()
+            if (geckoView.getGlobalVisibleRect(rect)) builder.setSourceRectHint(rect)
         }
 
-    val width =
-        rawWidth.coerceAtLeast(1)
+        if (Build.VERSION.SDK_INT >= 31) {
+            /*
+             * Nexo controla manualmente el PiP desde onUserLeaveHint().
+             * autoEnter desactivado para no activar PiP al entrar en
+             * Configuración, Historial, etc.
+             */
+            builder
+                .setAutoEnterEnabled(false)
+                .setSeamlessResizeEnabled(true)
+        }
 
-    val height =
-        rawHeight.coerceAtLeast(1)
-
-    val ratio =
-        width.toDouble() /
-            height.toDouble()
-
-    /*
-     * Android PiP acepta aproximadamente
-     * ratios entre 1:2.39 y 2.39:1.
-     *
-     * Dejamos margen de seguridad.
-     */
-    return when {
-        ratio < 0.42 ->
-            Rational(
-                42,
-                100
-            )
-
-        ratio > 2.38 ->
-            Rational(
-                238,
-                100
-            )
-
-        else ->
-            Rational(
-                width,
-                height
-            )
-    }
-}
-
-override fun onUserLeaveHint() {
-    val tab =
-        TabManager.activeTab()
-
-    /*
-     * Decidir ANTES de tocar el estado multimedia si vamos
-     * realmente a Android PiP. PiP permanece visible y no
-     * necesita foreground service ni reintentos de play().
-     */
-    val willEnterPip =
-        !suppressAutoPipOnce &&
-        !isInPictureInPictureMode &&
-        BrowserPrefs.smartPip(this) &&
-        tab != null &&
-        hasMiniVideo(tab) &&
-        isMiniPlaybackActive(tab)
-
-    /*
-     * El hold queda reservado exclusivamente para segundo
-     * plano real (audio/video sin PiP).
-     */
-    backgroundPlaybackWasActive =
-        !willEnterPip &&
-        tab != null &&
-        BrowserPrefs.backgroundMedia(this) &&
-        BrowserMediaController
-            .isPlaybackActive(tab.id)
-
-    if (
-        backgroundPlaybackWasActive &&
-        tab != null
-    ) {
-        BrowserMediaController.holdPlayback(
-            tab.id,
-            10_000L
-        )
-
-        MediaPlaybackService.sync(this)
+        return builder.build()
     }
 
-    if (willEnterPip) {
-        startMiniPlayer(
-            silent = true,
-            requirePlayback = true,
-            delayMs = 0L
-        )
+    private fun updatePipParams() {
+        runCatching { setPictureInPictureParams(buildPipParams(TabManager.activeTab()?.id)) }
     }
 
-    super.onUserLeaveHint()
-}
+    private fun pipAspectRatio(tabId: String?): Rational {
+        val (rawWidth, rawHeight) =
+            if (tabId != null) BrowserMediaController.videoAspect(tabId) else 16 to 9
+
+        val width = rawWidth.coerceAtLeast(1)
+        val height = rawHeight.coerceAtLeast(1)
+        val ratio = width.toDouble() / height.toDouble()
+
+        // Android PiP acepta ratios entre ~1:2.39 y 2.39:1; dejamos margen.
+        return when {
+            ratio < 0.42 -> Rational(42, 100)
+            ratio > 2.38 -> Rational(238, 100)
+            else -> Rational(width, height)
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        val tab = TabManager.activeTab()
+
+        /*
+         * Decidir ANTES de tocar el estado multimedia si vamos
+         * realmente a Android PiP. PiP permanece visible y no
+         * necesita foreground service ni reintentos de play().
+         */
+        val willEnterPip =
+            !suppressAutoPipOnce &&
+                !isInPictureInPictureMode &&
+                BrowserPrefs.smartPip(this) &&
+                tab != null &&
+                hasMiniVideo(tab) &&
+                isMiniPlaybackActive(tab)
+
+        // El hold queda reservado para segundo plano real (sin PiP).
+        backgroundPlaybackWasActive =
+            !willEnterPip &&
+                tab != null &&
+                BrowserPrefs.backgroundMedia(this) &&
+                BrowserMediaController.isPlaybackActive(tab.id)
+
+        if (backgroundPlaybackWasActive && tab != null) {
+            BrowserMediaController.holdPlayback(tab.id, 10_000L)
+            MediaPlaybackService.sync(this)
+        }
+
+        if (willEnterPip) {
+            startMiniPlayer(silent = true, requirePlayback = true, delayMs = 0L)
+        }
+
+        super.onUserLeaveHint()
+    }
 
     override fun onPictureInPictureModeChanged(
         isInPictureInPictureMode: Boolean,
         newConfig: Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        ExtensionManager.setPipMode(
-            attachedSession,
-            isInPictureInPictureMode
-        )
+        ExtensionManager.setPipMode(attachedSession, isInPictureInPictureMode)
 
-                if (isInPictureInPictureMode) {
-        /*
-         * GeckoView mantiene la sesión/compositor activos.
-         * No forzar MediaSession.play(): en YouTube puede
-         * reiniciar el decoder y producir frames negros.
-         */
-        TabManager.prepareForPictureInPicture()
-    } else {
-
+        if (isInPictureInPictureMode) {
+            /*
+             * GeckoView mantiene la sesión/compositor activos.
+             * No forzar MediaSession.play(): en YouTube puede
+             * reiniciar el decoder y producir frames negros.
+             */
+            TabManager.prepareForPictureInPicture()
+        } else {
             pipPlaybackWasActive = false
             TabManager.resumeActive()
         }
 
         runCatching {
-            attachedSession
-                ?.compositorController
-                ?.onPipModeChanged(isInPictureInPictureMode)
+            attachedSession?.compositorController?.onPipModeChanged(isInPictureInPictureMode)
         }
         topBar.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
         navBar.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
@@ -1054,5 +795,31 @@ override fun onUserLeaveHint() {
     companion object {
         const val EXTRA_OPEN_URL = "nexo.open_url"
         private const val REQUEST_MEDIA_NOTIFICATIONS = 912
+
+        /** Alias no exportado declarado en AndroidManifest.xml. */
+        private val INTERNAL_OPEN_ALIAS =
+            MainActivity::class.java.name.substringBeforeLast('.') + ".InternalOpenActivity"
+
+        private const val MENU_NEW_TAB = 1
+        private const val MENU_NEW_PRIVATE_TAB = 2
+        private const val MENU_DESKTOP = 3
+        private const val MENU_SHARE = 4
+        private const val MENU_TRANSLATE = 5
+        private const val MENU_EXTENSIONS = 6
+        private const val MENU_HISTORY = 7
+        private const val MENU_DOWNLOADS = 8
+        private const val MENU_SETTINGS = 9
+        private const val MENU_CLOSE_TAB = 10
+
+        /**
+         * Intent para que las pantallas propias abran una URL en el navegador.
+         * Pasa por el alias no exportado, que es lo que permite URLs internas.
+         */
+        fun openUrlIntent(context: Context, url: String): Intent =
+            Intent().apply {
+                component = ComponentName(context, INTERNAL_OPEN_ALIAS)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                putExtra(EXTRA_OPEN_URL, url)
+            }
     }
 }

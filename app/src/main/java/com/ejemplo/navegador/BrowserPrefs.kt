@@ -33,8 +33,17 @@ object BrowserPrefs {
     const val COOKIES_ALL = "all"
     const val COOKIES_NONE = "none"
 
+    /** Claves de versiones antiguas que ya no se usan (p. ej. una API key en texto plano). */
+    private val legacyKeys = listOf("translator_api_key", "show_bridge_badge")
+
     private fun p(context: Context) =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+
+    fun purgeLegacyKeys(c: Context) {
+        val prefs = p(c)
+        if (legacyKeys.none { prefs.contains(it) }) return
+        prefs.edit().apply { legacyKeys.forEach { remove(it) } }.apply()
+    }
 
     fun theme(c: Context) = p(c).getString("theme", THEME_SYSTEM) ?: THEME_SYSTEM
     fun setTheme(c: Context, v: String) = p(c).edit().putString("theme", v).apply()
@@ -75,20 +84,11 @@ object BrowserPrefs {
     fun cookieMode(c: Context) = p(c).getString("cookie_mode", COOKIES_BALANCED) ?: COOKIES_BALANCED
     fun setCookieMode(c: Context, v: String) = p(c).edit().putString("cookie_mode", v).apply()
 
-    // Compatibilidad interna: el bridge ya no se muestra como extensión.
-    fun showBridgeBadge(c: Context) = false
-    fun setShowBridgeBadge(c: Context, v: Boolean) = Unit
-
     fun smartPip(c: Context) = p(c).getBoolean("smart_pip", true)
     fun setSmartPip(c: Context, v: Boolean) = p(c).edit().putBoolean("smart_pip", v).apply()
 
     fun backgroundMedia(c: Context) = p(c).getBoolean("background_media", true)
     fun setBackgroundMedia(c: Context, v: Boolean) = p(c).edit().putBoolean("background_media", v).apply()
-
-    fun translatorApiKey(c: Context) =
-        p(c).getString("translator_api_key", "") ?: ""
-    fun setTranslatorApiKey(c: Context, v: String) =
-        p(c).edit().putString("translator_api_key", v.trim()).apply()
 
     fun translatorTarget(c: Context) =
         p(c).getString("translator_target", "es") ?: "es"

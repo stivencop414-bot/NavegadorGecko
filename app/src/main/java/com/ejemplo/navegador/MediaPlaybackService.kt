@@ -156,7 +156,17 @@ class MediaPlaybackService : Service() {
             .setContentText(statusText)
             .setContentIntent(open)
             .setCategory(Notification.CATEGORY_TRANSPORT)
-            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            // En pantalla de bloqueo solo se ve la versión pública genérica,
+            // nunca el título de la página.
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                Notification.Builder(this, CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_nexo_logo)
+                    .setContentTitle("Nexo Browser")
+                    .setContentText("Reproduciendo multimedia")
+                    .setCategory(Notification.CATEGORY_TRANSPORT)
+                    .build()
+            )
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .addAction(
@@ -261,11 +271,7 @@ class MediaPlaybackService : Service() {
             startRequested = true
 
             runCatching {
-                if (Build.VERSION.SDK_INT >= 26) {
-                    app.startForegroundService(intent)
-                } else {
-                    app.startService(intent)
-                }
+                app.startForegroundService(intent)
             }.onFailure { error ->
                 startRequested = false
                 android.util.Log.w(

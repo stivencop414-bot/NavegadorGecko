@@ -23,6 +23,12 @@ object ExtensionManager {
         "resource://android/assets/extensions/nexo_bridge/"
     private const val NATIVE_APP = "browser"
 
+    private const val IMPORT_DIR = "imported_extensions"
+    private const val MAX_PACKAGE_BYTES = 120L * 1024L * 1024L
+    private const val MAX_EXPANDED_BYTES = 250L * 1024L * 1024L
+    private const val MAX_ENTRIES = 4000
+    private const val MAX_MANIFEST_BYTES = 1024L * 1024L
+
     private var promptActivity = WeakReference<Activity>(null)
     private var bridge: WebExtension? = null
     private val ports = mutableSetOf<WebExtension.Port>()
@@ -55,7 +61,7 @@ object ExtensionManager {
 
         val controller = GeckoRuntimeHolder.get(context).webExtensionController
         controller.setPromptDelegate(promptDelegate)
-    controller.setAddonManagerDelegate(addonManagerDelegate)
+        controller.setAddonManagerDelegate(addonManagerDelegate)
 
         controller.ensureBuiltIn(BRIDGE_URI, BRIDGE_ID).accept(
             { extension ->
@@ -400,21 +406,20 @@ object ExtensionManager {
                                 )
                         }
 
-                                        /*
-             * Una carpeta con manifest.json es código fuente,
-             * no un paquete instalable normal en GeckoView
-             * release. Seguimos recorriéndola para encontrar
-             * XPI/ZIP firmados en subcarpetas, pero no la
-             * mostramos como candidato instalable.
-             */
-            if (hasManifest) {
-                android.util.Log.d(
-                    "NexoExtensions",
-                    "Carpeta de código fuente omitida: " +
-                        (directory.name ?: "Extensión")
-                )
-            }
-
+                    /*
+                     * Una carpeta con manifest.json es código fuente,
+                     * no un paquete instalable en GeckoView release.
+                     * Seguimos recorriéndola para encontrar XPI/ZIP
+                     * firmados en subcarpetas, pero no la mostramos
+                     * como candidato instalable.
+                     */
+                    if (hasManifest) {
+                        android.util.Log.d(
+                            "NexoExtensions",
+                            "Carpeta de código fuente omitida: " +
+                                (directory.name ?: "Extensión")
+                        )
+                    }
 
                     children.forEach {
                         child ->
@@ -515,145 +520,51 @@ object ExtensionManager {
     fun importXpi(
         context: Context,
         source: Uri,
-        onDone:
-            (Boolean, String) -> Unit
+        onDone: (Boolean, String) -> Unit
     ) {
+        val app = context.applicationContext
+
         Thread {
-            val prepared =
-                runCatching {
-                                        val cache =
-                File(
-                    context.filesDir,
-                    "imported_extensions"
-                )
+            val cache = File(app.filesDir, IMPORT_DIR)
+            purgeStaleImports(cache)
 
+            val target = File(cache, "import-${System.currentTimeMillis()}.xpi")
 
-                    cache.mkdirs()
+            val prepared = runCatching {
+                cache.mkdirs()
+                copyUriWithLimit(app, source, target)
+                normalizeArchive(target)
+            }.onFailure {
+                runCatching { target.delete() }
+            }
 
-                    val target =
-                        File(
-                            cache,
-                            "import-" +
-                                System.currentTimeMillis() +
-                                ".xpi"
-                        )
-
-                    copyUriWithLimit(
-                        context,
-                        source,
-                        target
-                    )
-
-                    normalizeArchive(
-                        target
-                    )
-                }
-
-            Handler(
-                Looper.getMainLooper()
-            ).post {
-                prepared.onSuccess {
-                    target ->
-
+            Handler(Looper.getMainLooper()).post {
+                prepared.onSuccess { archive ->
+                    // GeckoView copia el paquete a su perfil; el temporal
+                    // se elimina tanto si la instalación funciona como si no.
                     installInternal(
-                        context,
-                        Uri.fromFile(
-                            target
-                        ).toString(),
-                        WebExtensionController
-                            .INSTALLATION_METHOD_FROM_FILE,
-                                                onDone
-
+                        app,
+                        Uri.fromFile(archive).toString(),
+                        WebExtensionController.INSTALLATION_METHOD_FROM_FILE,
+                        onDone,
+                        cleanup = { runCatching { archive.delete() } }
                     )
-                }.onFailure {
-                    error ->
-
+                }.onFailure { error ->
                     onDone(
                         false,
-                        "Importación fallida: " +
-                            (
-                                error.message
-                                    ?: "paquete inválido"
-                                )
+                        "Importación fallida: " + (error.message ?: "paquete inválido")
                     )
                 }
             }
         }.start()
     }
 
-    private fun importFolder(
-        context: Context,
-        folder:
-            androidx.documentfile.provider.DocumentFile,
-        onDone:
-            (Boolean, String) -> Unit
-    ) {
-        Thread {
-            val prepared =
-                runCatching {
-                    val cache =
-                        File(
-                            context.cacheDir,
-                            "extensions"
-                        )
-
-                    cache.mkdirs()
-
-                    val target =
-                        File(
-                            cache,
-                            "folder-" +
-                                System.currentTimeMillis() +
-                                ".xpi"
-                        )
-
-                    packageDocumentFolder(
-                        context,
-                        folder,
-                        target
-                    )
-
-                    validateArchive(
-                        target
-                    )
-
-                    target
-                }
-
-            Handler(
-                Looper.getMainLooper()
-            ).post {
-                prepared.onSuccess {
-                    target ->
-
-                    installInternal(
-                        context,
-                        Uri.fromFile(
-                            target
-                        ).toString(),
-                        WebExtensionController
-                            .INSTALLATION_METHOD_FROM_FILE,
-                        onDone,
-                        cleanup = {
-                            runCatching {
-                                target.delete()
-                            }
-                        }
-                    )
-                }.onFailure {
-                    error ->
-
-                    onDone(
-                        false,
-                        "No se pudo preparar la carpeta: " +
-                            (
-                                error.message
-                                    ?: "estructura inválida"
-                                )
-                    )
-                }
-            }
-        }.start()
+    /** Borra importaciones antiguas que hayan quedado de versiones anteriores. */
+    private fun purgeStaleImports(folder: File) {
+        val cutoff = System.currentTimeMillis() - 60L * 60L * 1000L
+        folder.listFiles()
+            ?.filter { it.isFile && it.lastModified() < cutoff }
+            ?.forEach { runCatching { it.delete() } }
     }
 
     private fun copyUriWithLimit(
@@ -663,69 +574,32 @@ object ExtensionManager {
     ) {
         var total = 0L
 
-        context.contentResolver
-            .openInputStream(source)
-            .use {
-                input ->
+        (
+            context.contentResolver.openInputStream(source)
+                ?: error("No se pudo abrir el archivo.")
+        ).use { stream ->
+            FileOutputStream(target).use { output ->
+                val buffer = ByteArray(128 * 1024)
+                while (true) {
+                    val count = stream.read(buffer)
+                    if (count < 0) break
 
-                requireNotNull(input) {
-                    "No se pudo abrir el archivo."
-                }
-
-                FileOutputStream(
-                    target
-                ).use {
-                    output ->
-
-                    val buffer =
-                        ByteArray(
-                            128 * 1024
-                        )
-
-                    while (true) {
-                        val count =
-                            input.read(buffer)
-
-                        if (count < 0) {
-                            break
-                        }
-
-                        total += count
-
-                        if (
-                            total >
-                            120L *
-                            1024L *
-                            1024L
-                        ) {
-                            error(
-                                "El archivo supera el límite de 120 MB."
-                            )
-                        }
-
-                        output.write(
-                            buffer,
-                            0,
-                            count
-                        )
+                    total += count
+                    if (total > MAX_PACKAGE_BYTES) {
+                        error("El archivo supera el límite de 120 MB.")
                     }
+                    output.write(buffer, 0, count)
                 }
             }
-
-        if (total <= 0L) {
-            error(
-                "El archivo está vacío."
-            )
         }
+
+        if (total <= 0L) error("El archivo está vacío.")
     }
 
-    private fun normalizeArchive(
-        input: File
-    ): File {
-        val rootManifest =
-            java.util.zip.ZipFile(input).use { zip ->
-                zip.getEntry("manifest.json") != null
-            }
+    private fun normalizeArchive(input: File): File {
+        val rootManifest = ZipFile(input).use { zip ->
+            zip.getEntry("manifest.json") != null
+        }
 
         if (!rootManifest) {
             error(
@@ -737,173 +611,25 @@ object ExtensionManager {
         return input
     }
 
-    private fun packageDocumentFolder(
-        context: Context,
-        root:
-            androidx.documentfile.provider.DocumentFile,
-        target: File
-    ) {
-        var files = 0
-        var bytes = 0L
+    /*
+     * Valida estructura y tamaño REAL del paquete. Los tamaños declarados en
+     * el directorio central del ZIP pueden ser falsos (o -1), por eso se
+     * descomprime cada entrada contando los bytes leídos.
+     */
+    private fun validateArchive(target: File) {
+        if (target.length() <= 0L) error("El paquete está vacío.")
 
-        java.util.zip.ZipOutputStream(
-            FileOutputStream(
-                target
-            )
-        ).use {
-            output ->
-
-            fun addDirectory(
-                directory:
-                    androidx.documentfile.provider.DocumentFile,
-                prefix: String,
-                depth: Int
-            ) {
-                if (depth > 15) {
-                    error(
-                        "La carpeta tiene demasiados niveles."
-                    )
-                }
-
-                val children =
-                    directory.listFiles()
-
-                children.forEach {
-                    child ->
-
-                    val name =
-                        child.name
-                            ?.takeIf {
-                                it.isNotBlank()
-                            }
-                            ?: return@forEach
-
-                    val entryName =
-                        if (
-                            prefix.isBlank()
-                        ) {
-                            name
-                        } else {
-                            "$prefix/$name"
-                        }
-
-                    if (
-                        child.isDirectory
-                    ) {
-                        addDirectory(
-                            child,
-                            entryName,
-                            depth + 1
-                        )
-                    } else if (
-                        child.isFile
-                    ) {
-                        files += 1
-
-                        if (
-                            files > 4000
-                        ) {
-                            error(
-                                "La extensión contiene demasiados archivos."
-                            )
-                        }
-
-                        output.putNextEntry(
-                            java.util.zip.ZipEntry(
-                                entryName
-                            )
-                        )
-
-                        context
-                            .contentResolver
-                            .openInputStream(
-                                child.uri
-                            )
-                            .use {
-                                input ->
-
-                                requireNotNull(
-                                    input
-                                ) {
-                                    "No se pudo leer $name"
-                                }
-
-                                val buffer =
-                                    ByteArray(
-                                        128 * 1024
-                                    )
-
-                                while (true) {
-                                    val count =
-                                        input.read(
-                                            buffer
-                                        )
-
-                                    if (
-                                        count < 0
-                                    ) {
-                                        break
-                                    }
-
-                                    bytes += count
-
-                                    if (
-                                        bytes >
-                                        120L *
-                                        1024L *
-                                        1024L
-                                    ) {
-                                        error(
-                                            "La carpeta supera el límite de 120 MB."
-                                        )
-                                    }
-
-                                    output.write(
-                                        buffer,
-                                        0,
-                                        count
-                                    )
-                                }
-                            }
-
-                        output.closeEntry()
-                    }
-                }
-            }
-
-            addDirectory(
-                root,
-                "",
-                0
-            )
-        }
-    }
-
-    private fun validateArchive(
-        target: File
-    ) {
-        if (
-            target.length() <= 0L
-        ) {
-            error(
-                "El paquete está vacío."
-            )
-        }
-
-        java.util.zip.ZipFile(
-            target
-        ).use {
-            zip ->
-
+        ZipFile(target).use { zip ->
             var entries = 0
             var expandedBytes = 0L
+            val buffer = ByteArray(64 * 1024)
             val allEntries = zip.entries()
 
             while (allEntries.hasMoreElements()) {
                 val entry = allEntries.nextElement()
                 entries += 1
 
-                if (entries > 4000) {
+                if (entries > MAX_ENTRIES) {
                     error("La extensión contiene demasiadas entradas.")
                 }
 
@@ -912,60 +638,41 @@ object ExtensionManager {
 
                 if (
                     normalized.startsWith('/') ||
-                    normalized.startsWith("\\") ||
                     segments.any { it == ".." } ||
-                    normalized.indexOf('\u0000') >= 0
+                    normalized.indexOf('\u0000') >= 0 ||
+                    (segments.firstOrNull()?.endsWith(':') == true)
                 ) {
                     error("Ruta insegura dentro del paquete: ${entry.name}")
                 }
 
-                if (entry.size > 0L) {
-                    expandedBytes += entry.size
-                    if (expandedBytes > 250L * 1024L * 1024L) {
-                        error("El contenido expandido del XPI supera 250 MB.")
+                if (entry.isDirectory) continue
+
+                zip.getInputStream(entry).use { stream ->
+                    while (true) {
+                        val count = stream.read(buffer)
+                        if (count < 0) break
+                        expandedBytes += count
+                        if (expandedBytes > MAX_EXPANDED_BYTES) {
+                            error("El contenido expandido del XPI supera 250 MB.")
+                        }
                     }
                 }
             }
 
-            val manifest =
-                zip.getEntry(
-                    "manifest.json"
-                )
-                    ?: error(
-                        "No existe manifest.json en la raíz."
-                    )
+            val manifest = zip.getEntry("manifest.json")
+                ?: error("No existe manifest.json en la raíz.")
 
-            zip.getInputStream(
-                manifest
-            )
+            if (manifest.size > MAX_MANIFEST_BYTES) {
+                error("manifest.json es demasiado grande.")
+            }
+
+            val json = zip.getInputStream(manifest)
                 .bufferedReader()
-                .use {
-                    reader ->
+                .use { JSONObject(it.readText()) }
 
-                    val json =
-                        JSONObject(
-                            reader.readText()
-                        )
-
-                    val name =
-                        json.optString(
-                            "name"
-                        )
-
-                    val version =
-                        json.optString(
-                            "version"
-                        )
-
-                    if (
-                        name.isBlank() ||
-                        version.isBlank()
-                    ) {
-                        error(
-                            "manifest.json no contiene nombre y versión."
-                        )
-                    }
-                }
+            if (json.optString("name").isBlank() || json.optString("version").isBlank()) {
+                error("manifest.json no contiene nombre y versión.")
+            }
         }
     }
 
@@ -1187,11 +894,22 @@ object ExtensionManager {
                         WebExtension
                             .CreateTabDetails
                 ): GeckoResult<GeckoSession>? {
+                    val url = createDetails.url ?: "about:blank"
+
+                    // Misma política que el resto de la app: una extensión
+                    // no puede abrir javascript:, data:, file:, about:config…
+                    if (!UrlSafety.isExtensionTabUrl(url)) {
+                        android.util.Log.w(
+                            "NexoExtensions",
+                            "Pestaña bloqueada (esquema no permitido) de ${source.id}"
+                        )
+                        return null
+                    }
+
                     val session =
                         TabManager
                             .createSessionForExtension(
-                                createDetails.url
-                                    ?: "about:blank",
+                                url,
                                 createDetails.active !=
                                     false
                             )
@@ -1362,6 +1080,16 @@ object ExtensionManager {
                 createExtensionPopupSession()
         }
 
+    /*
+     * El delegate solo se registra para el bridge, pero se verifica igualmente
+     * la extensión remitente: si otra extensión llegara a enlazarse por error,
+     * no obtendría acceso al puente.
+     */
+    private fun isBridgeSender(sender: WebExtension.MessageSender): Boolean =
+        sender.webExtension.id == BRIDGE_ID &&
+            sender.isTopLevel() &&
+            sender.session != null
+
     private val bridgeMessageDelegate =
         object : WebExtension.MessageDelegate {
             override fun onMessage(
@@ -1369,11 +1097,7 @@ object ExtensionManager {
                 message: Any,
                 sender: WebExtension.MessageSender
             ): GeckoResult<Any>? {
-                if (
-                    nativeApp != NATIVE_APP ||
-                    !sender.isTopLevel() ||
-                    sender.session == null
-                ) {
+                if (nativeApp != NATIVE_APP || !isBridgeSender(sender)) {
                     return null
                 }
 
@@ -1391,10 +1115,7 @@ object ExtensionManager {
             }
 
             override fun onConnect(port: WebExtension.Port) {
-                if (
-                    !port.sender.isTopLevel() ||
-                    port.sender.session == null
-                ) {
+                if (!isBridgeSender(port.sender)) {
                     runCatching { port.disconnect() }
                     return
                 }
@@ -1480,7 +1201,7 @@ object ExtensionManager {
                     dataCollectionPermissions
                 )
 
-                    override fun onUpdatePrompt(
+            override fun onUpdatePrompt(
             extension: WebExtension,
             newPermissions: Array<out String>,
             newOrigins: Array<out String>,

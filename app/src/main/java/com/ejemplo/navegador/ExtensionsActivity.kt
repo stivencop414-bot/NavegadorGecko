@@ -1005,24 +1005,7 @@ class ExtensionsActivity :
     private fun openInBrowser(
         url: String
     ) {
-        startActivity(
-            Intent(
-                this,
-                MainActivity::class.java
-            ).apply {
-                addFlags(
-                    Intent
-                        .FLAG_ACTIVITY_CLEAR_TOP or
-                        Intent
-                            .FLAG_ACTIVITY_SINGLE_TOP
-                )
-
-                putExtra(
-                    MainActivity.EXTRA_OPEN_URL,
-                    url
-                )
-            }
-        )
+        startActivity(MainActivity.openUrlIntent(this, url))
     }
 
     private fun setLoading(

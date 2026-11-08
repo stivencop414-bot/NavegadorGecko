@@ -2,7 +2,6 @@ package com.ejemplo.navegador
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.content.Intent
 import android.os.Bundle
 import android.text.format.DateFormat
 import android.view.View
@@ -34,7 +33,9 @@ class HistoryActivity : Activity() {
                     }.show()
             }
         }
-        listView.setOnItemClickListener { _, _, position, _ -> open(entries[position].url) }
+        listView.setOnItemClickListener { _, _, position, _ ->
+            entries.getOrNull(position)?.let { open(it.url) }
+        }
         applyTheme()
         refresh()
     }
@@ -52,12 +53,7 @@ class HistoryActivity : Activity() {
     }
 
     private fun open(url: String) {
-        startActivity(
-            Intent(this, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                putExtra(MainActivity.EXTRA_OPEN_URL, url)
-            }
-        )
+        startActivity(MainActivity.openUrlIntent(this, url))
     }
 
     private fun applyTheme() {

@@ -7,10 +7,12 @@ import android.os.Handler
 import android.os.Looper
 import org.json.JSONArray
 import org.json.JSONObject
+import org.mozilla.geckoview.GeckoWebExecutor
+import org.mozilla.geckoview.WebRequest
 import org.mozilla.geckoview.WebResponse
 import java.io.File
 import java.io.FileOutputStream
-import java.net.URLDecoder
+import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.Executors
 
@@ -27,8 +29,70 @@ data class DownloadEntry(
 object DownloadStore {
     private const val PREF = "nexo_downloads"
     private const val KEY = "entries"
+    private const val MAX_ENTRIES = 250
+
+    /** Margen libre que se deja siempre en el almacenamiento. */
+    private const val FREE_SPACE_MARGIN = 64L * 1024L * 1024L
+
     private val io = Executors.newFixedThreadPool(2) { task ->
         Thread(task, "NexoDownloadIO").apply { isDaemon = true }
+    }
+    private val main = Handler(Looper.getMainLooper())
+    private val fileLock = Any()
+
+    /**
+     * Descarga una URL (menú contextual) a través de Gecko: envía las cookies
+     * de la sesión, respeta el modo privado y guarda en la misma carpeta que
+     * el resto de descargas, de modo que aparece en la pantalla Descargas.
+     */
+    fun download(
+        context: Context,
+        url: String,
+        isPrivate: Boolean,
+        referrer: String?,
+        callback: (Boolean, String) -> Unit
+    ) {
+        if (!UrlSafety.isWebUrl(url)) {
+            callback(false, "Este recurso no se puede descargar directamente")
+            return
+        }
+
+        val app = context.applicationContext
+        val request = WebRequest.Builder(url)
+            .apply {
+                if (referrer != null && UrlSafety.isWebUrl(referrer)) referrer(referrer)
+            }
+            .build()
+
+        val flags =
+            if (isPrivate) GeckoWebExecutor.FETCH_FLAGS_PRIVATE
+            else GeckoWebExecutor.FETCH_FLAGS_NONE
+
+        runCatching {
+            GeckoRuntimeHolder.webExecutor(app)
+                .fetch(request, flags)
+                .accept(
+                    { response ->
+                        if (response == null) {
+                            main.post { callback(false, "Descarga fallida: sin respuesta") }
+                        } else if (response.statusCode !in 200..299) {
+                            runCatching { response.body?.close() }
+                            main.post {
+                                callback(false, "Descarga fallida: HTTP ${response.statusCode}")
+                            }
+                        } else {
+                            saveResponse(app, response, callback)
+                        }
+                    },
+                    { error ->
+                        main.post {
+                            callback(false, "Descarga fallida: ${error?.message ?: "error de red"}")
+                        }
+                    }
+                )
+        }.onFailure {
+            callback(false, "Descarga fallida: ${it.message}")
+        }
     }
 
     fun saveResponse(
@@ -39,10 +103,12 @@ object DownloadStore {
         val app = context.applicationContext
 
         io.execute {
+            var file: File? = null
+
             runCatching {
                 val body = response.body ?: error("Sin cuerpo descargable")
                 val headers = response.headers
-                val mime = headers["Content-Type"]
+                val mime = header(headers, "Content-Type")
                     ?.substringBefore(";")
                     ?.trim()
                     .orEmpty()
@@ -50,15 +116,38 @@ object DownloadStore {
 
                 val requested = resolveFileName(
                     response.uri,
-                    headers["Content-Disposition"]
+                    header(headers, "Content-Disposition")
                 )
 
                 val folder = downloadsFolder(app)
-                val file = uniqueFile(folder, requested)
+                val declaredLength = header(headers, "Content-Length")?.trim()?.toLongOrNull()
+
+                if (declaredLength != null && declaredLength > folder.usableSpace - FREE_SPACE_MARGIN) {
+                    runCatching { body.close() }
+                    error("No hay espacio suficiente para este archivo")
+                }
+
+                val target = reserveFile(folder, requested)
+                file = target
 
                 body.use { input ->
-                    FileOutputStream(file).use { output ->
-                        input.copyTo(output, 512 * 1024)
+                    FileOutputStream(target).use { output ->
+                        val buffer = ByteArray(256 * 1024)
+                        var sinceCheck = 0L
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+
+                            // Comprobar espacio libre cada ~32 MB.
+                            sinceCheck += count
+                            if (sinceCheck >= 32L * 1024L * 1024L) {
+                                sinceCheck = 0L
+                                if (folder.usableSpace < FREE_SPACE_MARGIN) {
+                                    throw IOException("Almacenamiento casi lleno")
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -66,22 +155,20 @@ object DownloadStore {
                     app,
                     DownloadEntry(
                         UUID.randomUUID().toString(),
-                        file.name,
-                        file.absolutePath,
+                        target.name,
+                        target.absolutePath,
                         redactSourceUrl(response.uri),
                         mime,
-                        file.length(),
+                        target.length(),
                         System.currentTimeMillis()
                     )
                 )
 
-                Handler(Looper.getMainLooper()).post {
-                    callback(true, "Descargado: ${file.name}")
-                }
+                main.post { callback(true, "Descargado: ${target.name}") }
             }.onFailure {
-                Handler(Looper.getMainLooper()).post {
-                    callback(false, "Descarga fallida: ${it.message}")
-                }
+                // No dejar archivos a medio descargar.
+                file?.let { partial -> runCatching { partial.delete() } }
+                main.post { callback(false, "Descarga fallida: ${it.message}") }
             }
         }
     }
@@ -112,21 +199,26 @@ object DownloadStore {
         }.getOrDefault(emptyList())
     }
 
+    /** Devuelve el archivo solo si sigue dentro de la carpeta de descargas. */
+    fun fileFor(context: Context, entry: DownloadEntry): File? =
+        runCatching {
+            val root = downloadsFolder(context).canonicalFile
+            val file = File(entry.filePath).canonicalFile
+            file.takeIf { isChildOf(root, it) && it.isFile }
+        }.getOrNull()
+
     @Synchronized
     fun remove(context: Context, id: String) {
         val items = list(context).toMutableList()
         val item = items.firstOrNull { it.id == id } ?: return
 
-        runCatching {
-            val root = downloadsFolder(context).canonicalFile
-            val file = File(item.filePath).canonicalFile
-            if (isChildOf(root, file)) file.delete()
-        }
+        fileFor(context, item)?.let { runCatching { it.delete() } }
 
         items.remove(item)
         save(context, items)
     }
 
+    @Synchronized
     fun clearList(context: Context) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .edit().putString(KEY, "[]").apply()
@@ -136,7 +228,7 @@ object DownloadStore {
     private fun add(context: Context, entry: DownloadEntry) {
         val items = list(context).toMutableList()
         items.add(0, entry)
-        save(context, items.take(250))
+        save(context, items.take(MAX_ENTRIES))
     }
 
     private fun save(context: Context, items: List<DownloadEntry>) {
@@ -164,40 +256,25 @@ object DownloadStore {
         return folder
     }
 
+    private fun header(headers: Map<String, String>, name: String): String? =
+        headers[name] ?: headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+
     private fun resolveFileName(url: String, disposition: String?): String {
-        val fromHeader = disposition
-            ?.substringAfter("filename=", "")
-            ?.trim()
-            ?.trim('"')
-            ?.takeIf { it.isNotBlank() }
+        val fromHeader = FileNames.fromContentDisposition(disposition)
+        if (fromHeader != null) return FileNames.sanitize(fromHeader)
 
-        if (fromHeader != null) return sanitize(fromHeader)
-
-        val fromUrl = runCatching {
-            URLDecoder.decode(
-                url.substringBefore("?").substringAfterLast("/"),
-                "UTF-8"
-            )
-        }.getOrNull()
-
-        return sanitize(
-            fromUrl?.takeIf { it.contains(".") }
-                ?: "descarga-${System.currentTimeMillis()}.bin"
+        return FileNames.sanitize(
+            FileNames.fromUrl(url) ?: "descarga-${System.currentTimeMillis()}.bin"
         )
     }
 
-    private fun sanitize(value: String): String =
-        value
-            .replace(Regex("""[\/:*?"<>|\p{Cntrl}]"""), "_")
-            .replace("..", "_")
-            .trim()
-            .trimStart('.')
-            .take(120)
-            .ifBlank { "descarga.bin" }
-
-    private fun uniqueFile(folder: File, requested: String): File {
+    /**
+     * Crea el archivo de destino de forma atómica (createNewFile) para que
+     * dos descargas simultáneas con el mismo nombre no se sobrescriban.
+     */
+    private fun reserveFile(folder: File, requested: String): File {
         val root = folder.canonicalFile
-        val safeRequested = sanitize(requested)
+        val safeRequested = FileNames.sanitize(requested)
         val dot = safeRequested.lastIndexOf('.')
         val base = if (dot > 0) safeRequested.substring(0, dot) else safeRequested
         val ext = if (dot > 0) safeRequested.substring(dot) else ""
@@ -208,13 +285,16 @@ object DownloadStore {
             return file
         }
 
-        var file = candidate(safeRequested)
-        var n = 1
-        while (file.exists()) {
-            file = candidate("$base ($n)$ext")
-            n++
+        synchronized(fileLock) {
+            var file = candidate(safeRequested)
+            var n = 1
+            while (!file.createNewFile()) {
+                if (n > 999) error("Demasiados archivos con el mismo nombre")
+                file = candidate("$base ($n)$ext")
+                n++
+            }
+            return file
         }
-        return file
     }
 
     private fun isChildOf(root: File, file: File): Boolean {

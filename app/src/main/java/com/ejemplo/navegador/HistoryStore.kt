@@ -16,8 +16,12 @@ object HistoryStore {
     private const val MAX = 500
 
     @Synchronized
-    fun add(context: Context, url: String, title: String) {
-        if (url.isBlank() || url.startsWith("resource://android/assets/home/")) return
+    fun add(context: Context, rawUrl: String, title: String) {
+        if (rawUrl.isBlank() || rawUrl.startsWith("resource://android/assets/home/")) return
+        if (rawUrl.equals("about:blank", ignoreCase = true)) return
+
+        // No guardar en disco tokens OAuth, ids de sesión, firmas, etc.
+        val url = UrlSafety.redactSensitiveQuery(rawUrl)
 
         val items = list(context).toMutableList()
         items.removeAll { it.url == url }

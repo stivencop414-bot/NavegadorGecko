@@ -23,6 +23,19 @@ data class StoreAddon(
 object AmoClient {
     private const val API =
         "https://addons.mozilla.org/api/v5/addons/search/"
+    private const val MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+
+    private fun readLimited(input: java.io.InputStream, limit: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (out.size() + count > limit) error("Respuesta de Mozilla Add-ons demasiado grande")
+            out.write(buffer, 0, count)
+        }
+        return out.toByteArray()
+    }
 
     fun search(
         query: String,
@@ -73,24 +86,19 @@ object AmoClient {
 
                 connection.setRequestProperty(
                     "User-Agent",
-                    "NexoBrowser/0.13 GeckoView/153 Android"
+                    "NexoBrowser GeckoView Android"
                 )
 
-                if (
-                    connection.responseCode
-                    !in 200..299
-                ) {
-                    error(
-                        "Mozilla Add-ons respondió HTTP " +
-                            connection.responseCode
-                    )
-                }
-
-                connection.inputStream
-                    .bufferedReader()
-                    .use {
-                        parse(it.readText())
+                try {
+                    if (connection.responseCode !in 200..299) {
+                        error("Mozilla Add-ons respondió HTTP " + connection.responseCode)
                     }
+
+                    val bytes = connection.inputStream.use { readLimited(it, MAX_RESPONSE_BYTES) }
+                    parse(String(bytes, Charsets.UTF_8))
+                } finally {
+                    connection.disconnect()
+                }
             }
 
             Handler(
