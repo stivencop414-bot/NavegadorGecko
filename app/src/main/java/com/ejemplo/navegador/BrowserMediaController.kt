@@ -391,22 +391,20 @@ object BrowserMediaController {
     fun snapshotForService(): Snapshot? =
         snapshotFor(allowHold = true)
 
-    /** Play/pausa directo sobre la MediaSession de una pestaña (respaldo del mini video). */
-    fun togglePlayback(tabId: String): Boolean {
-        val entry = entries[tabId] ?: return false
-        val playing = isPlaybackActive(tabId)
-        if (playing) playbackHoldUntil.remove(tabId)
+    fun play(tabId: String) {
+        val entry = entries[tabId] ?: return
+        main.post { runCatching { entry.mediaSession.play() } }
+    }
 
-        main.post {
-            runCatching {
-                if (playing) entry.mediaSession.pause() else entry.mediaSession.play()
-            }
-        }
-        return true
+    // La recuperación de PiP también debe respetar los botones de la notificación.
+    private fun notifyUserPaused(tabId: String) {
+        val session = TabManager.allTabs().firstOrNull { it.id == tabId }?.session
+        ExtensionManager.sendPipCommand(session, "pause")
     }
 
     /** Pausa la reproducción de una pestaña concreta. */
     fun pause(tabId: String) {
+        notifyUserPaused(tabId)
         val entry = entries[tabId] ?: return
         playbackHoldUntil.remove(tabId)
         recentPlayback.remove(tabId)
@@ -416,6 +414,7 @@ object BrowserMediaController {
     fun pauseCurrent() {
         val id = currentTabId ?: entries.keys.lastOrNull() ?: return
         val entry = entries[id] ?: return
+        notifyUserPaused(id)
 
         playbackHoldUntil.remove(id)
         recentPlayback.remove(id)
@@ -432,6 +431,7 @@ object BrowserMediaController {
     fun stopCurrent() {
         val id = currentTabId ?: entries.keys.lastOrNull() ?: return
         val entry = entries[id] ?: return
+        notifyUserPaused(id)
 
         playbackHoldUntil.remove(id)
         recentPlayback.remove(id)

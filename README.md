@@ -42,6 +42,7 @@ Una extensión privada/sin firma puede integrarse dentro de
 
 ## Desarrollo
 ```bash
+node --test app/src/test/js/pip-bridge.test.cjs  # regresiones del mini reproductor
 gradle :app:testDebugUnitTest   # tests unitarios (reglas de URL y nombres de archivo)
 gradle :app:assembleDebug
 gradle :app:lintRelease

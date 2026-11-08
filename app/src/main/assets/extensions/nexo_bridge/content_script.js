@@ -20,9 +20,9 @@
   const RECONNECT_MIN_MS = 500;
   const RECONNECT_MAX_MS = 30000;
 
-  // Algunos sitios (YouTube) pausan el video al cambiar el tamaño de la
-  // ventana. Durante esta ventana tras entrar en PiP se reanuda solo.
-  const PIP_RESUME_WINDOW_MS = 6000;
+  // Algunos sitios pausan el video al redimensionarlo, cambiar anuncios o
+  // renovar el reproductor. Limitar la recuperación por ventana móvil.
+  const PIP_RESUME_WINDOW_MS = 10000;
   const PIP_MAX_AUTO_RESUMES = 3;
 
   let port = null;
@@ -33,9 +33,9 @@
   let pipVideo = null;
   let pipAncestors = [];
   let pipActive = false;
-  let pipStartedAt = 0;
+  let pipResumeAttempts = [];
+  let pipResumeTimer = 0;
   let pipShouldResume = false;
-  let pipAutoResumes = 0;
   let pipUserPaused = false;
   let reportTimer = 0;
   let lastStateKey = "";
@@ -153,7 +153,10 @@
 
     // Si el video actual sigue siendo válido, no saltar a otro.
     if (pipVideo && pipVideo.isConnected && all.includes(pipVideo) && hasMedia(pipVideo)) {
-      return pipVideo;
+      // Los sitios pueden conservar el elemento anterior al cambiar de anuncio/video.
+      return isPlaying(pipVideo) || pipUserPaused
+        ? pipVideo
+        : bestVideo(all.filter(hasMedia), true) || pipVideo;
     }
 
     // En la ventana pequeña de PiP el sitio puede encoger u ocultar el
@@ -172,22 +175,31 @@
   // ---------------------------------------------------------------
 
   function onPipVideoPause() {
-    if (!pipActive || pipUserPaused || !pipShouldResume) return;
-    if (Date.now() - pipStartedAt > PIP_RESUME_WINDOW_MS) return;
-    if (pipAutoResumes >= PIP_MAX_AUTO_RESUMES) return;
-
+    if (!pipActive || pipUserPaused || !pipShouldResume || pipResumeTimer) return;
     const video = pipVideo;
-    if (!video) return;
+    if (!video || !video.isConnected || !video.paused || video.ended || video.error) return;
 
-    pipAutoResumes++;
-    setTimeout(() => {
-      if (pipActive && !pipUserPaused && video === pipVideo && video.paused && !video.ended) {
+    // Presupuesto móvil: recuperar pausas tardías sin entrar en un bucle de play().
+    const now = Date.now();
+    pipResumeAttempts = pipResumeAttempts.filter(time => now - time < PIP_RESUME_WINDOW_MS);
+    if (pipResumeAttempts.length >= PIP_MAX_AUTO_RESUMES) return;
+    pipResumeTimer = setTimeout(() => {
+      pipResumeTimer = 0;
+      if (pipActive && !pipUserPaused && pipShouldResume && video === pipVideo &&
+          video.isConnected && video.paused && !video.ended && !video.error) {
+        if (pickPipVideo() !== video) {
+          refreshPipIsolation();
+          return;
+        }
+        pipResumeAttempts.push(Date.now());
         video.play().catch(() => {});
       }
     }, 150);
   }
 
   function clearPipIsolation() {
+    clearTimeout(pipResumeTimer);
+    pipResumeTimer = 0;
     document.documentElement.classList.remove("nexo-pip-root");
 
     if (pipVideo) {
@@ -203,7 +215,7 @@
     pipAncestors = [];
   }
 
-  function markAncestors(video) {
+  function ancestorsFor(video) {
     const ancestors = [];
     let current = video.parentElement;
 
@@ -220,12 +232,14 @@
       }
     }
 
-    for (const ancestor of ancestors) ancestor.classList.add("nexo-pip-ancestor");
     return ancestors;
   }
 
   function isolate(video) {
+    const ancestors = ancestorsFor(video);
     if (video === pipVideo &&
+        ancestors.length === pipAncestors.length &&
+        ancestors.every((ancestor, index) => ancestor === pipAncestors[index]) &&
         video.isConnected &&
         pipAncestors.every(a => a.isConnected && a.classList.contains("nexo-pip-ancestor")) &&
         video.classList.contains("nexo-pip-video")) {
@@ -234,7 +248,8 @@
 
     clearPipIsolation();
     pipVideo = video;
-    pipAncestors = markAncestors(video);
+    pipAncestors = ancestors;
+    for (const ancestor of pipAncestors) ancestor.classList.add("nexo-pip-ancestor");
     video.classList.add("nexo-pip-video");
     video.addEventListener("pause", onPipVideoPause, true);
     document.documentElement.classList.add("nexo-pip-root");
@@ -252,10 +267,9 @@
     }
 
     if (!wasActive) {
-      pipStartedAt = Date.now();
-      pipAutoResumes = 0;
+      pipResumeAttempts = [];
       pipUserPaused = false;
-      pipShouldResume = false;
+      pipShouldResume = resume === true;
     }
 
     const video = pickPipVideo();
@@ -274,7 +288,10 @@
   function refreshPipIsolation() {
     if (!pipActive) return;
     const video = pickPipVideo();
-    if (video) isolate(video);
+    if (video) {
+      isolate(video);
+      onPipVideoPause();
+    }
   }
 
   function pipCommand(command) {
@@ -283,10 +300,23 @@
 
     if (command === "pause" || (command === "toggle" && !video.paused)) {
       pipUserPaused = true;
+      pipShouldResume = false;
+      clearTimeout(pipResumeTimer);
+      pipResumeTimer = 0;
       video.pause();
     } else if (command === "play" || command === "toggle") {
       pipUserPaused = false;
+      pipShouldResume = true;
+      pipResumeAttempts = [];
       video.play().catch(() => {});
+    } else if (command === "seek_backward" || command === "seek_forward") {
+      // En directo, limitar el salto a la ventana realmente disponible.
+      if (video.seekable.length) {
+        const start = video.seekable.start(0);
+        const end = video.seekable.end(video.seekable.length - 1);
+        const delta = command === "seek_backward" ? -10 : 10;
+        try { video.currentTime = Math.max(start, Math.min(end, video.currentTime + delta)); } catch (_) {}
+      }
     }
     lastStateKey = "";
     scheduleVideoReport();
@@ -333,8 +363,11 @@
   }
 
   function scheduleVideoReport() {
-    clearTimeout(reportTimer);
-    reportTimer = setTimeout(reportVideoState, REPORT_DEBOUNCE_MS);
+    if (reportTimer) return;
+    reportTimer = setTimeout(() => {
+      reportTimer = 0;
+      reportVideoState();
+    }, REPORT_DEBOUNCE_MS);
   }
 
   [

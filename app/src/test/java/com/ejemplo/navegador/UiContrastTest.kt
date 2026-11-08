@@ -6,7 +6,7 @@ import org.junit.Test
 
 class UiContrastTest {
     @Test fun accentLabelsMeetNormalTextContrast() {
-        listOf(0x00CFFF, 0x43DC60, 0xFF9836, 0xFF4F9A, 0xFF4E4E, 0x815BFF).forEach { rgb ->
+        listOf(0x06B6D4, 0x22C55E, 0xF97316, 0xEC4899, 0xEF4444, 0x7C3AED).forEach { rgb ->
             val background = rgb or 0xFF000000.toInt()
             val a = UiContrast.luminance(background)
             val b = UiContrast.luminance(UiContrast.foreground(background))

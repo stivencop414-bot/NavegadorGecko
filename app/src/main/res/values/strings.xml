@@ -10,4 +10,6 @@
     <string name="back">Volver</string>
     <string name="mini_video">Mini video</string>
     <string name="empty_extensions">Aún no tienes extensiones. Explora la tienda para instalar la primera.</string>
+    <string name="seek_backward">Retroceder 10 segundos</string>
+    <string name="seek_forward">Avanzar 10 segundos</string>
 </resources>
