@@ -64,9 +64,9 @@ class StoreAddonAdapter(
             layoutParams = LinearLayout.LayoutParams(sz, sz).apply {
                 rightMargin = (14 * d).toInt()
             }
-            if (addon.iconUrl.isNotBlank()) {
-                RemoteImageLoader.load(addon.iconUrlnthis))
-            }
+        }
+        if (addon.iconUrl.isNotBlank()) {
+            RemoteImageLoader.load(addon.iconUrl, icon)
         }
 
         val titleCol = LinearLayout(activity).apply {
