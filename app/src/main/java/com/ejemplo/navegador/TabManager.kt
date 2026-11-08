@@ -20,6 +20,9 @@ object TabManager {
         fun onTabCountChanged(count: Int)
         fun onMessage(message: String)
         fun onContextElement(element: GeckoSession.ContentDelegate.ContextElement)
+
+        /** Un sitio pidió (o dejó) pantalla completa, p. ej. el botón de YouTube. */
+        fun onFullScreenChanged(tab: BrowserTab, fullScreen: Boolean) = Unit
     }
 
     private val tabs = CopyOnWriteArrayList<BrowserTab>()
@@ -189,6 +192,12 @@ object TabManager {
         val old = activeTab()
 
         if (old?.id != target.id) {
+            // No dejar una pestaña en segundo plano en pantalla completa.
+            if (old?.isFullScreen == true) {
+                old.isFullScreen = false
+                runCatching { old.session?.exitFullScreen() }
+            }
+
             old?.session?.let { session ->
                 val backgroundEnabled = BrowserPrefs.backgroundMedia(requireContext())
                 val keepMediaAlive =
@@ -342,6 +351,15 @@ object TabManager {
                 return
             }
         }
+    }
+
+    /** Sale de la pantalla completa de la pestaña activa. Devuelve true si lo estaba. */
+    fun exitFullScreen(): Boolean {
+        val tab = activeTab()?.takeIf { it.isFullScreen } ?: return false
+        tab.isFullScreen = false
+        runCatching { tab.session?.exitFullScreen() }
+        listener?.onFullScreenChanged(tab, false)
+        return true
     }
 
     fun goBack() {
@@ -640,6 +658,13 @@ object TabManager {
                 override fun onCloseRequest(session: GeckoSession) {
                     closeTab(tab.id)
                 }
+
+                override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
+                    tab.isFullScreen = fullScreen
+                    if (tab.id == activeTab()?.id) {
+                        listener?.onFullScreenChanged(tab, fullScreen)
+                    }
+                }
             }
         )
 
@@ -809,6 +834,10 @@ object TabManager {
 
         tab.session = null
         tab.sessionState = null
+        if (tab.isFullScreen) {
+            tab.isFullScreen = false
+            if (tab.id == activeId) listener?.onFullScreenChanged(tab, false)
+        }
         tab.isLoading = false
 
         BrowserMediaController.removeTab(tab.id)

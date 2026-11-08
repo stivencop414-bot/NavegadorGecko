@@ -1,0 +1,80 @@
+/*
+ * Mini video (Picture-in-Picture) de Nexo.
+ *
+ * Declarado en manifest.json: Gecko lo inyecta como hoja de estilos de la
+ * extensión, así que la CSP del sitio no puede bloquearlo (un <style>
+ * insertado desde el content script sí podía ser bloqueado).
+ *
+ * Solo actúa mientras <html> tiene la clase "nexo-pip-root".
+ */
+
+html.nexo-pip-root,
+html.nexo-pip-root body {
+  background: #000 !important;
+  overflow: hidden !important;
+}
+
+/*
+ * Ocultar todo excepto el video y su cadena de ancestros. Con visibility (y
+ * no display) el sitio conserva su layout y su reproductor sigue vivo, pero
+ * ningún encabezado, menú o capa con z-index alto puede pintarse encima.
+ */
+html.nexo-pip-root body *:not(.nexo-pip-ancestor):not(.nexo-pip-video) {
+  visibility: hidden !important;
+}
+
+/*
+ * Estas propiedades convierten a un ancestro en el "containing block" o en
+ * una región recortada del video fijo; se neutralizan para que el video
+ * pueda ocupar toda la ventana.
+ */
+html.nexo-pip-root .nexo-pip-ancestor {
+  visibility: visible !important;
+  transform: none !important;
+  translate: none !important;
+  rotate: none !important;
+  scale: none !important;
+  perspective: none !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+  contain: none !important;
+  container-type: normal !important;
+  content-visibility: visible !important;
+  will-change: auto !important;
+  clip-path: none !important;
+  mask: none !important;
+  overflow: visible !important;
+  opacity: 1 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html.nexo-pip-root video.nexo-pip-video {
+  visibility: visible !important;
+  display: block !important;
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  /* % en un elemento fijo = tamaño de la ventana (evita rarezas de vh). */
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  object-fit: contain !important;
+  object-position: center center !important;
+  z-index: 2147483647 !important;
+  background: #000 !important;
+  transform: none !important;
+  translate: none !important;
+  rotate: none !important;
+  scale: none !important;
+  clip-path: none !important;
+  opacity: 1 !important;
+}

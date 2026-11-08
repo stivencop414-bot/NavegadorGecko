@@ -806,27 +806,53 @@ object ExtensionManager {
             )
     }
 
+    /**
+     * Activa o desactiva el aislamiento del video para el mini reproductor.
+     * [resumePlayback] pide a la página reanudar el video si el sitio lo
+     * pausa durante la transición a PiP (YouTube lo hace al cambiar el
+     * tamaño de la ventana).
+     */
     fun setPipMode(
         session: GeckoSession?,
-        active: Boolean
+        active: Boolean,
+        resumePlayback: Boolean = false
     ) {
-        if (session == null) return
+        postToTopLevel(
+            session,
+            JSONObject().apply {
+                put("type", "pip_mode")
+                put("active", active)
+                put("resume", active && resumePlayback)
+            }
+        )
+    }
 
-        val message = JSONObject().apply {
-            put("type", "pip_mode")
-            put("active", active)
-        }
+    /**
+     * Controla el video del mini reproductor ("play", "pause" o "toggle").
+     * Devuelve false si la página no tiene el puente conectado.
+     */
+    fun sendPipCommand(
+        session: GeckoSession?,
+        command: String
+    ): Boolean =
+        postToTopLevel(
+            session,
+            JSONObject().apply {
+                put("type", "pip_command")
+                put("command", command)
+            }
+        )
 
+    private fun postToTopLevel(session: GeckoSession?, message: JSONObject): Boolean {
+        if (session == null) return false
+
+        var delivered = false
         ports.toList()
-            .filter {
-                it.sender.session === session &&
-                    it.sender.isTopLevel()
-            }
+            .filter { it.sender.session === session && it.sender.isTopLevel() }
             .forEach { port ->
-                runCatching {
-                    port.postMessage(message)
-                }
+                if (runCatching { port.postMessage(message) }.isSuccess) delivered = true
             }
+        return delivered
     }
 
     fun sendBrowserState(context: Context) {

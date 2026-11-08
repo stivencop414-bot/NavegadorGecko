@@ -391,6 +391,28 @@ object BrowserMediaController {
     fun snapshotForService(): Snapshot? =
         snapshotFor(allowHold = true)
 
+    /** Play/pausa directo sobre la MediaSession de una pestaña (respaldo del mini video). */
+    fun togglePlayback(tabId: String): Boolean {
+        val entry = entries[tabId] ?: return false
+        val playing = isPlaybackActive(tabId)
+        if (playing) playbackHoldUntil.remove(tabId)
+
+        main.post {
+            runCatching {
+                if (playing) entry.mediaSession.pause() else entry.mediaSession.play()
+            }
+        }
+        return true
+    }
+
+    /** Pausa la reproducción de una pestaña concreta. */
+    fun pause(tabId: String) {
+        val entry = entries[tabId] ?: return
+        playbackHoldUntil.remove(tabId)
+        recentPlayback.remove(tabId)
+        main.post { runCatching { entry.mediaSession.pause() } }
+    }
+
     fun pauseCurrent() {
         val id = currentTabId ?: entries.keys.lastOrNull() ?: return
         val entry = entries[id] ?: return
