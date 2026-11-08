@@ -12,4 +12,6 @@
     <string name="empty_extensions">Aún no tienes extensiones. Explora la tienda para instalar la primera.</string>
     <string name="seek_backward">Retroceder 10 segundos</string>
     <string name="seek_forward">Avanzar 10 segundos</string>
+    <string name="bundled_extension">Integrada</string>
+    <string name="bundled_extension_updates">Incluida con Nexo. Puedes desactivarla; sus actualizaciones llegan con la app.</string>
 </resources>

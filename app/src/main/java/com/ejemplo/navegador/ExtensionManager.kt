@@ -18,6 +18,10 @@ import java.lang.ref.WeakReference
 import java.util.zip.ZipFile
 
 object ExtensionManager {
+    const val PHANTOMSHIELD_ID = "phantomshield@geckoview.internal"
+    private const val PHANTOMSHIELD_URI = "resource://android/assets/extensions/phantomshield/"
+    private var phantomInstallation: GeckoResult<WebExtension>? = null
+
     const val BRIDGE_ID = "nexo_bridge@com.ejemplo.navegador"
     private const val BRIDGE_URI =
         "resource://android/assets/extensions/nexo_bridge/"
@@ -64,6 +68,13 @@ object ExtensionManager {
         val controller = GeckoRuntimeHolder.get(context).webExtensionController
         controller.setPromptDelegate(promptDelegate)
         controller.setAddonManagerDelegate(addonManagerDelegate)
+
+        // ensureBuiltIn conserva el almacenamiento y la elección de activación al reiniciar.
+        phantomInstallation = controller.ensureBuiltIn(PHANTOMSHIELD_URI, PHANTOMSHIELD_ID)
+        phantomInstallation?.accept(
+            { extension -> extension?.let { registerExtension(it) } },
+            { error -> android.util.Log.e("NexoExtensions", "No se pudo cargar PhantomShield integrado", error) }
+        )
 
         controller.ensureBuiltIn(BRIDGE_URI, BRIDGE_ID).accept(
             { extension ->
@@ -239,6 +250,17 @@ object ExtensionManager {
     }
 
     fun list(
+        onSuccess: (List<WebExtension>) -> Unit,
+        onError: (Throwable) -> Unit
+    ) {
+        if (!initialized) initialize(AppContext.get())
+        phantomInstallation?.accept(
+            { listInstalled(onSuccess, onError) },
+            { onError(IllegalStateException("No se pudo cargar PhantomShield integrado", it)) }
+        ) ?: listInstalled(onSuccess, onError)
+    }
+
+    private fun listInstalled(
         onSuccess: (List<WebExtension>) -> Unit,
         onError: (Throwable) -> Unit
     ) {
@@ -789,6 +811,10 @@ object ExtensionManager {
         onDone:
             (Boolean, String) -> Unit
     ) {
+        if (extension.isBuiltIn) {
+            onDone(true, "Esta extensión integrada se actualiza junto con Nexo.")
+            return
+        }
         GeckoRuntimeHolder
             .get(context)
             .webExtensionController
@@ -879,8 +905,8 @@ object ExtensionManager {
         extension: WebExtension,
         onDone: (Boolean, String) -> Unit
     ) {
-        if (extension.id == BRIDGE_ID) {
-            onDone(false, "El puente interno de Nexo no se puede eliminar.")
+        if (extension.isBuiltIn) {
+            onDone(false, "Las extensiones integradas se pueden desactivar, pero no eliminar del APK.")
             return
         }
 

@@ -1,0 +1,2 @@
+/* PhantomShield Noop */
+(function(){})();

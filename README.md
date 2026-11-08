@@ -12,6 +12,7 @@ Navegador Android en Kotlin/XML con GeckoView 153.
 - Historial, descargas y compartir.
 - Limpieza de datos.
 - Administrador de extensiones.
+- PhantomShield 8.3.0 integrado, con bloqueo local y controles por sitio.
 - Tienda Android de addons.mozilla.org.
 - Importación de XPI firmado e instalación por URL.
 - Traducción de páginas en el dispositivo (ML Kit).
@@ -42,7 +43,7 @@ Una extensión privada/sin firma puede integrarse dentro de
 
 ## Desarrollo
 ```bash
-node --test app/src/test/js/pip-bridge.test.cjs  # regresiones del mini reproductor
+node --test app/src/test/js/*.test.cjs  # regresiones de extensiones y mini reproductor
 gradle :app:testDebugUnitTest   # tests unitarios (reglas de URL y nombres de archivo)
 gradle :app:assembleDebug
 gradle :app:lintRelease
@@ -64,3 +65,6 @@ Requiere estos secrets del repositorio:
 La compilación corre sin acceso a esos secrets; solo el paso de firma los recibe. Si el tag
 `v<versionName>` ya existe, el release se rechaza: sube `versionCode`/`versionName` primero.
 Usa siempre la misma clave: un APK firmado con otra clave no se puede instalar encima.
+
+La integración se documenta en [PhantomShield](docs/PHANTOMSHIELD.md).
+Para conservar los datos al actualizar, consulta [actualizaciones y firma](docs/ACTUALIZACIONES-Y-FIRMA.md).

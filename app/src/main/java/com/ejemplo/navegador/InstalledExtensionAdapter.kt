@@ -93,6 +93,7 @@ class InstalledExtensionAdapter(
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(6f), 0, 0)
         }
+        if (ext.isBuiltIn) chips.addView(chip(activity.getString(R.string.bundled_extension), p.accentSoft, p.accent))
         if (!meta.enabled) chips.addView(chip("Desactivada", p.elevated, p.muted))
         if (meta.allowedInPrivateBrowsing) chips.addView(chip("Privado", p.accentSoft, p.accent))
         if (meta.isRecommended) chips.addView(chip("Recomendada", p.accentSoft, p.accent))

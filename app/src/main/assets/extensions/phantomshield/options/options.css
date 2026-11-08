@@ -1,0 +1,20 @@
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #121214; color: #f0f0f3; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px 16px; }
+main { max-width: 650px; margin: auto; }
+h1 { font-size: 25px; }
+p { line-height: 1.55; color: #b8b8c1; }
+form { padding: 20px; border: 1px solid #38383d; border-radius: 14px; background: #1c1c1f; }
+label { display: block; margin: 18px 0 7px; }
+input:not([type="checkbox"]), textarea { width: 100%; padding: 11px; border: 1px solid #65656e; border-radius: 6px; color: inherit; background: #121214; font: inherit; }
+.check { display: flex; align-items: start; gap: 10px; line-height: 1.5; }
+input[type="checkbox"] { margin-top: 5px; flex-shrink: 0; accent-color: #30d158; }
+.hint { font-size: 13px; margin-top: 6px; }
+.consent { border-top: 1px solid #38383d; padding-top: 18px; }
+button { background: #30d158; color: #081c0e; padding: 12px 18px; border: 0; border-radius: 7px; font: inherit; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: wait; }
+button + button { margin-top: 12px; background: transparent; color: #f0f0f3; border: 1px solid #93939f; }
+a { color: #8fe9aa; }
+:focus-visible { outline: 2px solid #30d158; outline-offset: 3px; }
+#status { min-height: 24px; }
+#status.error { color: #ff8c88; }
