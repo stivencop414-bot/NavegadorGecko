@@ -2,6 +2,7 @@ package com.ejemplo.navegador
 
 import android.app.Activity
 import android.graphics.Typeface
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -10,234 +11,111 @@ import android.widget.BaseAdapter
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.graphics.ColorUtils
 import org.mozilla.geckoview.WebExtension
 
 class InstalledExtensionAdapter(
     private val activity: Activity,
-    private val items:
-        List<WebExtension>
+    private val items: List<WebExtension>
 ) : BaseAdapter() {
 
-    override fun getCount(): Int =
-        items.size
+    override fun getCount(): Int = items.size
 
-    override fun getItem(
-        position: Int
-    ): WebExtension =
-        items[position]
+    override fun getItem(position: Int): WebExtension = items[position]
 
-    override fun getItemId(
-        position: Int
-    ): Long =
-        position.toLong()
+    override fun getItemId(position: Int): Long = position.toLong()
 
-    override fun getView(
-        position: Int,
-        convertView: View?,
-        parent: ViewGroup
-    ): View {
-        val extension =
-            getItem(position)
+    override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+        val ext = items[position]
+        val p = ThemeManager.palette(activity)
+        val d = activity.resources.displayMetrics.density
 
-        val meta =
-            extension.metaData
-
-        val palette =
-            ThemeManager.palette(
-                activity
+        val root = (convertView as? LinearLayout) ?: LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (16 * d).toInt()
+            setPadding(pad, pad, pad, pad)
+            layoutParams = AbsListView.LayoutParams(
+                AbsListView.LayoutParams.MATCH_PARENT,
+                AbsListView.LayoutParams.WRAP_CONTENT
             )
-
-        val density =
-            activity.resources
-                .displayMetrics
-                .density
-
-        val card =
-            LinearLayout(activity).apply {
-                orientation =
-                    LinearLayout.HORIZONTAL
-
-                gravity =
-                    Gravity.CENTER_VERTICAL
-
-                background =
-                    ThemeManager.rounded(
-                        activity,
-                        palette.surface,
-                        18f
-                    )
-
-                setPadding(
-                    (11 * density).toInt(),
-                    (11 * density).toInt(),
-                    (11 * density).toInt(),
-                    (11 * density).toInt()
-                )
-
-                layoutParams =
-                    AbsListView.LayoutParams(
-                        ViewGroup.LayoutParams
-                            .MATCH_PARENT,
-                        ViewGroup.LayoutParams
-                            .WRAP_CONTENT
-                    )
-            }
-
-        val icon =
-            ImageView(activity).apply {
-                layoutParams =
-                    LinearLayout.LayoutParams(
-                        (52 * density)
-                            .toInt(),
-                        (52 * density)
-                            .toInt()
-                    )
-
-                scaleType =
-                    ImageView.ScaleType
-                        .CENTER_INSIDE
-
-                background =
-                    ThemeManager.rounded(
-                        activity,
-                        palette.elevated,
-                        14f
-                    )
-
-                setPadding(
-                    (7 * density).toInt(),
-                    (7 * density).toInt(),
-                    (7 * density).toInt(),
-                    (7 * density).toInt()
-                )
-
-                setImageResource(
-                    R.drawable
-                        .ic_extension_placeholder
-                )
-
-                tag = extension.id
-            }
-
-        runCatching {
-            meta.icon
-                .getBitmap(64)
-                .accept(
-                    { bitmap ->
-                        if (
-                            bitmap != null &&
-                            icon.tag ==
-                                extension.id
-                        ) {
-                            icon.setImageBitmap(
-                                bitmap
-                            )
-                        }
-                    },
-                    { _ -> Unit }
-                )
         }
-
-        val textBox =
-            LinearLayout(activity).apply {
-                orientation =
-                    LinearLayout.VERTICAL
-
-                setPadding(
-                    (12 * density).toInt(),
-                    0,
-                    0,
-                    0
-                )
-            }
-
-        val title =
-            TextView(activity).apply {
-                text =
-                    meta.name
-                        ?: extension.id
-
-                textSize = 16f
-
-                typeface =
-                    Typeface.DEFAULT_BOLD
-
-                setTextColor(
-                    palette.text
-                )
-
-                maxLines = 2
-            }
-
-        val state =
-            TextView(activity).apply {
-                val status =
-                    if (meta.enabled) {
-                        "Activa"
-                    } else {
-                        "Desactivada"
-                    }
-
-                val privateText =
-                    if (
-                        meta
-                            .allowedInPrivateBrowsing
-                    ) {
-                        " · Permitida en privado"
-                    } else {
-                        ""
-                    }
-
-                text =
-                    "v${meta.version ?: "?"} · " +
-                        status +
-                        privateText
-
-                textSize = 12.4f
-
-                setTextColor(
-                    if (meta.enabled) {
-                        palette.accent
-                    } else {
-                        palette.muted
-                    }
-                )
-            }
-
-        val description =
-            TextView(activity).apply {
-                text =
-                    meta.description
-                        ?.takeIf {
-                            it.isNotBlank()
-                        }
-                        ?: "Toca para administrar"
-
-                textSize = 12.4f
-
-                setTextColor(
-                    palette.muted
-                )
-
-                maxLines = 2
-            }
-
-        textBox.addView(title)
-        textBox.addView(state)
-        textBox.addView(description)
-
-        card.addView(icon)
-
-        card.addView(
-            textBox,
-            LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams
-                    .WRAP_CONTENT,
-                1f
-            )
+        root.removeAllViews()
+        root.background = ThemeManager.rounded(
+            activity,
+            p.surface,
+            16f,
+            ColorUtils.setAlphaComponent(p.muted, 40)
         )
 
-        return card
+        val header = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val icon = ImageView(activity).apply {
+            setImageResource(R.drawable.ic_extension_placeholder)
+            val sz = (42 * d).toInt()
+            val padIcon = (8 * d).toInt()
+            setPadding(padIcon, padIcon, padIcon, padIcon)
+            background = ThemeManager.rounded(activity, p.elevated, 12f)
+            layoutParams = LinearLayout.LayoutParams(sz, sz).apply {
+                rightMargin = (14 * d).toInt()
+            }
+        }
+
+        val titleCol = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val name = TextView(activity).apply {
+            text = ext.metaData.name ?: ext.id
+            textSize = 15.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(p.text)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+
+        val versionPart = ext.metaData.version?.takeIf { it.isNotBlank() }?.let { "v$it · " } ?: ""
+        val idView = TextView(activity).apply {
+            text = "$versionPart${ext.id}"
+            textSize = 12.5f
+            setTextColor(p.muted)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+
+        val statusBadge = TextView(activity).apply {
+            val enabled = ext.metaData.enabled
+            text = if (enabled) "Activa" else "Inactiva"
+            textSize = 11.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(if (enabled) p.onAccent else p.muted)
+            val hPad = (10 * d).toInt()
+            val vPad = (5 * d).toInt()
+            setPadding(hPad, vPad, hPad, vPad)
+            background = ThemeManager.rounded(
+                activity,
+                if (enabled) p.accent else p.elevated,
+                10f
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                leftMargin = (10 * d).toInt()
+            }
+        }
+
+        titleCol.addView(name)
+        titleCol.addView(idView)
+
+        header.addView(icon)
+        header.addView(titleCol)
+        header.addView(statusBadge)
+        root.addView(header)
+
+        return root
     }
 }
