@@ -86,6 +86,12 @@ jobs:
 
       - name: Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # El valor por defecto ("tools platform-tools") falla: Google retiró
+          # el paquete legacy "tools". Plataforma y build-tools se instalan
+          # en el paso siguiente.
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       - name: Install Android platform
         shell: bash
@@ -195,6 +201,12 @@ jobs:
 
       - name: Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # El valor por defecto ("tools platform-tools") falla: Google retiró
+          # el paquete legacy "tools". Plataforma y build-tools se instalan
+          # en el paso siguiente.
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       - name: Install Android platform
         shell: bash
