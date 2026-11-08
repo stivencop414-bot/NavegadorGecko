@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/storeRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="14dp">
+    android:padding="16dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -24,56 +23,63 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Tienda de extensiones"
-                android:textSize="25sp"
+                android:textSize="26sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/storeSubtitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
+                android:layout_marginTop="3dp"
                 android:text="Mozilla Add-ons · extensiones para Android"
-                android:textSize="12.5sp" />
+                android:textSize="13sp" />
         </LinearLayout>
 
         <Button
             android:id="@+id/installedExtensionsButton"
             android:layout_width="wrap_content"
-            android:layout_height="40dp"
+            android:layout_height="42dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
             android:text="Mis extensiones"
-            android:textAllCaps="false" />
+            android:textAllCaps="false"
+            android:textSize="13.5sp" />
     </LinearLayout>
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="14dp"
+        android:gravity="center_vertical"
         android:orientation="horizontal">
 
         <EditText
             android:id="@+id/storeSearch"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="46dp"
             android:layout_weight="1"
             android:hint="Buscar por nombre o función"
             android:imeOptions="actionSearch"
-            android:paddingStart="14dp"
-            android:paddingEnd="14dp"
-            android:singleLine="true" />
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:singleLine="true"
+            android:textSize="14sp" />
 
         <Button
             android:id="@+id/storeSearchButton"
-            android:layout_width="82dp"
-            android:layout_height="44dp"
-            android:layout_marginStart="7dp"
+            android:layout_width="88dp"
+            android:layout_height="46dp"
+            android:layout_marginStart="8dp"
             android:text="Buscar"
-            android:textAllCaps="false" />
+            android:textAllCaps="false"
+            android:textSize="14sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
     <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="10dp"
         android:scrollbars="none">
 
         <LinearLayout
@@ -85,56 +91,77 @@
                 android:id="@+id/recommendedButton"
                 android:layout_width="wrap_content"
                 android:layout_height="38dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
                 android:text="Recomendadas"
-                android:textAllCaps="false" />
+                android:textAllCaps="false"
+                android:textSize="13sp" />
 
             <Button
                 android:id="@+id/privacyButton"
                 android:layout_width="wrap_content"
                 android:layout_height="38dp"
-                android:layout_marginStart="5dp"
+                android:layout_marginStart="8dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
                 android:text="Privacidad"
-                android:textAllCaps="false" />
+                android:textAllCaps="false"
+                android:textSize="13sp" />
 
             <Button
                 android:id="@+id/blockersButton"
                 android:layout_width="wrap_content"
                 android:layout_height="38dp"
-                android:layout_marginStart="5dp"
+                android:layout_marginStart="8dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
                 android:text="Bloqueadores"
-                android:textAllCaps="false" />
+                android:textAllCaps="false"
+                android:textSize="13sp" />
 
             <Button
                 android:id="@+id/productivityButton"
                 android:layout_width="wrap_content"
                 android:layout_height="38dp"
-                android:layout_marginStart="5dp"
+                android:layout_marginStart="8dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
                 android:text="Productividad"
-                android:textAllCaps="false" />
+                android:textAllCaps="false"
+                android:textSize="13sp" />
 
             <Button
                 android:id="@+id/passwordsButton"
                 android:layout_width="wrap_content"
                 android:layout_height="38dp"
-                android:layout_marginStart="5dp"
+                android:layout_marginStart="8dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
                 android:text="Contraseñas"
-                android:textAllCaps="false" />
+                android:textAllCaps="false"
+                android:textSize="13sp" />
 
             <Button
                 android:id="@+id/videoButton"
                 android:layout_width="wrap_content"
                 android:layout_height="38dp"
-                android:layout_marginStart="5dp"
-                android:text="Vídeo"
-                android:textAllCaps="false" />
+                android:layout_marginStart="8dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="Video"
+                android:textAllCaps="false"
+                android:textSize="13sp" />
 
             <Button
                 android:id="@+id/appearanceButton"
                 android:layout_width="wrap_content"
                 android:layout_height="38dp"
-                android:layout_marginStart="5dp"
+                android:layout_marginStart="8dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
                 android:text="Apariencia"
-                android:textAllCaps="false" />
+                android:textAllCaps="false"
+                android:textSize="13sp" />
         </LinearLayout>
     </HorizontalScrollView>
 
@@ -142,32 +169,34 @@
         android:id="@+id/storeStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="Cargando recomendaciones…"
-        android:textSize="12.3sp" />
+        android:layout_marginTop="10dp"
+        android:text="Cargando recomendaciones..."
+        android:textSize="12.5sp" />
 
     <ProgressBar
         android:id="@+id/storeProgress"
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
         android:layout_height="3dp"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="6dp"
         android:visibility="gone" />
 
     <ListView
         android:id="@+id/storeList"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="10dp"
         android:layout_weight="1"
         android:clipToPadding="false"
-        android:paddingBottom="8dp" />
+        android:divider="@android:color/transparent"
+        android:dividerHeight="10dp"
+        android:paddingBottom="12dp" />
 
     <TextView
         android:id="@+id/storeHelp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="5dp"
-        android:text="Nexo usa el catálogo oficial de Mozilla. Una extensión puede no funcionar si fue diseñada solo para Firefox de escritorio."
+        android:layout_marginTop="6dp"
+        android:text="Nexo usa el catálogo oficial de Mozilla. Una extensión puede no funcionar si fue diseñada solo para escritorio."
         android:textSize="11.5sp" />
 </LinearLayout>
