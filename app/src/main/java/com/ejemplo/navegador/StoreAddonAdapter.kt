@@ -65,7 +65,7 @@ class StoreAddonAdapter(
                 rightMargin = (14 * d).toInt()
             }
             if (addon.iconUrl.isNotBlank()) {
-                RemoteImageLoader.load(addon.iconUrl, icon)
+                RemoteImageLoader.load(addon.iconUrlnthis))
             }
         }
 
