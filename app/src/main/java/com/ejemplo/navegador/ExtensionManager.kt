@@ -2,6 +2,13 @@ package com.ejemplo.navegador
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
+import android.content.Intent
+import android.view.Gravity
+import android.view.ViewGroup
+import android.view.Window
+import org.mozilla.geckoview.GeckoSessionSettings
+import org.mozilla.geckoview.GeckoView
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
@@ -34,6 +41,7 @@ object ExtensionManager {
     private const val MAX_MANIFEST_BYTES = 1024L * 1024L
 
     private var promptActivity = WeakReference<Activity>(null)
+    private var extensionPopup: Dialog? = null
     private var bridge: WebExtension? = null
     private val ports = mutableSetOf<WebExtension.Port>()
     private data class PipState(val resume: Boolean, val isolate: Boolean = true)
@@ -110,6 +118,7 @@ object ExtensionManager {
     }
 
     fun attachPromptActivity(activity: Activity?) {
+        if (activity == null) extensionPopup?.dismiss()
         promptActivity = WeakReference(activity)
     }
 
@@ -1101,10 +1110,16 @@ object ExtensionManager {
                     if (
                         !url.isNullOrBlank()
                     ) {
+                        extensionPopup?.dismiss()
                         TabManager.createTab(
                             url = url,
                             activate = true
                         )
+                        promptActivity.get()?.let { activity ->
+                            activity.startActivity(Intent(activity, MainActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            })
+                        }
                     }
                 }
             }
@@ -1195,18 +1210,47 @@ object ExtensionManager {
         }
     }
 
-    private fun createExtensionPopupSession():
-        GeckoResult<GeckoSession> {
-        val session =
-            TabManager
-                .createSessionForExtension(
-                    "about:blank",
-                    true
-                )
+    private fun createExtensionPopupSession(): GeckoResult<GeckoSession>? {
+        val activity = promptActivity.get() ?: return null
+        if (activity.isFinishing || activity.isDestroyed) return null
+        extensionPopup?.dismiss()
 
-        return GeckoResult.fromValue(
-            session
+        // Un popup no es una pestaña: tabs.query(active:true) debe seguir
+        // devolviendo la página que la extensión va a controlar.
+        val session = GeckoSession(
+            GeckoSessionSettings.Builder()
+                .usePrivateMode(TabManager.activeTab()?.isPrivate == true)
+                .build()
         )
+        session.setNavigationDelegate(object : GeckoSession.NavigationDelegate {
+            override fun onLoadRequest(
+                session: GeckoSession,
+                request: GeckoSession.NavigationDelegate.LoadRequest
+            ): GeckoResult<AllowOrDeny> =
+                if (UrlSafety.isExtensionTabUrl(request.uri)) GeckoResult.allow() else GeckoResult.deny()
+        })
+        session.open(GeckoRuntimeHolder.get(activity))
+        val view = GeckoView(activity).apply { setSession(session) }
+        val dialog = Dialog(activity).apply {
+            requestWindowFeature(Window.FEATURE_NO_TITLE)
+            setContentView(view)
+            setOnDismissListener {
+                view.releaseSession()
+                session.close()
+                if (extensionPopup === this) extensionPopup = null
+            }
+        }
+        session.setContentDelegate(object : GeckoSession.ContentDelegate {
+            override fun onCloseRequest(session: GeckoSession) { dialog.dismiss() }
+        })
+        extensionPopup = dialog
+        dialog.show()
+        dialog.window?.apply {
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, (activity.resources.displayMetrics.heightPixels * 0.8f).toInt())
+            setGravity(Gravity.BOTTOM)
+            setBackgroundDrawable(ThemeManager.rounded(activity, ThemeManager.palette(activity).surface, 20f))
+        }
+        return GeckoResult.fromValue(session)
     }
 
     private val extensionActionDelegate =

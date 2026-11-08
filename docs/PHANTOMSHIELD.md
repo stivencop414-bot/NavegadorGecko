@@ -14,7 +14,10 @@ versionado junto a la aplicación, conservando el manifest 8.3.0 y el ID
 
 `ExtensionManager` usa `ensureBuiltIn` con la URI
 `resource://android/assets/extensions/phantomshield/` y registra los delegates habituales
-para acciones, pestañas y opciones. La lista espera el resultado de instalación y comunica
+para acciones, pestañas y opciones. Los paneles se muestran en una sesión popup separada,
+sin convertirlos en la pestaña web activa; así los controles por sitio siguen leyendo la
+página original. La navegación del panel reutiliza la política de URLs de extensiones.
+Cerrar el panel libera su sesión; abrir opciones activa la pantalla del navegador. La lista espera el resultado de instalación y comunica
 un fallo real si Gecko no consigue cargarla.
 
 En **Extensiones → Mis extensiones → PhantomShield** se puede desactivar/activar, ejecutar
