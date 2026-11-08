@@ -6,7 +6,6 @@ import android.content.Intent
 import android.os.Bundle
 import android.text.format.Formatter
 import android.view.View
-import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.ListView
 import android.widget.TextView
@@ -23,6 +22,10 @@ class DownloadsActivity : Activity() {
         setContentView(R.layout.activity_list)
 
         listView = findViewById(R.id.listView)
+        listView.emptyView = findViewById<TextView>(R.id.listEmpty).apply {
+            setText(R.string.empty_downloads)
+            ThemeManager.styleText(this@DownloadsActivity, this, muted = true)
+        }
         findViewById<TextView>(R.id.listTitle).text = "Descargas"
 
         findViewById<Button>(R.id.listAction).apply {
@@ -53,22 +56,26 @@ class DownloadsActivity : Activity() {
         }
 
         applyTheme()
+    }
+
+    override fun onResume() {
+        super.onResume()
         refresh()
     }
 
     private fun refresh() {
-        entries = DownloadStore.list(this)
-        listView.adapter = ArrayAdapter(
+        val updated = DownloadStore.list(this)
+        if (listView.adapter != null && updated == entries) return
+        entries = updated
+        findViewById<Button>(R.id.listAction).isEnabled = entries.isNotEmpty()
+        listView.adapter = ThemeManager.listAdapter(
             this,
-            android.R.layout.simple_list_item_1,
-            if (entries.isEmpty()) {
-                listOf("No hay descargas guardadas")
-            } else {
-                entries.map {
-                    "${it.fileName}\n${Formatter.formatShortFileSize(this, it.size)} · ${it.mimeType}"
-                }
+            entries.map {
+                "${it.fileName}\n${Formatter.formatShortFileSize(this, it.size)} · ${it.mimeType}"
             }
         )
+        listView.divider = null
+        listView.dividerHeight = (resources.displayMetrics.density * 8).toInt()
     }
 
     private fun open(entry: DownloadEntry) {

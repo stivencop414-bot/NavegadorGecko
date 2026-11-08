@@ -16,11 +16,11 @@
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="10dp" android:text="Tema" />
         <Spinner android:id="@+id/themeSpinner"
-            android:layout_width="match_parent" android:layout_height="48dp" />
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="12dp" android:text="Color de acento" />
         <Spinner android:id="@+id/accentSpinner"
-            android:layout_width="match_parent" android:layout_height="48dp" />
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" />
 
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="18dp" android:text="Búsqueda e inicio" android:textStyle="bold" />
@@ -30,9 +30,9 @@
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="10dp" android:text="Motor de búsqueda" />
         <Spinner android:id="@+id/searchSpinner"
-            android:layout_width="match_parent" android:layout_height="48dp" />
-        <Switch android:id="@+id/freeSearchSwitch"
-            android:layout_width="match_parent" android:layout_height="52dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" />
+        <Switch android:paddingTop="12dp" android:paddingBottom="12dp" android:switchPadding="16dp" android:id="@+id/freeSearchSwitch"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="52dp"
             android:text="Búsqueda libre · no forzar SafeSearch cuando el motor lo permita" />
 
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -45,15 +45,15 @@
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="10dp" android:text="Traducir a" />
         <Spinner android:id="@+id/translatorTargetSpinner"
-            android:layout_width="match_parent" android:layout_height="48dp" />
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" />
 
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="18dp" android:text="Multimedia" android:textStyle="bold" />
-        <Switch android:id="@+id/smartPipSwitch"
-            android:layout_width="match_parent" android:layout_height="54dp"
+        <Switch android:paddingTop="12dp" android:paddingBottom="12dp" android:switchPadding="16dp" android:id="@+id/smartPipSwitch"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="54dp"
             android:text="Mostrar botón Mini cuando Nexo detecte un video" />
-        <Switch android:id="@+id/backgroundMediaSwitch"
-            android:layout_width="match_parent" android:layout_height="62dp"
+        <Switch android:paddingTop="12dp" android:paddingBottom="12dp" android:switchPadding="16dp" android:id="@+id/backgroundMediaSwitch"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="62dp"
             android:text="Reproducción en segundo plano · mantener audio/video y controles multimedia" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:text="Mantener contenido multimedia activo puede aumentar el consumo de batería."
@@ -64,32 +64,32 @@
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="10dp" android:text="DNS" />
         <Spinner android:id="@+id/dnsSpinner"
-            android:layout_width="match_parent" android:layout_height="48dp" />
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="12dp" android:text="Cookies" />
         <Spinner android:id="@+id/cookiesSpinner"
-            android:layout_width="match_parent" android:layout_height="48dp" />
-        <Switch android:id="@+id/trackingSwitch"
-            android:layout_width="match_parent" android:layout_height="52dp" android:text="Protección contra rastreo" />
-        <Switch android:id="@+id/gpcSwitch"
-            android:layout_width="match_parent" android:layout_height="52dp" android:text="Global Privacy Control" />
-        <Switch android:id="@+id/httpsOnlySwitch"
-            android:layout_width="match_parent" android:layout_height="52dp" android:text="Modo solo HTTPS" />
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" />
+        <Switch android:paddingTop="12dp" android:paddingBottom="12dp" android:switchPadding="16dp" android:id="@+id/trackingSwitch"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="52dp" android:text="Protección contra rastreo" />
+        <Switch android:paddingTop="12dp" android:paddingBottom="12dp" android:switchPadding="16dp" android:id="@+id/gpcSwitch"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="52dp" android:text="Global Privacy Control" />
+        <Switch android:paddingTop="12dp" android:paddingBottom="12dp" android:switchPadding="16dp" android:id="@+id/httpsOnlySwitch"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="52dp" android:text="Modo solo HTTPS" />
 
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="18dp" android:text="Pestañas y rendimiento" android:textStyle="bold" />
-        <Switch android:id="@+id/restoreTabsSwitch"
-            android:layout_width="match_parent" android:layout_height="52dp"
+        <Switch android:paddingTop="12dp" android:paddingBottom="12dp" android:switchPadding="16dp" android:id="@+id/restoreTabsSwitch"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="52dp"
             android:text="Restaurar pestañas y estado de navegación" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="10dp" android:text="Pestañas vivas máximas" />
         <Spinner android:id="@+id/liveTabsSpinner"
-            android:layout_width="match_parent" android:layout_height="48dp" />
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" />
         <Button android:id="@+id/saveSettingsButton"
-            android:layout_width="match_parent" android:layout_height="50dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="50dp"
             android:layout_marginTop="18dp" android:text="Guardar cambios" android:textAllCaps="false" />
         <Button android:id="@+id/clearDataButton"
-            android:layout_width="match_parent" android:layout_height="50dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="50dp"
             android:layout_marginTop="8dp" android:text="Borrar cookies, caché, miniaturas e historial"
             android:textAllCaps="false" />
     </LinearLayout>
