@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhantomShield · Privacidad e IA</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <h1>PhantomShield: privacidad e IA</h1>
+    <p>El bloqueo local funciona sin IA. La extensión descarga listas de filtros desde EasyList y GitHub; esos servidores ven tu dirección de conexión y las solicitudes de descarga. No se les envía tu historial de navegación. <a href="../privacy/privacy.html">Información de privacidad y limitaciones</a>.</p>
+    <p>Puedes añadir un proveedor compatible con Chat Completions para clasificar señales de posibles anuncios. Es opcional, puede tener coste y no garantiza detectar todos los anuncios. Aceptar permite enviar los datos indicados abajo; rechazar mantiene el bloqueo local.</p>
+    <form id="ai-form">
+      <label class="check"><input type="checkbox" id="enabled"> Activar ayuda de IA</label>
+      <label for="endpoint">URL base de tu API</label>
+      <input type="url" id="endpoint" placeholder="https://tu-proxy.example/v1" autocomplete="off">
+      <p class="hint">Se añade /chat/completions si la URL no termina así. Solo HTTPS.</p>
+      <label for="model">Identificador del modelo</label>
+      <input type="text" id="model" maxlength="200" placeholder="Identificador exacto de tu proveedor" autocomplete="off">
+      <label for="api-key">Clave API (opcional si tu proxy no la requiere)</label>
+      <input type="password" id="api-key" maxlength="4096" autocomplete="new-password" placeholder="Introduce una clave">
+      <p class="hint" id="key-status">La clave se guarda localmente en el perfil del navegador y solo se envía a la API configurada. Para distribuir tu app, usa credenciales de usuario o un backend; no incluyas una clave compartida en la extensión.</p>
+      <label class="check"><input type="checkbox" id="clear-key"> Borrar la clave guardada</label>
+      <label for="hosts">Sitios autorizados para IA (uno por línea)</label>
+      <textarea id="hosts" rows="5" placeholder="www.ejemplo.com&#10;otro-sitio.com" spellcheck="false"></textarea>
+      <p class="hint">Nombres de host exactos. Autorizar ejemplo.com no autoriza sus subdominios. Ningún sitio está autorizado al instalar.</p>
+      <label for="timeout">Tiempo límite por petición (ms)</label>
+      <input type="number" id="timeout" min="1000" max="15000" step="100" value="5000">
+      <label class="check"><input type="checkbox" id="json-mode"> Mi API admite response_format: json_object</label>
+      <label class="check consent"><input type="checkbox" id="consent"> Acepto enviar al proveedor configurado el nombre del sitio y señales de posibles anuncios: tipo de elemento, etiquetas publicitarias normalizadas y tamaño aproximado. No se envían texto de página, HTML, formularios, cookies, capturas ni URLs de navegación completas.</label>
+      <p class="hint">El proveedor recibe también la clave configurada y la conexión de red. La IA puede equivocarse y consumir cuota. Se limita a 12 candidatos por lote y tres lotes por página; las ventanas privadas quedan excluidas. Puedes desactivarla o pausar un sitio para restaurar lo ocultado por IA.</p>
+      <button type="submit" id="save" disabled>Guardar configuración</button>
+      <button type="button" id="local-only" disabled>Rechazar IA y usar bloqueo local</button>
+      <p id="status" role="status" aria-live="polite"></p>
+    </form>
+  </main>
+  <script src="../data/ai-config.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

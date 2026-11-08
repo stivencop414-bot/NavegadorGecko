@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PhantomShield</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="title-group">
+      <img src="../icons/icon-48.png" alt="">
+      <h1>PhantomShield</h1>
+    </div>
+    <span id="shield-status" class="status-badge">…</span>
+  </div>
+
+  <div class="card">
+    <div class="toggle-row">
+      <div class="toggle-info">
+        <h2 id="current-domain">Cargando...</h2>
+        <p id="site-hint">Protección en este sitio</p>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="site-toggle" aria-label="Activar protección en este sitio" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="stats-grid">
+      <div class="stat-item">
+        <div class="stat-value" id="site-blocks">0</div>
+        <div class="stat-label">Esta página</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value" id="total-blocks">0</div>
+        <div class="stat-label">Total bloqueado</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="toggle-row">
+      <div class="toggle-info">
+        <h2>Bloqueo de anuncios</h2>
+        <p>Interruptor general para todos los sitios</p>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="adblock-toggle" aria-label="Activar bloqueo de anuncios" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="divider"></div>
+    <div class="toggle-row">
+      <div class="toggle-info">
+        <h2>Variación de Canvas</h2>
+        <p>Experimental: altera un píxel al leer Canvas. Puede afectar páginas; no garantiza anonimato.</p>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="privacy-toggle" aria-label="Activar variación experimental de Canvas">
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 class="ai-title">Ayuda de IA</h2>
+    <p class="ai-hint">Opcional y solo en sitios autorizados. El bloqueo local funciona sin API.</p>
+    <div class="actions">
+      <button type="button" id="scan-ai">Analizar página</button>
+      <button type="button" id="configure-ai" class="secondary">Configurar IA</button>
+    </div>
+  </div>
+  <div class="actions">
+    <button type="button" id="update-lists">Actualizar listas</button>
+    <button type="button" id="reset-stats" class="secondary">Reiniciar contador</button>
+  </div>
+  <p id="message" class="message" role="status" aria-live="polite"></p>
+
+  <div class="footer">
+    <span id="last-update">Listas: sin actualizar</span>
+    <span id="version">PhantomShield</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

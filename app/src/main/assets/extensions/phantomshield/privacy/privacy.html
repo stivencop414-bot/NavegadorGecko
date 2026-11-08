@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacidad y límites · PhantomShield</title>
+  <link rel="stylesheet" href="../options/options.css">
+</head>
+<body><main>
+  <h1>PhantomShield: privacidad y límites</h1>
+  <p>Versión 8.3.0. Actualizado el 8 de noviembre de 2026. Esta información se incluye dentro de la extensión.</p>
+  <h2>Qué hace</h2>
+  <p>Aplica reglas locales para bloquear solicitudes publicitarias y de rastreadores, oculta elementos coincidentes y permite pausar la protección. Puede quitar parámetros de rastreo de enlaces al navegar. Utiliza pequeños scripts locales de compatibilidad para algunos recursos de analítica bloqueados. En páginas de YouTube compatibles puede pulsar el botón de omitir, silenciar o acelerar un anuncio reconocido en el reproductor.</p>
+  <p>La variación de Canvas es experimental y opcional: altera un píxel en lecturas de Canvas mientras está activada. No ofrece anonimato ni protección completa contra fingerprinting. Al pausar el sitio también se desactiva esa variación.</p>
+  <h2>Datos que permanecen en el navegador</h2>
+  <p>Se guardan preferencias, sitios que has pausado o autorizado, contador agregado de bloqueos de navegación normal, listas descargadas y fechas y resultados de actualización. Si configuras IA, se guardan URL de API, modelo, tiempo límite y clave API en el perfil local, sin sincronización. Ese almacenamiento no está cifrado por la extensión. No se guarda un historial de URLs visitadas. Los bloqueos de navegación privada no se incorporan al contador persistente; la IA no se usa en ventanas privadas.</p>
+  <h2>Conexiones sin IA</h2>
+  <p>Se descargan listas de texto desde <strong>easylist.to</strong> (EasyList y EasyPrivacy) y <strong>raw.githubusercontent.com</strong> (filtros de uBlock Origin), al iniciar si corresponde, cada 24 horas y al pulsar Actualizar listas. Esos servidores y los intermediarios de red ven la conexión, la IP de salida, la hora y los recursos solicitados. Las peticiones no incluyen el historial de navegación ni cookies proporcionadas por la extensión. Las listas se interpretan como datos de filtrado: no se ejecuta código descargado.</p>
+  <h2>IA opcional y sus destinatarios</h2>
+  <p>La IA está apagada al instalar y al actualizar a esta versión. Necesita URL HTTPS, modelo, consentimiento explícito y sitios autorizados exactos. Rechazarla mantiene el bloqueo local. Cuando se activa, el proveedor que configures recibe el nombre del sitio autorizado, identificadores temporales de candidatos, tipo de elemento, señales publicitarias normalizadas y dimensiones aproximadas; también recibe la clave API si la introduces y los datos normales de conexión.</p>
+  <p>No se envían a la IA texto de página, HTML, capturas, campos de formularios, cookies, URL completa ni historial. No hay un proveedor fijo ni telemetría añadida por el autor. El tratamiento y conservación que haga tu proveedor dependen de sus condiciones; revísalas antes de configurarlo. Puede cobrar por las peticiones. La extensión no cobra ni incluye una clave o suscripción.</p>
+  <p>Las decisiones se reutilizan en memoria durante diez minutos y hasta 500 entradas, separadas por sitio. Las entradas caducadas se descartan en la siguiente consulta; cambiar los ajustes borra la caché. No se escriben en disco. Se limita el tamaño de peticiones y respuestas, la frecuencia y el tiempo de espera. No se ejecutan código, selectores ni URLs devueltos por el modelo.</p>
+  <h2>Tus controles</h2>
+  <p>En <a href="../options/options.html">Privacidad e IA</a> puedes rechazar la IA con un botón, desactivarla, cambiar proveedor y modelo, borrar la clave o reducir los sitios autorizados. Si cambias la URL de API, debes volver a aceptar el envío y aportar otra vez la clave o borrarla. Al desactivar la IA se restauran sus ocultaciones; el bloqueo local conserva sus propias reglas. Puedes revocar también el permiso opcional de datos en Firefox. Desinstalar elimina los datos locales de la extensión.</p>
+  <h2>Limitaciones</h2>
+  <p>No se garantiza bloquear todos los anuncios, evitar la detección por una página ni eludir controles de acceso. Las reglas y el modelo pueden equivocarse. La IA solo revisa señales de candidatos del documento principal y puede actuar después de que el elemento aparezca. La disponibilidad y el coste dependen de tu API. La compatibilidad de la integración Android debe comprobarse en la app GeckoView anfitriona.</p>
+</main></body>
+</html>

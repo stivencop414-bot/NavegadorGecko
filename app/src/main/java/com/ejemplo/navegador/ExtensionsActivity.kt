@@ -321,11 +321,22 @@ class ExtensionsActivity : Activity() {
             R.drawable.ic_menu_private,
             if (meta.allowedInPrivateBrowsing) "Bloquear en pestañas privadas" else "Permitir en pestañas privadas"
         ) { setPrivate(extension, !meta.allowedInPrivateBrowsing) }
-        actions += SheetAction(R.drawable.ic_menu_update, "Buscar actualización") { updateOne(extension) }
+        if (!extension.isBuiltIn) {
+            actions += SheetAction(R.drawable.ic_menu_update, "Buscar actualización") { updateOne(extension) }
+        }
         (meta.amoListingUrl ?: meta.homepageUrl)?.takeIf { it.isNotBlank() }?.let { url ->
             actions += SheetAction(R.drawable.ic_menu_open, "Ver página de la extensión") { openInBrowser(url) }
         }
-        actions += SheetAction(R.drawable.ic_menu_close, "Desinstalar", danger = true) { confirmUninstall(extension) }
+        if (!extension.isBuiltIn) {
+            actions += SheetAction(R.drawable.ic_menu_close, "Desinstalar", danger = true) { confirmUninstall(extension) }
+        } else {
+            info.addView(TextView(this).apply {
+                setText(R.string.bundled_extension_updates)
+                setTextColor(p.muted)
+                textSize = 13f
+                setPadding(0, dp(10f), 0, 0)
+            })
+        }
 
         sheet = NexoSheets.show(
             this,
@@ -685,7 +696,12 @@ class ExtensionsActivity : Activity() {
             return
         }
         setLoading(true)
-        val pending = extensions.toList()
+        val pending = extensions.filterNot { it.isBuiltIn }
+        if (pending.isEmpty()) {
+            setLoading(false)
+            toast(getString(R.string.bundled_extension_updates))
+            return
+        }
         fun next(index: Int) {
             if (index >= pending.size) {
                 runOnUiThread {

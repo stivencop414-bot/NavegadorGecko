@@ -2,6 +2,13 @@ package com.ejemplo.navegador
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
+import android.content.Intent
+import android.view.Gravity
+import android.view.ViewGroup
+import android.view.Window
+import org.mozilla.geckoview.GeckoSessionSettings
+import org.mozilla.geckoview.GeckoView
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
@@ -18,6 +25,10 @@ import java.lang.ref.WeakReference
 import java.util.zip.ZipFile
 
 object ExtensionManager {
+    const val PHANTOMSHIELD_ID = "phantomshield@geckoview.internal"
+    private const val PHANTOMSHIELD_URI = "resource://android/assets/extensions/phantomshield/"
+    private var phantomInstallation: GeckoResult<WebExtension>? = null
+
     const val BRIDGE_ID = "nexo_bridge@com.ejemplo.navegador"
     private const val BRIDGE_URI =
         "resource://android/assets/extensions/nexo_bridge/"
@@ -30,6 +41,7 @@ object ExtensionManager {
     private const val MAX_MANIFEST_BYTES = 1024L * 1024L
 
     private var promptActivity = WeakReference<Activity>(null)
+    private var extensionPopup: Dialog? = null
     private var bridge: WebExtension? = null
     private val ports = mutableSetOf<WebExtension.Port>()
     private data class PipState(val resume: Boolean, val isolate: Boolean = true)
@@ -65,6 +77,13 @@ object ExtensionManager {
         controller.setPromptDelegate(promptDelegate)
         controller.setAddonManagerDelegate(addonManagerDelegate)
 
+        // ensureBuiltIn conserva el almacenamiento y la elección de activación al reiniciar.
+        phantomInstallation = controller.ensureBuiltIn(PHANTOMSHIELD_URI, PHANTOMSHIELD_ID)
+        phantomInstallation?.accept(
+            { extension -> extension?.let { registerExtension(it) } },
+            { error -> android.util.Log.e("NexoExtensions", "No se pudo cargar PhantomShield integrado", error) }
+        )
+
         controller.ensureBuiltIn(BRIDGE_URI, BRIDGE_ID).accept(
             { extension ->
                 if (extension != null) {
@@ -99,6 +118,7 @@ object ExtensionManager {
     }
 
     fun attachPromptActivity(activity: Activity?) {
+        if (activity == null) extensionPopup?.dismiss()
         promptActivity = WeakReference(activity)
     }
 
@@ -239,6 +259,17 @@ object ExtensionManager {
     }
 
     fun list(
+        onSuccess: (List<WebExtension>) -> Unit,
+        onError: (Throwable) -> Unit
+    ) {
+        if (!initialized) initialize(AppContext.get())
+        phantomInstallation?.accept(
+            { listInstalled(onSuccess, onError) },
+            { onError(IllegalStateException("No se pudo cargar PhantomShield integrado", it)) }
+        ) ?: listInstalled(onSuccess, onError)
+    }
+
+    private fun listInstalled(
         onSuccess: (List<WebExtension>) -> Unit,
         onError: (Throwable) -> Unit
     ) {
@@ -789,6 +820,10 @@ object ExtensionManager {
         onDone:
             (Boolean, String) -> Unit
     ) {
+        if (extension.isBuiltIn) {
+            onDone(true, "Esta extensión integrada se actualiza junto con Nexo.")
+            return
+        }
         GeckoRuntimeHolder
             .get(context)
             .webExtensionController
@@ -879,8 +914,8 @@ object ExtensionManager {
         extension: WebExtension,
         onDone: (Boolean, String) -> Unit
     ) {
-        if (extension.id == BRIDGE_ID) {
-            onDone(false, "El puente interno de Nexo no se puede eliminar.")
+        if (extension.isBuiltIn) {
+            onDone(false, "Las extensiones integradas se pueden desactivar, pero no eliminar del APK.")
             return
         }
 
@@ -1075,10 +1110,16 @@ object ExtensionManager {
                     if (
                         !url.isNullOrBlank()
                     ) {
+                        extensionPopup?.dismiss()
                         TabManager.createTab(
                             url = url,
                             activate = true
                         )
+                        promptActivity.get()?.let { activity ->
+                            activity.startActivity(Intent(activity, MainActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            })
+                        }
                     }
                 }
             }
@@ -1169,18 +1210,47 @@ object ExtensionManager {
         }
     }
 
-    private fun createExtensionPopupSession():
-        GeckoResult<GeckoSession> {
-        val session =
-            TabManager
-                .createSessionForExtension(
-                    "about:blank",
-                    true
-                )
+    private fun createExtensionPopupSession(): GeckoResult<GeckoSession>? {
+        val activity = promptActivity.get() ?: return null
+        if (activity.isFinishing || activity.isDestroyed) return null
+        extensionPopup?.dismiss()
 
-        return GeckoResult.fromValue(
-            session
+        // Un popup no es una pestaña: tabs.query(active:true) debe seguir
+        // devolviendo la página que la extensión va a controlar.
+        val session = GeckoSession(
+            GeckoSessionSettings.Builder()
+                .usePrivateMode(TabManager.activeTab()?.isPrivate == true)
+                .build()
         )
+        session.setNavigationDelegate(object : GeckoSession.NavigationDelegate {
+            override fun onLoadRequest(
+                session: GeckoSession,
+                request: GeckoSession.NavigationDelegate.LoadRequest
+            ): GeckoResult<AllowOrDeny> =
+                if (UrlSafety.isExtensionTabUrl(request.uri)) GeckoResult.allow() else GeckoResult.deny()
+        })
+        session.open(GeckoRuntimeHolder.get(activity))
+        val view = GeckoView(activity).apply { setSession(session) }
+        val dialog = Dialog(activity).apply {
+            requestWindowFeature(Window.FEATURE_NO_TITLE)
+            setContentView(view)
+            setOnDismissListener {
+                view.releaseSession()
+                session.close()
+                if (extensionPopup === this) extensionPopup = null
+            }
+        }
+        session.setContentDelegate(object : GeckoSession.ContentDelegate {
+            override fun onCloseRequest(session: GeckoSession) { dialog.dismiss() }
+        })
+        extensionPopup = dialog
+        dialog.show()
+        dialog.window?.apply {
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, (activity.resources.displayMetrics.heightPixels * 0.8f).toInt())
+            setGravity(Gravity.BOTTOM)
+            setBackgroundDrawable(ThemeManager.rounded(activity, ThemeManager.palette(activity).surface, 20f))
+        }
+        return GeckoResult.fromValue(session)
     }
 
     private val extensionActionDelegate =

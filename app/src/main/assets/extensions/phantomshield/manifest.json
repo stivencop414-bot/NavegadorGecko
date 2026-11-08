@@ -1,0 +1,104 @@
+{
+  "manifest_version": 2,
+  "name": "PhantomShield",
+  "short_name": "PhantomShield",
+  "version": "8.3.0",
+  "description": "Bloquea solicitudes publicitarias y oculta anuncios mediante reglas locales. Clasificación IA opcional, configurable y autorizada por sitio.",
+  "icons": {
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "phantomshield@geckoview.internal",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": ["none"],
+        "optional": ["websiteContent", "browsingActivity", "authenticationInfo"]
+      }
+    }
+  },
+  "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "storage",
+    "alarms",
+    "<all_urls>"
+  ],
+  "browser_action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "PhantomShield",
+    "default_icon": {
+      "48": "icons/icon-48.png",
+      "96": "icons/icon-96.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "scripts": [
+      "data/domains-adservers.js",
+      "data/domains-trackers.js",
+      "data/domains-popups.js",
+      "background/network-engine.js",
+      "background/filter-lists.js",
+      "background/updater.js",
+      "background/surrogate-redirects.js",
+      "data/ai-config.js",
+      "background/ai-classifier.js",
+      "background/background.js"
+    ],
+    "persistent": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content/ai-detector.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "content/content-script.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "content/page-hooks.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["*://*.facebook.com/*", "*://*.instagram.com/*"],
+      "js": [
+        "content/heuristic-vision.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "data/cosmetic-rules.js",
+        "content/cosmetic-filter.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    "web-accessible/noop.js",
+    "web-accessible/ga-surrogate.js",
+    "web-accessible/gtm-surrogate.js"
+  ]
+}
