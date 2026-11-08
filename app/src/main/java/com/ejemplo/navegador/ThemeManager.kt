@@ -5,10 +5,11 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
 import android.os.Build
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsetsController
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -16,12 +17,6 @@ import android.widget.ImageButton
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
-import android.text.SpannableString
-import android.text.Spanned
-import android.text.style.StyleSpan
-import android.text.style.ForegroundColorSpan
-import android.text.style.RelativeSizeSpan
-import android.graphics.Typeface
 import androidx.core.graphics.ColorUtils
 
 data class BrowserPalette(
@@ -46,76 +41,113 @@ object ThemeManager {
 
     fun palette(activity: Activity): BrowserPalette {
         val accent = when (BrowserPrefs.accent(activity)) {
-            BrowserPrefs.ACCENT_CYAN -> Color.rgb(0, 207, 255)
-            BrowserPrefs.ACCENT_LIME -> Color.rgb(67, 220, 96)
-            BrowserPrefs.ACCENT_ORANGE -> Color.rgb(255, 152, 54)
-            BrowserPrefs.ACCENT_PINK -> Color.rgb(255, 79, 154)
-            BrowserPrefs.ACCENT_RED -> Color.rgb(255, 78, 78)
-            else -> Color.rgb(129, 91, 255)
+            BrowserPrefs.ACCENT_CYAN -> Color.rgb(6, 182, 212)
+            BrowserPrefs.ACCENT_LIME -> Color.rgb(34, 197, 94)
+            BrowserPrefs.ACCENT_ORANGE -> Color.rgb(249, 115, 22)
+            BrowserPrefs.ACCENT_PINK -> Color.rgb(236, 72, 153)
+            BrowserPrefs.ACCENT_RED -> Color.rgb(239, 68, 68)
+            else -> Color.rgb(124, 58, 237)
+        }
+
+        val onAccent = if (ColorUtils.calculateLuminance(accent) > 0.42) {
+            Color.rgb(15, 17, 26)
+        } else {
+            Color.WHITE
         }
 
         return when (resolvedTheme(activity)) {
             BrowserPrefs.THEME_LIGHT -> BrowserPalette(
-                Color.rgb(246, 247, 251), Color.WHITE, Color.rgb(233, 235, 243),
-                Color.rgb(25, 27, 35), Color.rgb(95, 99, 112), accent, UiContrast.foreground(accent)
+                background = Color.rgb(244, 246, 251),
+                surface = Color.WHITE,
+                elevated = Color.rgb(232, 236, 244),
+                text = Color.rgb(15, 23, 42),
+                muted = Color.rgb(100, 116, 139),
+                accent = accent,
+                onAccent = onAccent
             )
             BrowserPrefs.THEME_OLED -> BrowserPalette(
-                Color.BLACK, Color.rgb(8, 8, 10), Color.rgb(22, 22, 25),
-                Color.WHITE, Color.rgb(170, 170, 178), accent, UiContrast.foreground(accent)
+                background = Color.BLACK,
+                surface = Color.rgb(14, 14, 18),
+                elevated = Color.rgb(26, 27, 34),
+                text = Color.rgb(248, 250, 252),
+                muted = Color.rgb(148, 163, 184),
+                accent = accent,
+                onAccent = onAccent
             )
             else -> BrowserPalette(
-                Color.rgb(17, 18, 27), Color.rgb(25, 27, 39), Color.rgb(37, 39, 54),
-                Color.rgb(245, 245, 250), Color.rgb(175, 178, 194), accent, UiContrast.foreground(accent)
+                background = Color.rgb(13, 15, 23),
+                surface = Color.rgb(22, 25, 37),
+                elevated = Color.rgb(34, 39, 56),
+                text = Color.rgb(241, 245, 249),
+                muted = Color.rgb(148, 163, 184),
+                accent = accent,
+                onAccent = onAccent
             )
         }
     }
 
     fun applyWindow(activity: Activity) {
         val p = palette(activity)
-        activity.window.statusBarColor = p.surface
-        activity.window.navigationBarColor = p.surface
+        val window = activity.window
+        window.statusBarColor = p.surface
+        window.navigationBarColor = p.surface
+        window.decorView.setBackgroundColor(p.background)
+
         val light = resolvedTheme(activity) == BrowserPrefs.THEME_LIGHT
-        activity.window.decorView.systemUiVisibility =
-            if (light) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val appearance = if (light) {
+                WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            } else 0
+            window.insetsController?.setSystemBarsAppearance(
+                appearance,
+                WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = if (light) {
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
                     if (Build.VERSION.SDK_INT >= 26) View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0
             } else 0
+        }
     }
 
-    fun rounded(activity: Activity, color: Int, radiusDp: Float = 14f): GradientDrawable {
+    fun rounded(
+        activity: Activity,
+        color: Int,
+        radiusDp: Float = 14f,
+        strokeColor: Int? = null,
+        strokeWidthDp: Float = 1f
+    ): GradientDrawable {
         val density = activity.resources.displayMetrics.density
         return GradientDrawable().apply {
             setColor(color)
             cornerRadius = radiusDp * density
+            if (strokeColor != null) {
+                setStroke((strokeWidthDp * density).toInt().coerceAtLeast(1), strokeColor)
+            }
         }
     }
-
-    private fun controlColors(enabled: Int, disabled: Int) = ColorStateList(
-        arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
-        intArrayOf(ColorUtils.setAlphaComponent(disabled, 110), enabled)
-    )
-
-    private fun interactiveBackground(activity: Activity, color: Int, foreground: Int) =
-        RippleDrawable(
-            ColorStateList.valueOf(ColorUtils.setAlphaComponent(foreground, 36)),
-            rounded(activity, color, 16f),
-            rounded(activity, Color.WHITE, 16f)
-        )
 
     fun styleButton(activity: Activity, button: Button, primary: Boolean = false) {
         val p = palette(activity)
         val foreground = if (primary) p.onAccent else p.text
-        button.background = interactiveBackground(activity, if (primary) p.accent else p.elevated, foreground)
-        button.setTextColor(controlColors(foreground, p.muted))
-        button.compoundDrawableTintList = controlColors(foreground, p.muted)
+        val bgColor = if (primary) p.accent else p.elevated
+        val stroke = if (primary) null else ColorUtils.setAlphaComponent(p.muted, 45)
+        button.background = rounded(activity, bgColor, 14f, stroke)
+        button.setTextColor(foreground)
+        button.compoundDrawableTintList = ColorStateList.valueOf(foreground)
         button.backgroundTintList = null
         button.stateListAnimator = null
+        button.isAllCaps = false
     }
 
     fun styleIconButton(activity: Activity, button: ImageButton, active: Boolean = false) {
         val p = palette(activity)
-        button.background = interactiveBackground(activity, if (active) p.accent else p.surface, p.text)
-        button.imageTintList = controlColors(if (active) p.onAccent else p.text, p.muted)
+        val stroke = if (active) null else ColorUtils.setAlphaComponent(p.muted, 35)
+        button.background = rounded(activity, if (active) p.accent else p.elevated, 14f, stroke)
+        button.imageTintList = ColorStateList.valueOf(if (active) p.onAccent else p.text)
         button.backgroundTintList = null
         button.stateListAnimator = null
         button.elevation = 0f
@@ -140,10 +172,15 @@ object ThemeManager {
                 val p = palette(activity)
                 (view as? TextView)?.apply {
                     setTextColor(p.text)
-                    textSize = 15f
+                    textSize = 14.5f
                     val d = resources.displayMetrics.density
-                    setPadding((14*d).toInt(), (11*d).toInt(), (14*d).toInt(), (11*d).toInt())
-                    background = rounded(activity, if (dropdown) p.surface else p.elevated, 12f)
+                    setPadding((14 * d).toInt(), (12 * d).toInt(), (14 * d).toInt(), (12 * d).toInt())
+                    background = rounded(
+                        activity,
+                        if (dropdown) p.surface else p.elevated,
+                        12f,
+                        ColorUtils.setAlphaComponent(p.muted, 40)
+                    )
                 }
                 return view
             }
@@ -156,27 +193,29 @@ object ThemeManager {
                 val p = palette(activity)
                 (v as? TextView)?.apply {
                     setTextColor(p.text)
-                    val label = items[position]
-                    val titleEnd = label.indexOf('\n').let { if (it < 0) label.length else it }
-                    text = SpannableString(label).apply {
-                        setSpan(StyleSpan(Typeface.BOLD), 0, titleEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                        if (titleEnd < length) {
-                            setSpan(ForegroundColorSpan(p.muted), titleEnd, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                            setSpan(RelativeSizeSpan(0.85f), titleEnd, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                        }
-                    }
-                    textSize = 16f
-                    setLineSpacing(3 * resources.displayMetrics.density, 1f)
+                    textSize = 14f
+                    setLineSpacing(0f, 1.2f)
                     val d = resources.displayMetrics.density
-                    setPadding((16*d).toInt(), (14*d).toInt(), (16*d).toInt(), (14*d).toInt())
-                    background = rounded(activity, p.surface, 16f)
+                    setPadding((16 * d).toInt(), (14 * d).toInt(), (16 * d).toInt(), (14 * d).toInt())
+                    background = rounded(
+                        activity,
+                        p.surface,
+                        16f,
+                        ColorUtils.setAlphaComponent(p.muted, 38)
+                    )
                 }
                 return v
             }
         }
 
     fun styleSpinner(activity: Activity, spinner: Spinner) {
-        spinner.background = rounded(activity, palette(activity).elevated, 12f)
+        val p = palette(activity)
+        spinner.background = rounded(
+            activity,
+            p.elevated,
+            12f,
+            ColorUtils.setAlphaComponent(p.muted, 45)
+        )
         spinner.backgroundTintList = null
     }
 
@@ -187,13 +226,26 @@ object ThemeManager {
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
             intArrayOf(p.accent, p.muted)
         )
+        toggle.trackTintList = ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(
+                ColorUtils.setAlphaComponent(p.accent, 110),
+                ColorUtils.setAlphaComponent(p.muted, 70)
+            )
+        )
     }
 
     fun styleEdit(activity: Activity, edit: EditText) {
         val p = palette(activity)
-        edit.background = rounded(activity, p.elevated, 18f)
+        edit.background = rounded(
+            activity,
+            p.elevated,
+            20f,
+            ColorUtils.setAlphaComponent(p.muted, 50)
+        )
         edit.setTextColor(p.text)
         edit.setHintTextColor(p.muted)
-        edit.backgroundTintList = ColorStateList.valueOf(p.elevated)
+        edit.backgroundTintList = null
+        edit.gravity = Gravity.CENTER_VERTICAL
     }
 }
