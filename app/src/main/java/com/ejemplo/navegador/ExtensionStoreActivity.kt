@@ -23,6 +23,9 @@ class ExtensionStoreActivity :
     private lateinit var progress: ProgressBar
     private lateinit var status: TextView
 
+    // Solo la búsqueda más reciente puede actualizar la lista.
+    private var searchGeneration = 0
+
     private var items:
         List<StoreAddon> =
         emptyList()
@@ -232,8 +235,14 @@ class ExtensionStoreActivity :
                 "Buscando “$term”…"
             }
 
+        val generation = ++searchGeneration
+
         AmoClient.search(term) {
             result ->
+            if (generation != searchGeneration || isFinishing || isDestroyed) {
+                return@search
+            }
+
             setLoading(false)
 
             result.onSuccess {
@@ -295,6 +304,16 @@ class ExtensionStoreActivity :
     private fun install(
         addon: StoreAddon
     ) {
+        // La URL viene de la API: aun así solo se aceptan descargas del AMO oficial.
+        if (!ExtensionManager.isRemoteExtensionPackage(addon.xpiUrl)) {
+            Toast.makeText(
+                this,
+                "Nexo solo instala paquetes descargados de addons.mozilla.org.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
         setLoading(true)
 
         status.text =
@@ -456,24 +475,7 @@ class ExtensionStoreActivity :
     private fun openInBrowser(
         url: String
     ) {
-        startActivity(
-            Intent(
-                this,
-                MainActivity::class.java
-            ).apply {
-                addFlags(
-                    Intent
-                        .FLAG_ACTIVITY_CLEAR_TOP or
-                        Intent
-                            .FLAG_ACTIVITY_SINGLE_TOP
-                )
-
-                putExtra(
-                    MainActivity.EXTRA_OPEN_URL,
-                    url
-                )
-            }
-        )
+        startActivity(MainActivity.openUrlIntent(this, url))
     }
 
     private fun applyTheme() {

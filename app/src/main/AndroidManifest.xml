@@ -46,5 +46,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!--
+            Entrada interna NO exportada: solo las pantallas de Nexo pueden
+            usarla para abrir páginas internas (about:, moz-extension:).
+            Las apps externas solo pueden abrir http/https en MainActivity.
+        -->
+        <activity-alias
+            android:name=".InternalOpenActivity"
+            android:exported="false"
+            android:targetActivity=".MainActivity" />
     </application>
 </manifest>

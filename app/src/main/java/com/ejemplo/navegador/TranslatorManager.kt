@@ -26,10 +26,23 @@ object TranslatorManager {
     private const val MAX_TEXTS = 128
     private const val MAX_CHARS = 24000
 
+    private const val PENDING_TTL_MS = 20_000L
+
+    private data class PendingRequest(
+        val target: String,
+        val createdAt: Long
+    )
+
     private val ports =
         IdentityHashMap<GeckoSession, WebExtension.Port>()
+
+    /*
+     * Una traducción pedida antes de que el content script conecte.
+     * Solo vale para la página actual: se descarta al navegar (onPageStart),
+     * al cerrar la sesión o si caduca.
+     */
     private val pending =
-        IdentityHashMap<GeckoSession, String>()
+        IdentityHashMap<GeckoSession, PendingRequest>()
 
     private val languageIdentifier =
         LanguageIdentification.getClient()
@@ -81,10 +94,16 @@ object TranslatorManager {
         context: Context,
         callback: (Boolean, String) -> Unit
     ) {
-        val session = TabManager.activeSession()
+        val tab = TabManager.activeTab()
+        val session = tab?.session
 
-        if (session == null) {
+        if (tab == null || session == null) {
             callback(false, "No hay una pestaña activa.")
+            return
+        }
+
+        if (!UrlSafety.isWebUrl(tab.url)) {
+            callback(false, "Esta página no se puede traducir.")
             return
         }
 
@@ -93,7 +112,10 @@ object TranslatorManager {
 
         if (port == null) {
             synchronized(pending) {
-                pending[session] = target
+                pending[session] = PendingRequest(
+                    target,
+                    android.os.SystemClock.elapsedRealtime()
+                )
             }
 
             bindSession(session)
@@ -119,6 +141,22 @@ object TranslatorManager {
         }
     }
 
+    /** Una navegación nueva invalida cualquier traducción pendiente. */
+    fun onPageStart(session: GeckoSession) {
+        synchronized(pending) { pending.remove(session) }
+    }
+
+    /** Liberar referencias a una sesión que se cerró. */
+    fun forgetSession(session: GeckoSession) {
+        synchronized(pending) { pending.remove(session) }
+        synchronized(ports) { ports.remove(session) }
+    }
+
+    private fun isTranslatorSender(sender: WebExtension.MessageSender): Boolean =
+        sender.webExtension.id == TRANSLATOR_ID &&
+            sender.isTopLevel() &&
+            sender.session != null
+
     private fun sendTranslateCommand(
         port: WebExtension.Port,
         target: String
@@ -136,10 +174,7 @@ object TranslatorManager {
             override fun onConnect(port: WebExtension.Port) {
                 val session = port.sender.session
 
-                if (
-                    session == null ||
-                    !port.sender.isTopLevel()
-                ) {
+                if (session == null || !isTranslatorSender(port.sender)) {
                     runCatching { port.disconnect() }
                     return
                 }
@@ -182,13 +217,16 @@ object TranslatorManager {
                     }
                 )
 
-                val target = synchronized(pending) {
+                val request = synchronized(pending) {
                     pending.remove(session)
                 }
 
-                if (target != null) {
+                val fresh = request != null &&
+                    android.os.SystemClock.elapsedRealtime() - request.createdAt <= PENDING_TTL_MS
+
+                if (request != null && fresh) {
                     runCatching {
-                        sendTranslateCommand(port, target)
+                        sendTranslateCommand(port, request.target)
                     }
                 }
             }
@@ -198,11 +236,7 @@ object TranslatorManager {
                 message: Any,
                 sender: WebExtension.MessageSender
             ): GeckoResult<Any>? {
-                if (
-                    nativeApp != NATIVE_APP ||
-                    !sender.isTopLevel() ||
-                    sender.session == null
-                ) {
+                if (nativeApp != NATIVE_APP || !isTranslatorSender(sender)) {
                     return null
                 }
 

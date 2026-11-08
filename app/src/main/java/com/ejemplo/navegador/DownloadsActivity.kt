@@ -12,7 +12,6 @@ import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.FileProvider
-import java.io.File
 
 class DownloadsActivity : Activity() {
     private lateinit var listView: ListView
@@ -73,8 +72,8 @@ class DownloadsActivity : Activity() {
     }
 
     private fun open(entry: DownloadEntry) {
-        val file = File(entry.filePath)
-        if (!file.exists()) {
+        val file = DownloadStore.fileFor(this, entry)
+        if (file == null) {
             Toast.makeText(this, "El archivo ya no existe", Toast.LENGTH_SHORT).show()
             return
         }

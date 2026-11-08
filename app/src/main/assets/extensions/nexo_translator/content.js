@@ -4,19 +4,30 @@
   const NATIVE_APP = "cloud_translator";
   const MAX_ITEMS = 80;
   const MAX_CHARS = 12000;
+  // La primera vez ML Kit puede descargar el modelo del idioma.
+  const BATCH_TIMEOUT_MS = 120000;
   let port = null;
   let translating = false;
 
   function acceptedTextNode(node) {
     if (!node || !node.parentElement) return false;
 
-    const tag = node.parentElement.tagName;
+    const parent = node.parentElement;
+    const tag = parent.tagName;
     if ([
       "SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA",
-      "CODE", "PRE", "OPTION"
+      "CODE", "PRE", "OPTION", "KBD", "SAMP"
     ].includes(tag)) {
       return false;
     }
+
+    // Respetar las marcas estándar de "no traducir" y no tocar
+    // contenido que el usuario está editando.
+    try {
+      if (parent.closest('[translate="no"], .notranslate, [contenteditable=""], [contenteditable="true"]')) {
+        return false;
+      }
+    } catch (_) {}
 
     const raw = node.textContent || "";
     const core = raw.trim();
@@ -87,6 +98,17 @@
     return batches;
   }
 
+  function withTimeout(promise, ms) {
+    let timer = 0;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("La traducción tardó demasiado. Inténtalo de nuevo.")),
+        ms
+      );
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
   async function translatePage(target) {
     if (translating) return;
     translating = true;
@@ -103,13 +125,16 @@
       let changed = 0;
 
       for (const batch of batches) {
-        const response = await browser.runtime.sendNativeMessage(
-          NATIVE_APP,
-          {
-            type: "translate",
-            target,
-            texts: batch.map(item => item.core)
-          }
+        const response = await withTimeout(
+          browser.runtime.sendNativeMessage(
+            NATIVE_APP,
+            {
+              type: "translate",
+              target,
+              texts: batch.map(item => item.core)
+            }
+          ),
+          BATCH_TIMEOUT_MS
         );
 
         if (!response || response.ok !== true) {
@@ -178,13 +203,16 @@
         message &&
         message.type === "translate_page"
       ) {
-        translatePage(message.target || "es");
+        const target =
+          typeof message.target === "string" && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(message.target)
+            ? message.target
+            : "es";
+        translatePage(target);
       }
     });
 
     port.postMessage({
-      type: "translator_ready",
-      url: location.href
+      type: "translator_ready"
     });
   } catch (_) {}
 })();

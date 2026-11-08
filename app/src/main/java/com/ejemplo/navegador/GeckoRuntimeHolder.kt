@@ -38,17 +38,18 @@ object GeckoRuntimeHolder {
             }
         }
 
-    fun speculativeConnect(context: Context, url: String) {
-        if (!url.startsWith("https://", true) &&
-            !url.startsWith("http://", true)
-        ) return
-
-        runCatching {
-            val web = executor ?: synchronized(this) {
-                executor ?: GeckoWebExecutor(get(context)).also { executor = it }
-            }
-            web.speculativeConnect(url)
+    /**
+     * Executor de red de Gecko: comparte cookies, caché y política de
+     * cookies con las pestañas, a diferencia de DownloadManager.
+     */
+    fun webExecutor(context: Context): GeckoWebExecutor =
+        executor ?: synchronized(this) {
+            executor ?: GeckoWebExecutor(get(context)).also { executor = it }
         }
+
+    fun speculativeConnect(context: Context, url: String) {
+        if (!UrlSafety.isWebUrl(url)) return
+        runCatching { webExecutor(context).speculativeConnect(url) }
     }
 
     fun applyRuntimePrefs(context: Context) {

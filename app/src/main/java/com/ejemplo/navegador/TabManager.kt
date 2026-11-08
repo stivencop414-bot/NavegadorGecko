@@ -65,13 +65,8 @@ object TabManager {
     fun tabForSession(session: GeckoSession): BrowserTab? =
         tabs.firstOrNull { it.session === session }
 
-    private fun isSafeAppNavigationUrl(url: String): Boolean {
-        val uri = runCatching { Uri.parse(url.trim()) }.getOrNull() ?: return false
-        return when (uri.scheme?.lowercase()) {
-            "http", "https", "about", "resource", "moz-extension" -> true
-            else -> false
-        }
-    }
+    private fun isSafeAppNavigationUrl(url: String): Boolean =
+        UrlSafety.isAppNavigable(url)
 
     private fun normalizeMobileUrl(
         url: String,
@@ -160,7 +155,7 @@ object TabManager {
     ): GeckoSession {
         val tab = BrowserTab(
             id = UUID.randomUUID().toString(),
-            url = url,
+            url = if (UrlSafety.isExtensionTabUrl(url)) url else "about:blank",
             title = "Extensión",
             isPrivate = activeTab()?.isPrivate ?: false
         )
@@ -195,42 +190,20 @@ object TabManager {
 
         if (old?.id != target.id) {
             old?.session?.let { session ->
-                val backgroundEnabled =
-                BrowserPrefs.backgroundMedia(
-                    requireContext()
+                val backgroundEnabled = BrowserPrefs.backgroundMedia(requireContext())
+                val keepMediaAlive =
+                    backgroundEnabled &&
+                        BrowserMediaController.shouldKeepAlive(old.id, 8_000L)
+
+                session.settings.setSuspendMediaWhenInactive(!backgroundEnabled)
+                session.setFocused(false)
+                ExtensionManager.setTabActive(session, false)
+                session.setPriorityHint(
+                    if (keepMediaAlive) GeckoSession.PRIORITY_HIGH
+                    else GeckoSession.PRIORITY_DEFAULT
                 )
-
-            val keepMediaAlive =
-                backgroundEnabled &&
-                BrowserMediaController
-                    .shouldKeepAlive(
-                        old.id,
-                        8_000L
-                    )
-
-            session.settings
-                .setSuspendMediaWhenInactive(
-                    !backgroundEnabled
-                )
-
-            session.setFocused(false)
-            ExtensionManager.setTabActive(
-                session,
-                false
-            )
-
-            session.setPriorityHint(
-                if (keepMediaAlive) {
-                    GeckoSession.PRIORITY_HIGH
-                } else {
-                    GeckoSession.PRIORITY_DEFAULT
-                }
-            )
-
-            session.setActive(
-                keepMediaAlive
-            )
-        }
+                session.setActive(keepMediaAlive)
+            }
 
             if (rememberPrevious && old != null) {
                 activationHistory.remove(old.id)
@@ -285,9 +258,8 @@ object TabManager {
                     session,
                     false
                 )
-                session.setActive(false)
-                session.close()
             }
+            closeSession(session)
         }
         removed.session = null
         BrowserMediaController.removeTab(removed.id)
@@ -507,10 +479,6 @@ object TabManager {
         persist()
     }
 
-    fun suspendForBackground() {
-        prepareForBackground()
-    }
-
     fun resumeActive() {
         activeSession()?.let {
             session ->
@@ -533,13 +501,16 @@ object TabManager {
         persist()
 
         tabs.forEach { tab ->
-            tab.session?.let { session ->
-                runCatching {
-                    session.setActive(false)
-                    session.close()
-                }
-            }
+            tab.session?.let { closeSession(it) }
             tab.session = null
+        }
+    }
+
+    private fun closeSession(session: GeckoSession) {
+        TranslatorManager.forgetSession(session)
+        runCatching {
+            session.setActive(false)
+            session.close()
         }
     }
 
@@ -788,6 +759,7 @@ object TabManager {
                 }
 
                 override fun onPageStart(session: GeckoSession, url: String) {
+                    TranslatorManager.onPageStart(session)
                     BrowserMediaController.resetVideo(tab.id)
                     tab.url = url
                     tab.isLoading = true
@@ -925,12 +897,7 @@ object TabManager {
         background
             .drop((maxLive - 1).coerceAtLeast(0))
             .forEach { tab ->
-                tab.session?.let { session ->
-                    runCatching {
-                        session.setActive(false)
-                        session.close()
-                    }
-                }
+                tab.session?.let { closeSession(it) }
                 tab.session = null
             }
     }

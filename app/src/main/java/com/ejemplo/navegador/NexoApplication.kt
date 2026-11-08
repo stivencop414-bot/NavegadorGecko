@@ -14,6 +14,7 @@ class NexoApplication : Application() {
         super.onCreate()
         AppContext.initialize(this)
         CrashLog.install(this)
+        BrowserPrefs.purgeLegacyKeys(this)
 
         if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
             StrictMode.setThreadPolicy(

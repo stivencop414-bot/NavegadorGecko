@@ -9,8 +9,8 @@ android {
         applicationId = "com.ejemplo.navegador"
         minSdk = 26
         targetSdk = 34
-        versionCode = 23
-        versionName = "0.13.6"
+        versionCode = 24
+        versionName = "0.13.7"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -59,4 +59,6 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.google.mlkit:translate:17.0.3")
     implementation("com.google.mlkit:language-id:17.0.6")
+
+    testImplementation("junit:junit:4.13.2")
 }
