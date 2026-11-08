@@ -4,41 +4,42 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="20dp">
+    android:padding="16dp">
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
         android:orientation="horizontal">
+
         <TextView
             android:id="@+id/listTitle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="Lista"
-            android:textSize="24sp"
+            android:textSize="26sp"
             android:textStyle="bold" />
+
         <Button
             android:id="@+id/listAction"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minHeight="48dp"
+            android:layout_height="42dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
             android:text="Limpiar"
-            android:textAllCaps="false" />
+            android:textAllCaps="false"
+            android:textSize="14sp" />
     </LinearLayout>
-    <TextView
-        android:id="@+id/listEmpty"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:gravity="center"
-        android:padding="24dp"
-        android:textSize="16sp"
-        android:visibility="gone" />
+
     <ListView
         android:id="@+id/listView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="10dp"
-        android:layout_weight="1" />
+        android:layout_marginTop="14dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:divider="@android:color/transparent"
+        android:dividerHeight="10dp"
+        android:paddingBottom="16dp" />
 </LinearLayout>
