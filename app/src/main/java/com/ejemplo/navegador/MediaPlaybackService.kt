@@ -96,7 +96,7 @@ class MediaPlaybackService : Service() {
 
     private fun buildBootstrapNotification(): Notification =
         Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_nexo_logo)
+            .setSmallIcon(R.drawable.ic_stat_nexo)
             .setContentTitle("Nexo Browser")
             .setContentText("Preparando reproducción multimedia…")
             .setCategory(Notification.CATEGORY_TRANSPORT)
@@ -151,7 +151,7 @@ class MediaPlaybackService : Service() {
             }
 
         return Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_nexo_logo)
+            .setSmallIcon(R.drawable.ic_stat_nexo)
             .setContentTitle(state.title)
             .setContentText(statusText)
             .setContentIntent(open)
@@ -161,7 +161,7 @@ class MediaPlaybackService : Service() {
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(
                 Notification.Builder(this, CHANNEL_ID)
-                    .setSmallIcon(R.drawable.ic_nexo_logo)
+                    .setSmallIcon(R.drawable.ic_stat_nexo)
                     .setContentTitle("Nexo Browser")
                     .setContentText("Reproduciendo multimedia")
                     .setCategory(Notification.CATEGORY_TRANSPORT)

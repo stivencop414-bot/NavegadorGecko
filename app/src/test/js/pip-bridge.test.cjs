@@ -31,14 +31,16 @@ function harness() {
     createElement: () => new Element()
   });
   html.querySelectorAll = () => [];
+  const win = new Element();
+  let observed = 0;
   const port = { postMessage: value => reports.push(value), onMessage: { addListener: callback => onMessage = callback }, onDisconnect: { addListener() {} } };
   const schedule = (callback, delay, interval = 0) => {
     const id = nextId++; timers.set(id, { callback, at: now + delay, interval }); return id;
   };
   vm.runInNewContext(source, {
-    document, window: new Element(), Date: { now: () => now },
+    document, window: win, Date: { now: () => now },
     getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
-    MutationObserver: class { observe() {} },
+    MutationObserver: class { observe() { observed++; } },
     browser: { runtime: { connectNative: () => port, sendNativeMessage: () => Promise.resolve({}) } },
     setTimeout: (callback, delay) => schedule(callback, delay), clearTimeout: id => timers.delete(id),
     setInterval: (callback, delay) => schedule(callback, delay, delay)
@@ -63,7 +65,7 @@ function harness() {
     v.play = () => { v.plays++; v.paused = false; return Promise.resolve(); };
     videos.push(v); return v;
   }
-  return { video, tick, reports, wrapper, body, html, Element,
+  return { video, tick, reports, wrapper, body, html, Element, window: win, observed: () => observed,
     enter: resume => onMessage({ type: 'pip_mode', active: true, resume }),
     enterNative: resume => onMessage({ type: 'pip_mode', active: true, resume, isolate: false }),
     leave: () => onMessage({ type: 'pip_mode', active: false }),
@@ -164,4 +166,23 @@ test('css mode puts back the root class when the site rewrites it', () => {
   const h = harness(); h.video(); h.enter(true); h.tick(100);
   h.html.classList.remove('nexo-pip-root'); h.tick(2100);
   assert.equal(h.html.classList.contains('nexo-pip-root'), true);
+});
+
+test('visibilitychange reaches pages that are not playing media', () => {
+  const h = harness(), v = h.video(); v.pause();
+  let seen = 0; h.window.addEventListener('visibilitychange', () => seen++);
+  h.window.dispatchEvent(new Event('visibilitychange'));
+  assert.equal(seen, 1);
+});
+
+test('visibilitychange is hidden while media keeps playing in the background', () => {
+  const h = harness(); h.video();
+  let seen = 0; h.window.addEventListener('visibilitychange', () => seen++);
+  h.window.dispatchEvent(new Event('visibilitychange'));
+  assert.equal(seen, 0);
+});
+
+test('the bridge does not observe every DOM mutation of the page', () => {
+  const h = harness(); h.tick(5000);
+  assert.equal(h.observed(), 0);
 });

@@ -263,7 +263,7 @@ object BrowserMediaController {
         height: Int,
         rect: android.graphics.Rect? = null
     ) {
-        videos[tabId] = VideoState(
+        val state = VideoState(
             present = present,
             playing = playing,
             width = width.coerceAtLeast(0),
@@ -275,6 +275,9 @@ object BrowserMediaController {
             markRecentlyPlaying(tabId)
         }
 
+        // El latido periódico de la página repite el mismo estado: no
+        // reconstruir controles PiP ni la interfaz si nada cambió.
+        if (videos.put(tabId, state) == state) return
         listener?.onBrowserMediaStateChanged()
     }
 

@@ -165,11 +165,7 @@ class ExtensionStoreActivity :
     }
 
     override fun onDestroy() {
-        ExtensionManager
-            .attachPromptActivity(
-                null
-            )
-
+        ExtensionManager.detachPromptActivity(this)
         super.onDestroy()
     }
 

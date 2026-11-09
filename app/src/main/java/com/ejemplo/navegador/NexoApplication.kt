@@ -32,6 +32,13 @@ class NexoApplication : Application() {
             )
         }
     }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        TabManager.onTrimMemory(level)
+        RemoteImageLoader.trimMemory(level)
+        if (level >= TRIM_MEMORY_BACKGROUND) TranslatorManager.closeTranslators()
+    }
 }
 
 object CrashLog {

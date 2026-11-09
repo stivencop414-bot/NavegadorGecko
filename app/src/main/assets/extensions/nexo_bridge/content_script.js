@@ -16,6 +16,8 @@
   const REPORT_DEBOUNCE_MS = 250;
   const POLL_INTERVAL_MS = 2000;
   const SHADOW_SCAN_INTERVAL_MS = 5000;
+  // Si una página no usa Shadow DOM, espaciar los escaneos (hasta 1 min).
+  const SHADOW_SCAN_MAX_INTERVAL_MS = 60000;
   const HEARTBEAT_MS = 10000;
   const RECONNECT_MIN_MS = 500;
   const RECONNECT_MAX_MS = 30000;
@@ -41,7 +43,9 @@
   let lastStateKey = "";
   let lastReportAt = 0;
   let lastShadowScanAt = 0;
+  let shadowScanInterval = SHADOW_SCAN_INTERVAL_MS;
   let shadowVideos = [];
+  let videoKnown = false;
 
   function installVisibilityGuard() {
     if (visibilityHandler) return;
@@ -51,17 +55,31 @@
       scheduleVideoReport();
 
       /*
-       * PiP continúa visible para el usuario. Segundo plano
-       * solo se protege si la opción correspondiente está activa.
+       * PiP continúa visible para el usuario. Segundo plano solo se
+       * protege si la opción está activa Y algo se está reproduciendo:
+       * ocultar el evento a todas las páginas las mantenía animando y
+       * consumiendo batería en segundo plano.
        * No llamamos play() aquí: Gecko mantiene el estado del decoder.
        */
-      if (pipActive || backgroundMedia) {
+      if (pipActive || (backgroundMedia && mediaPlaying())) {
         event.stopImmediatePropagation();
       }
     };
 
     window.addEventListener("visibilitychange", visibilityHandler, true);
     document.addEventListener("visibilitychange", visibilityHandler, true);
+  }
+
+  function mediaPlaying() {
+    try {
+      if (navigator.mediaSession && navigator.mediaSession.playbackState === "playing") return true;
+    } catch (_) {}
+    try {
+      for (const media of document.querySelectorAll("video, audio")) {
+        if (!media.paused && !media.ended) return true;
+      }
+    } catch (_) {}
+    return collectVideos().some(isPlaying);
   }
 
   function applyState(state) {
@@ -95,13 +113,17 @@
     const videos = Array.from(document.getElementsByTagName("video"));
     if (videos.length) return videos;
 
-    // El recorrido completo del DOM es caro: hacerlo con poca frecuencia.
+    // El recorrido completo del DOM es caro: hacerlo con poca frecuencia
+    // y cada vez menos si la página no tiene videos en Shadow DOM.
     const now = Date.now();
-    if (now - lastShadowScanAt >= SHADOW_SCAN_INTERVAL_MS) {
+    if (now - lastShadowScanAt >= shadowScanInterval) {
       lastShadowScanAt = now;
       const found = [];
       collectShadowVideos(document, found, 0);
       shadowVideos = found;
+      shadowScanInterval = found.length
+        ? SHADOW_SCAN_INTERVAL_MS
+        : Math.min(shadowScanInterval * 2, SHADOW_SCAN_MAX_INTERVAL_MS);
     }
 
     return shadowVideos.filter(video => video.isConnected);
@@ -424,6 +446,7 @@
 
     lastStateKey = key;
     lastReportAt = now;
+    videoKnown = state.present;
 
     try {
       port.postMessage(state);
@@ -470,15 +493,16 @@
     document.addEventListener(type, scheduleVideoReport, true);
   });
 
-  window.addEventListener("scroll", scheduleVideoReport, { passive: true, capture: true });
+  // El desplazamiento solo importa si hay un video (su rectángulo cambia).
+  window.addEventListener("scroll", () => {
+    if (videoKnown || pipActive) scheduleVideoReport();
+  }, { passive: true, capture: true });
 
-  try {
-    const observer = new MutationObserver(scheduleVideoReport);
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true
-    });
-  } catch (_) {}
+  /*
+   * Sin MutationObserver sobre todo el documento: en páginas dinámicas se
+   * disparaba con cada cambio del DOM. Los eventos multimedia (capturados
+   * arriba) y el sondeo cada 2 s bastan para detectar videos nuevos.
+   */
 
   setInterval(reportVideoState, POLL_INTERVAL_MS);
 

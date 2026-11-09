@@ -7,8 +7,16 @@ El ZIP interno del kit es idéntico. SHA-256 del archivo original:
 
 Los archivos se validaron y extrajeron en `app/src/main/assets/extensions/phantomshield/`.
 No se ejecuta un ZIP ni un actualizador de código en CI. El código de la extensión queda
-versionado junto a la aplicación, conservando el manifest 8.3.0 y el ID
+versionado junto a la aplicación, conservando el ID
 `phantomshield@geckoview.internal`.
+
+### Cambios de integración en 8.3.1
+
+Nexo 0.15.0 solo adapta el panel al móvil, sin tocar la lógica de bloqueo:
+`popup/popup.css` ocupa el ancho del teléfono (antes 320 px fijos), usa la paleta de las
+hojas de Nexo y sigue el tema claro/oscuro (`prefers-color-scheme`). El manifest pasa a
+8.3.1 para que Gecko recargue los archivos al actualizar; el ID no cambia y se conservan
+el almacenamiento y las excepciones por sitio.
 
 ## Uso y actualización
 

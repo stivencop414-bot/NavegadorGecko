@@ -1,16 +1,20 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 android {
     namespace = "com.ejemplo.navegador"
-    compileSdk = 36
+    // GeckoView 159 exige compilar contra Android 37.2 (versión menor de API).
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 2
+        }
+    }
     defaultConfig {
         applicationId = "com.ejemplo.navegador"
         minSdk = 26
         targetSdk = 34
-        versionCode = 29
-        versionName = "0.14.1"
+        versionCode = 30
+        versionName = "0.15.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -28,6 +32,14 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+    }
+    packaging {
+        jniLibs {
+            // Como Firefox para Android: el motor Gecko (libxul.so, ~150 MB)
+            // va comprimido dentro del APK. El APK pasa de ~216 MB a ~100 MB;
+            // Android extrae las librerías una sola vez al instalar.
+            useLegacyPackaging = true
         }
     }
     splits {
@@ -54,8 +66,8 @@ kotlin {
 
 dependencies {
     implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.10"))
-    implementation("org.mozilla.geckoview:geckoview-omni:153.0.20260715202819")
-    implementation("androidx.core:core:1.13.1")
+    implementation("org.mozilla.geckoview:geckoview-omni:159.0.20261102144711")
+    implementation("androidx.core:core:1.19.1")
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.google.mlkit:translate:17.0.3")
     implementation("com.google.mlkit:language-id:17.0.6")

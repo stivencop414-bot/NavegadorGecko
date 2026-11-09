@@ -14,4 +14,9 @@
     <string name="seek_forward">Avanzar 10 segundos</string>
     <string name="bundled_extension">Integrada</string>
     <string name="bundled_extension_updates">Incluida con Nexo. Puedes desactivarla; sus actualizaciones llegan con la app.</string>
+    <string name="find_in_page_hint">Buscar en la página</string>
+    <string name="find_previous">Resultado anterior</string>
+    <string name="find_next">Resultado siguiente</string>
+    <string name="find_close">Cerrar búsqueda</string>
+    <string name="default_browser">Usar Nexo como navegador predeterminado</string>
 </resources>

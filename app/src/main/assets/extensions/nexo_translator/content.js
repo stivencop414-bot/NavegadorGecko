@@ -4,6 +4,8 @@
   const NATIVE_APP = "cloud_translator";
   const MAX_ITEMS = 80;
   const MAX_CHARS = 12000;
+  // Un único nodo enorme superaba el límite del lote y hacía fallar toda la página.
+  const MAX_NODE_CHARS = 4000;
   // La primera vez ML Kit puede descargar el modelo del idioma.
   const BATCH_TIMEOUT_MS = 120000;
   let port = null;
@@ -31,6 +33,7 @@
 
     const raw = node.textContent || "";
     const core = raw.trim();
+    if (core.length > MAX_NODE_CHARS) return false;
     if (!core || !/[A-Za-zÀ-ÿ\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u3040-\u30FF\u3400-\u9FFF]/u.test(core)) {
       return false;
     }

@@ -37,6 +37,37 @@ class UrlSafetyTest {
     }
 
     @Test
+    fun appLinksAreHandedToOtherAppsButCodeAndFilesNever() {
+        listOf(
+            "tel:+573001234567",
+            "mailto:hola@example.com",
+            "sms:123",
+            "geo:4.6,-74.08",
+            "market://details?id=org.example",
+            "intent://scan#Intent;scheme=zxing;package=com.google.zxing.client.android;end",
+            "whatsapp://send?text=hola",
+            " TEL:123"
+        ).forEach { assertTrue(it, UrlSafety.isExternalAppUrl(it)) }
+
+        listOf(
+            "https://example.com",
+            "http://example.com",
+            "about:blank",
+            "moz-extension://abc/popup.html",
+            "javascript:alert(1)",
+            "java\tscript:alert(1)",
+            "data:text/html,x",
+            "blob:https://example.com/123",
+            "file:///sdcard/x",
+            "content://media/1",
+            "view-source:https://example.com",
+            "resource://android/assets/x",
+            "example.com/no-scheme",
+            ""
+        ).forEach { assertFalse(it, UrlSafety.isExternalAppUrl(it)) }
+    }
+
+    @Test
     fun externalIntentsOnlyOpenWebUrls() {
         assertTrue(UrlSafety.isExternallyOpenable("https://example.com"))
         assertTrue(UrlSafety.isExternallyOpenable("HTTP://example.com"))

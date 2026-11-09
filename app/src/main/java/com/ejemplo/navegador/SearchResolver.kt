@@ -5,20 +5,31 @@ import android.net.Uri
 import java.net.URLEncoder
 
 object SearchResolver {
-    private val domain = Regex("""^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+([/:?#].*)?$""")
-    private val ipv4 = Regex("""^(\d{1,3}\.){3}\d{1,3}(:\d+)?(/.*)?$""")
+    // El último segmento (TLD) debe empezar por letra: "3.14" es una búsqueda.
+    private val domain = Regex(
+        """^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*\.[a-zA-Z][a-zA-Z0-9-]*\.?(:\d{1,5})?([/?#].*)?$"""
+    )
+    private val ipv4 = Regex("""^(\d{1,3}\.){3}\d{1,3}(:\d{1,5})?([/?#].*)?$""")
+    private val localhost = Regex("""^localhost(:\d{1,5})?([/?#].*)?$""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Dirección escrita sin esquema, o null si es una búsqueda. Red local
+     * (localhost, IP) usa http: routers y servidores de desarrollo no suelen
+     * tener https.
+     */
+    fun addressFor(input: String): String? =
+        when {
+            localhost.matches(input) || ipv4.matches(input) -> "http://$input"
+            domain.matches(input) -> "https://$input"
+            else -> null
+        }
 
     fun resolve(context: Context, inputRaw: String): String {
         val input = inputRaw.trim()
         if (input.isBlank()) return BrowserPrefs.homePage(context)
 
         // Resolver primero hosts sin esquema (incluido localhost:puerto).
-        if (
-            input.equals("localhost", true) ||
-            input.startsWith("localhost:", true) ||
-            domain.matches(input) ||
-            ipv4.matches(input)
-        ) return "https://$input"
+        addressFor(input)?.let { return it }
 
         val parsed = runCatching { Uri.parse(input) }.getOrNull()
         val scheme = parsed?.scheme?.lowercase()

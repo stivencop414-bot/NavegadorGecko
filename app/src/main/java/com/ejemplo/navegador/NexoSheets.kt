@@ -63,8 +63,9 @@ object NexoSheets {
         )
 
         sheet.addView(
-            ScrollView(activity).apply {
+            MaxHeightScrollView(activity, (activity.resources.displayMetrics.heightPixels * 0.82f).toInt()).apply {
                 isVerticalScrollBarEnabled = false
+                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
                 addView(content)
             },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -225,6 +226,15 @@ object NexoSheets {
             orientation = LinearLayout.VERTICAL
             views.forEach { addView(it) }
         }
+}
+
+/** ScrollView con altura máxima: la hoja nunca tapa toda la pantalla. */
+private class MaxHeightScrollView(context: android.content.Context, private val maxHeight: Int) : ScrollView(context) {
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val size = View.MeasureSpec.getSize(heightMeasureSpec)
+        val limit = if (size > 0) minOf(size, maxHeight) else maxHeight
+        super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(limit, View.MeasureSpec.AT_MOST))
+    }
 }
 
 /** Utilidad mínima de color sin depender de androidx en este archivo. */
