@@ -53,6 +53,17 @@ versiones podrán instalarse encima conservando los datos, sujeto a comprobarlo 
 
 ## Publicación y validación
 
+Antes de preparar una actualización, revisar también las ramas con trabajo reciente:
+el entorno puede tener configurado `git fetch origin` para traer únicamente `main`.
+`git fetch origin '+refs/heads/*:refs/remotes/origin/*' --tags --prune` permite inspeccionarlas.
+Un PR fusionado no incorpora los commits añadidos después a su rama. Comparar esos cambios
+con `main` y resolver su integración antes de elegir la versión. El `versionCode` nuevo
+debe superar al del APK más reciente distribuido, también si salió de otra rama.
+
+Nexo 0.15.3 integra las correcciones de arranque y diagnóstico de la rama 0.15.2
+(versionCode 32) junto con la interfaz y traducción en línea de `main`. Usa versionCode 33;
+no recupera los modelos ML Kit retirados ni cambia la identidad de firma.
+
 Tras revisar y fusionar el PR: **Nexo Secure CI and Release → Run workflow**, desde `main`,
 `mode=release`, tag vacío. Conservar los cuatro secrets y el respaldo privado para todas las
 versiones. Si el tag ya existe, corregir y publicar una versión nueva; no borrar releases.
