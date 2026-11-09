@@ -44,8 +44,16 @@ object TranslatorManager {
     private val pending =
         IdentityHashMap<GeckoSession, PendingRequest>()
 
-    private val languageIdentifier =
-        LanguageIdentification.getClient()
+    /*
+     * Se crea al traducir por primera vez, no al cargar la clase: si ML Kit
+     * fallara (p. ej. un registrador eliminado por R8, Nexo 0.15.0), solo
+     * deja de funcionar "Traducir"; el navegador sigue abriendo.
+     */
+    private val languageIdentifier by lazy {
+        runCatching { LanguageIdentification.getClient() }
+            .onFailure { Log.e("NexoTranslator", "ML Kit no está disponible", it) }
+            .getOrNull()
+    }
 
     /*
      * Un traductor por par de idiomas, reutilizado entre lotes y páginas.
@@ -369,7 +377,13 @@ object TranslatorManager {
             .joinToString(" ")
             .take(4000)
 
-        languageIdentifier
+        val identifier = languageIdentifier
+        if (identifier == null) {
+            onError("La traducción en el dispositivo no está disponible en este equipo.")
+            return
+        }
+
+        identifier
             .identifyLanguage(sample)
             .addOnSuccessListener { detectedTag ->
                 val sourceTag =

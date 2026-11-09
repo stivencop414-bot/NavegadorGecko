@@ -81,6 +81,7 @@ object CrashLog {
                 error.printStackTrace(PrintWriter(writer))
 
                 val raw = buildString {
+                    appendLine("Versión: ${appVersion(app)}")
                     appendLine("Hilo: ${thread.name.take(80)}")
                     appendLine("Tipo: ${error.javaClass.name}")
                     appendLine("Mensaje: ${error.message ?: "(sin mensaje)"}")
@@ -130,10 +131,20 @@ object CrashLog {
         return clean
     }
 
+    fun appVersion(context: Context): String =
+        runCatching {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            "${info.versionName} (${androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(info)})"
+        }.getOrDefault("?")
+
     fun consume(context: Context): String? {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val value = prefs.getString(KEY_LAST, null)
         if (value != null) prefs.edit().remove(KEY_LAST).apply()
         return value
     }
+
+    /** true si el informe es de la versión instalada ahora (y no de una anterior). */
+    fun isFromCurrentVersion(context: Context, report: String): Boolean =
+        report.lineSequence().firstOrNull() == "Versión: ${appVersion(context)}"
 }
