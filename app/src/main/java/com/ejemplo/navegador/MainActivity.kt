@@ -129,9 +129,19 @@ class MainActivity :
         setContentView(R.layout.activity_main)
 
         CrashLog.consume(this)?.let { crash ->
+            // Tras actualizar se muestra el cierre guardado por la versión
+            // anterior: indicarlo para no confundirlo con un fallo nuevo.
+            val current = CrashLog.isFromCurrentVersion(this, crash)
             AlertDialog.Builder(this)
-                .setTitle("Nexo detectó un cierre inesperado")
-                .setMessage(crash.take(8000))
+                .setTitle(
+                    if (current) "Nexo detectó un cierre inesperado"
+                    else "Cierre de una versión anterior de Nexo"
+                )
+                .setMessage(
+                    if (current) crash.take(8000)
+                    else "Este informe es de antes de actualizar; la versión instalada ya puede " +
+                        "incluir la corrección.\n\n" + crash.take(8000)
+                )
                 .setNegativeButton("Cerrar", null)
                 .setPositiveButton("Copiar") { _, _ ->
                     copyText("Nexo crash", crash)

@@ -13,8 +13,8 @@ android {
         applicationId = "com.ejemplo.navegador"
         minSdk = 26
         targetSdk = 34
-        versionCode = 31
-        versionName = "0.15.1"
+        versionCode = 33
+        versionName = "0.15.3"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -54,6 +54,13 @@ android {
         compose = false
         viewBinding = false
         buildConfig = false
+    }
+}
+androidComponents {
+    // AGP 9 does not create this release test component by default. The release
+    // workflow runs it explicitly, so keep those tests enabled for both variants.
+    beforeVariants(selector().withBuildType("release")) { variant ->
+        variant.hostTests.getValue(com.android.build.api.variant.HostTestBuilder.UNIT_TEST_TYPE).enable = true
     }
 }
 kotlin {
