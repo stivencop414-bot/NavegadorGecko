@@ -20,6 +20,8 @@ object GeckoRuntimeHolder {
                     .consoleOutput(false)
                     .javaScriptEnabled(true)
                     .largeKeepaliveFactor(2)
+                    // Los sitios con modo oscuro siguen el tema de Nexo.
+                    .preferredColorScheme(colorScheme(context))
 
 
                 GeckoRuntime.create(
@@ -52,8 +54,17 @@ object GeckoRuntimeHolder {
         runCatching { webExecutor(context).speculativeConnect(url) }
     }
 
+    private fun colorScheme(context: Context): Int =
+        when (BrowserPrefs.theme(context)) {
+            BrowserPrefs.THEME_LIGHT -> GeckoRuntimeSettings.COLOR_SCHEME_LIGHT
+            BrowserPrefs.THEME_SYSTEM -> GeckoRuntimeSettings.COLOR_SCHEME_SYSTEM
+            else -> GeckoRuntimeSettings.COLOR_SCHEME_DARK
+        }
+
     fun applyRuntimePrefs(context: Context) {
         val settings = runtime?.settings ?: return
+
+        settings.setPreferredColorScheme(colorScheme(context))
 
         when (BrowserPrefs.dnsProvider(context)) {
             BrowserPrefs.DNS_CLOUDFLARE -> {

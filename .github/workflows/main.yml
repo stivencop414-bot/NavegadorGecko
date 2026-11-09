@@ -36,9 +36,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  ANDROID_PLATFORM: "36"
-  BUILD_TOOLS: "36.0.0"
-  GRADLE_VERSION: "8.14.4"
+  # GeckoView 159 exige compileSdk 37 y Android Gradle Plugin 9.
+  ANDROID_PLATFORM: "37.2"
+  BUILD_TOOLS: "37.0.0"
+  GRADLE_VERSION: "9.8.2"
 
 jobs:
   ci:
@@ -81,11 +82,11 @@ jobs:
       - name: Extension regression tests
         run: node --test app/src/test/js/*.test.cjs
 
-      - name: Java 17
+      - name: Java 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       - name: Android SDK
         uses: android-actions/setup-android@v3
@@ -199,11 +200,11 @@ jobs:
       - name: Extension regression tests
         run: node --test app/src/test/js/*.test.cjs
 
-      - name: Java 17
+      - name: Java 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       - name: Android SDK
         uses: android-actions/setup-android@v3

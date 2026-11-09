@@ -61,3 +61,24 @@ Verificar SHA256SUMS, certificado, instalación sobre una versión de la misma l
 conservación del historial/pestañas, PiP, descargas y traducción. El keystore no debe incluirse
 nunca en los artefactos subidos ni en el código fuente. Los tests locales verificaron la firma
 y los assets del APK; la migración de datos y la instalación en un teléfono siguen pendientes.
+
+## Firmar localmente (sin CI)
+
+Con el respaldo privado fuera del repositorio y las contraseñas en variables de entorno
+(nunca en archivos versionados):
+
+```bash
+gradle :app:assembleRelease
+export KEYSTORE_PASSWORD='…' KEY_PASSWORD='…'
+APKSIGNER="$ANDROID_HOME/build-tools/37.0.0/apksigner"
+for abi in arm64-v8a armeabi-v7a; do
+  "$APKSIGNER" sign --ks /ruta/privada/nexo-release.jks --ks-key-alias nexo \
+    --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD \
+    --out "Nexo-$abi.apk" "app/build/outputs/apk/release/app-$abi-release-unsigned.apk"
+  python3 tools/verify_apk_signature.py --apksigner "$APKSIGNER" \
+    --certificate config/android-signing-certificate.sha256 "Nexo-$abi.apk"
+done
+```
+
+`tools/verify_apk_signature.py` acepta la salida de apksigner 36 (`Signer #1 …`) y la de
+apksigner 37 (`V3.0 Signer: …`); exige un único firmante con la huella fijada.

@@ -202,6 +202,8 @@
 
     <ListView
         android:id="@+id/storeList"
+        android:listSelector="@android:color/transparent"
+        android:drawSelectorOnTop="false"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_marginTop="10dp"

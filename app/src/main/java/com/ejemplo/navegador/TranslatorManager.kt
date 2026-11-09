@@ -47,6 +47,38 @@ object TranslatorManager {
     private val languageIdentifier =
         LanguageIdentification.getClient()
 
+    /*
+     * Un traductor por par de idiomas, reutilizado entre lotes y páginas.
+     * Antes se creaba (y cargaba el modelo) en cada lote de 80 textos.
+     * Se liberan tras un minuto sin uso.
+     */
+    private val translators = HashMap<String, Translator>()
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val idleClose = Runnable { closeTranslators() }
+    private const val TRANSLATOR_IDLE_MS = 60_000L
+
+    /** Último idioma detectado: los lotes cortos a veces no se pueden identificar. */
+    private var lastSourceLanguage: String? = null
+
+    private fun translatorFor(source: String, target: String): Translator {
+        main.removeCallbacks(idleClose)
+        main.postDelayed(idleClose, TRANSLATOR_IDLE_MS)
+        return translators.getOrPut("$source>$target") {
+            Translation.getClient(
+                TranslatorOptions.Builder()
+                    .setSourceLanguage(source)
+                    .setTargetLanguage(target)
+                    .build()
+            )
+        }
+    }
+
+    fun closeTranslators() {
+        main.removeCallbacks(idleClose)
+        translators.values.forEach { runCatching { it.close() } }
+        translators.clear()
+    }
+
     private var extension: WebExtension? = null
     private var initialized = false
 
@@ -339,8 +371,11 @@ object TranslatorManager {
 
         languageIdentifier
             .identifyLanguage(sample)
-            .addOnSuccessListener { sourceTag ->
-                if (sourceTag == "und") {
+            .addOnSuccessListener { detectedTag ->
+                val sourceTag =
+                    if (detectedTag == "und") lastSourceLanguage else detectedTag
+
+                if (sourceTag == null) {
                     onError(
                         "No pude identificar el idioma de la página."
                     )
@@ -359,19 +394,14 @@ object TranslatorManager {
                     return@addOnSuccessListener
                 }
 
+                lastSourceLanguage = sourceTag
+
                 if (source == target) {
                     onSuccess(texts)
                     return@addOnSuccessListener
                 }
 
-                val options =
-                    TranslatorOptions.Builder()
-                        .setSourceLanguage(source)
-                        .setTargetLanguage(target)
-                        .build()
-
-                val translator =
-                    Translation.getClient(options)
+                val translator = translatorFor(source, target)
 
                 val conditions =
                     DownloadConditions.Builder()
@@ -385,18 +415,11 @@ object TranslatorManager {
                             texts,
                             0,
                             ArrayList(texts.size),
-                            onSuccess = {
-                                translator.close()
-                                onSuccess(it)
-                            },
-                            onError = {
-                                translator.close()
-                                onError(it)
-                            }
+                            onSuccess = onSuccess,
+                            onError = onError
                         )
                     }
                     .addOnFailureListener { error ->
-                        translator.close()
                         onError(
                             "No pude descargar el modelo de idioma: " +
                                 (error.message

@@ -68,6 +68,8 @@
         <item name="android:textColorHighlight">#7C3AED55</item>
         <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Violet</item>
         <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Violet</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Violet</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Violet</item>
     </style>
 
     <style name="Theme.Nexo.Dialog.Light.Cyan" parent="Theme.Nexo.DialogBase.Light">
@@ -82,6 +84,8 @@
         <item name="android:textColorHighlight">#06B6D455</item>
         <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Cyan</item>
         <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Cyan</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Cyan</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Cyan</item>
     </style>
 
     <style name="Theme.Nexo.Dialog.Light.Lime" parent="Theme.Nexo.DialogBase.Light">
@@ -96,6 +100,8 @@
         <item name="android:textColorHighlight">#22C55E55</item>
         <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Lime</item>
         <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Lime</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Lime</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Lime</item>
     </style>
 
     <style name="Theme.Nexo.Dialog.Light.Orange" parent="Theme.Nexo.DialogBase.Light">
@@ -110,6 +116,8 @@
         <item name="android:textColorHighlight">#F9731655</item>
         <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Orange</item>
         <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Orange</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Orange</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Orange</item>
     </style>
 
     <style name="Theme.Nexo.Dialog.Light.Pink" parent="Theme.Nexo.DialogBase.Light">
@@ -124,6 +132,8 @@
         <item name="android:textColorHighlight">#EC489955</item>
         <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Pink</item>
         <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Pink</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Pink</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Pink</item>
     </style>
 
     <style name="Theme.Nexo.Dialog.Light.Red" parent="Theme.Nexo.DialogBase.Light">
@@ -138,6 +148,8 @@
         <item name="android:textColorHighlight">#EF444455</item>
         <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Red</item>
         <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Red</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Red</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Red</item>
     </style>
 
     <style name="Theme.Nexo.Dialog.Dark.Violet" parent="Theme.Nexo.DialogBase.Dark">
@@ -152,6 +164,8 @@
         <item name="android:textColorHighlight">#7C3AED55</item>
         <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Violet</item>
         <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Violet</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Violet</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Violet</item>
     </style>
 
     <style name="Theme.Nexo.Dialog.Dark.Cyan" parent="Theme.Nexo.DialogBase.Dark">
@@ -166,6 +180,8 @@
         <item name="android:textColorHighlight">#06B6D455</item>
         <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Cyan</item>
         <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Cyan</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Cyan</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Cyan</item>
     </style>
 
     <style name="Theme.Nexo.Dialog.Dark.Lime" parent="Theme.Nexo.DialogBase.Dark">
@@ -180,6 +196,8 @@
         <item name="android:textColorHighlight">#22C55E55</item>
         <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Lime</item>
         <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Lime</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Lime</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Lime</item>
     </style>
 
     <style name="Theme.Nexo.Dialog.Dark.Orange" parent="Theme.Nexo.DialogBase.Dark">
@@ -194,6 +212,8 @@
         <item name="android:textColorHighlight">#F9731655</item>
         <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Orange</item>
         <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Orange</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Orange</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Orange</item>
     </style>
 
     <style name="Theme.Nexo.Dialog.Dark.Pink" parent="Theme.Nexo.DialogBase.Dark">
@@ -208,6 +228,8 @@
         <item name="android:textColorHighlight">#EC489955</item>
         <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Pink</item>
         <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Pink</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Pink</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Pink</item>
     </style>
 
     <style name="Theme.Nexo.Dialog.Dark.Red" parent="Theme.Nexo.DialogBase.Dark">
@@ -222,6 +244,8 @@
         <item name="android:textColorHighlight">#EF444455</item>
         <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Red</item>
         <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Red</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Red</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Red</item>
     </style>
 
 </resources>

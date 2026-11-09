@@ -122,6 +122,46 @@ object ExtensionManager {
         promptActivity = WeakReference(activity)
     }
 
+    /**
+     * Desvincula [activity] solo si sigue siendo la actual. Al volver de
+     * Extensiones, su onDestroy llega DESPUÉS del onResume de la pantalla
+     * anterior: limpiar sin comprobar dejaba a Nexo sin pantalla para los
+     * paneles y avisos de instalación (se cancelaban solos).
+     */
+    fun detachPromptActivity(activity: Activity) {
+        if (promptActivity.get() !== activity) return
+        extensionPopup?.let { popup ->
+            if (popup.ownerActivity === activity || popup.ownerActivity == null) popup.dismiss()
+        }
+        promptActivity = WeakReference(null)
+    }
+
+    /** Extensiones conocidas (instaladas/integradas), para no listar en cada pestaña. */
+    private val known = linkedMapOf<String, WebExtension>()
+
+    /** Acción pedida desde otra pantalla: se ejecuta al volver al navegador. */
+    private var pendingActionId: String? = null
+
+    fun requestActionInBrowser(extension: WebExtension) {
+        pendingActionId = extension.id
+    }
+
+    /** Llamar en MainActivity.onResume: ejecuta la acción pendiente sobre la pestaña. */
+    fun consumePendingAction(onDone: (Boolean, String) -> Unit) {
+        val id = pendingActionId ?: return
+        pendingActionId = null
+        known[id]?.let { runAction(it, onDone) }
+    }
+
+    /** Extensiones activas que tienen botón (browser_action/page_action). */
+    fun actionableExtensions(): List<WebExtension> {
+        val session = TabManager.activeSession()
+        return known.values.filter { ext ->
+            ext.metaData.enabled &&
+                (defaultActions.containsKey(ext.id) || session?.let { sessionActions[it]?.containsKey(ext.id) } == true)
+        }
+    }
+
     fun setTabActive(
         session: GeckoSession,
         active: Boolean
@@ -236,26 +276,9 @@ object ExtensionManager {
             bindBridgeToSession(it, session)
         }
 
-        GeckoRuntimeHolder.get(AppContext.get())
-            .webExtensionController
-            .list()
-            .accept(
-                { extensions ->
-                    extensions.orEmpty()
-                        .filter {
-                            it.id != BRIDGE_ID &&
-                                it.id != TranslatorManager.TRANSLATOR_ID
-                        }
-                        .forEach { bindExtensionToSession(it, session) }
-                },
-                { error ->
-                    android.util.Log.e(
-                        "NexoExtensions",
-                        "No se pudieron enlazar extensiones",
-                        error
-                    )
-                }
-            )
+        // Las extensiones que se registren después se enlazan en
+        // registerExtension(); aquí basta con las ya conocidas.
+        known.values.forEach { bindExtensionToSession(it, session) }
     }
 
     fun list(
@@ -923,7 +946,10 @@ object ExtensionManager {
             .webExtensionController
             .uninstall(extension)
             .accept(
-                { onDone(true, "Extensión desinstalada") },
+                {
+                    forget(extension.id)
+                    onDone(true, "Extensión desinstalada")
+                },
                 { onDone(false, it?.message ?: "No se pudo desinstalar") }
             )
     }
@@ -1058,6 +1084,8 @@ object ExtensionManager {
         ) {
             return
         }
+
+        known[extension.id] = extension
 
         extension.setActionDelegate(
             extensionActionDelegate
@@ -1210,10 +1238,24 @@ object ExtensionManager {
         }
     }
 
-    private fun createExtensionPopupSession(): GeckoResult<GeckoSession>? {
+    /**
+     * Panel (popup) de una extensión como hoja inferior.
+     *
+     * La GeckoView normal es un SurfaceView: se dibuja por encima de la
+     * ventana y NO respeta esquinas redondeadas, por eso el panel se veía
+     * cuadrado y con esquinas de otro color (el fondo oscuro de la página
+     * sobre la tarjeta clara). Con el backend TextureView y un contorno
+     * recortado, la página queda dentro de las esquinas de la hoja.
+     */
+    private fun createExtensionPopupSession(extension: WebExtension?): GeckoResult<GeckoSession>? {
         val activity = promptActivity.get() ?: return null
         if (activity.isFinishing || activity.isDestroyed) return null
         extensionPopup?.dismiss()
+
+        val p = ThemeManager.palette(activity)
+        val density = activity.resources.displayMetrics.density
+        fun dp(value: Float) = (value * density).toInt()
+        val radius = 24f * density
 
         // Un popup no es una pestaña: tabs.query(active:true) debe seguir
         // devolviendo la página que la extensión va a controlar.
@@ -1228,12 +1270,76 @@ object ExtensionManager {
                 request: GeckoSession.NavigationDelegate.LoadRequest
             ): GeckoResult<AllowOrDeny> =
                 if (UrlSafety.isExtensionTabUrl(request.uri)) GeckoResult.allow() else GeckoResult.deny()
+
+            // Enlaces del panel con target=_blank: abrir como pestaña normal.
+            override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
+                if (UrlSafety.isExtensionTabUrl(uri) && !uri.equals("about:blank", true)) {
+                    extensionPopup?.dismiss()
+                    TabManager.createTab(uri)
+                }
+                return null
+            }
         })
+        session.setPromptDelegate(PagePrompts)
         session.open(GeckoRuntimeHolder.get(activity))
-        val view = GeckoView(activity).apply { setSession(session) }
-        val dialog = Dialog(activity).apply {
+        runCatching { session.compositorController.setClearColor(p.surface) }
+
+        val view = GeckoView(activity).apply {
+            setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
+            setSession(session)
+        }
+
+        val sheet = android.widget.LinearLayout(activity).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(p.surface)
+                cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
+            }
+            // Contorno con solo las esquinas superiores redondeadas: el
+            // rectángulo se extiende bajo el borde inferior, así el recorte
+            // funciona en todas las versiones de Android.
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(target: android.view.View, outline: android.graphics.Outline) {
+                    outline.setRoundRect(0, 0, target.width, target.height + radius.toInt(), radius)
+                }
+            }
+            clipToOutline = true
+        }
+
+        // Asa + nombre de la extensión + cerrar.
+        sheet.addView(android.view.View(activity).apply {
+            background = ThemeManager.rounded(activity, p.outline, 3f)
+        }, android.widget.LinearLayout.LayoutParams(dp(36f), dp(4f)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            topMargin = dp(10f)
+        })
+        val dialog = Dialog(activity)
+        val header = android.widget.LinearLayout(activity).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(20f), dp(2f), dp(8f), dp(2f))
+            addView(android.widget.TextView(activity).apply {
+                text = extension?.metaData?.name ?: "Extensión"
+                textSize = 15f
+                setTextColor(p.text)
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }, android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(android.widget.ImageButton(activity).apply {
+                setImageResource(R.drawable.ic_menu_close)
+                contentDescription = "Cerrar"
+                ThemeManager.styleIconButton(activity, this)
+                imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
+                setOnClickListener { dialog.dismiss() }
+            }, android.widget.LinearLayout.LayoutParams(dp(44f), dp(44f)))
+        }
+        sheet.addView(header)
+        sheet.addView(view, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        dialog.apply {
             requestWindowFeature(Window.FEATURE_NO_TITLE)
-            setContentView(view)
+            setContentView(sheet)
             setOnDismissListener {
                 view.releaseSession()
                 session.close()
@@ -1246,9 +1352,17 @@ object ExtensionManager {
         extensionPopup = dialog
         dialog.show()
         dialog.window?.apply {
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, (activity.resources.displayMetrics.heightPixels * 0.8f).toInt())
+            val metrics = activity.resources.displayMetrics
+            val height = minOf((metrics.heightPixels * 0.85f).toInt(), dp(720f))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, height)
             setGravity(Gravity.BOTTOM)
-            setBackgroundDrawable(ThemeManager.rounded(activity, ThemeManager.palette(activity).surface, 20f))
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0.45f)
+            setWindowAnimations(android.R.style.Animation_InputMethod)
+            setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            @Suppress("DEPRECATION")
+            navigationBarColor = p.surface
         }
         return GeckoResult.fromValue(session)
     }
@@ -1285,13 +1399,19 @@ object ExtensionManager {
                 extension: WebExtension,
                 action: WebExtension.Action
             ): GeckoResult<GeckoSession>? =
-                createExtensionPopupSession()
+                createExtensionPopupSession(extension)
 
             override fun onTogglePopup(
                 extension: WebExtension,
                 action: WebExtension.Action
-            ): GeckoResult<GeckoSession>? =
-                createExtensionPopupSession()
+            ): GeckoResult<GeckoSession>? {
+                // Tocar otra vez el botón cierra el panel abierto.
+                extensionPopup?.let {
+                    it.dismiss()
+                    return null
+                }
+                return createExtensionPopupSession(extension)
+            }
         }
 
     /*
@@ -1414,7 +1534,21 @@ object ExtensionManager {
             ) {
                 registerExtension(extension)
             }
+
+            override fun onDisabled(extension: WebExtension) {
+                known[extension.id] = extension
+            }
+
+            override fun onUninstalled(extension: WebExtension) {
+                forget(extension.id)
+            }
         }
+
+    private fun forget(id: String) {
+        known.remove(id)
+        defaultActions.remove(id)
+        sessionActions.values.forEach { it.remove(id) }
+    }
 
     /* GeckoView 153 PromptDelegate */
     private val promptDelegate =

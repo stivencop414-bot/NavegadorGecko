@@ -40,6 +40,19 @@ class HistoryActivity : Activity() {
         listView.setOnItemClickListener { _, _, position, _ ->
             entries.getOrNull(position)?.let { open(it.url) }
         }
+        listView.setOnItemLongClickListener { _, _, position, _ ->
+            val entry = entries.getOrNull(position) ?: return@setOnItemLongClickListener true
+            AlertDialog.Builder(this)
+                .setTitle("Quitar del historial")
+                .setMessage(entry.title.ifBlank { entry.url })
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Quitar") { _, _ ->
+                    HistoryStore.remove(this, entry.url)
+                    refresh()
+                }
+                .show()
+            true
+        }
         applyTheme()
     }
 

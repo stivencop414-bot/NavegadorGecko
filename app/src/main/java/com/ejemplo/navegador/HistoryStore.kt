@@ -19,6 +19,9 @@ object HistoryStore {
         Thread(task, "NexoHistory").apply { isDaemon = true }
     }
 
+    /** Copia en memoria: la página de inicio y cada carga no vuelven a leer el JSON. */
+    @Volatile private var cache: List<HistoryEntry>? = null
+
     /** Se llama al terminar cada carga: no bloquear el hilo principal. */
     fun add(context: Context, rawUrl: String, title: String) {
         val app = context.applicationContext
@@ -41,6 +44,7 @@ object HistoryStore {
 
     @Synchronized
     fun list(context: Context): List<HistoryEntry> {
+        cache?.let { return it }
         val raw = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .getString(KEY, "[]") ?: "[]"
 
@@ -58,16 +62,25 @@ object HistoryStore {
                     )
                 }
             }
-        }.getOrDefault(emptyList())
+        }.getOrDefault(emptyList()).also { cache = it }
     }
 
     @Synchronized
     fun clear(context: Context) {
+        cache = emptyList()
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putString(KEY, "[]").apply()
     }
 
+    /** Borra una sola entrada (mantener pulsado en Historial). */
+    @Synchronized
+    fun remove(context: Context, url: String) {
+        val items = list(context).filterNot { it.url == url }
+        save(context, items)
+    }
+
     private fun save(context: Context, items: List<HistoryEntry>) {
+        cache = items
         val arr = JSONArray()
         items.forEach {
             arr.put(JSONObject().apply {

@@ -72,7 +72,7 @@ class ExtensionsActivity : Activity() {
     }
 
     override fun onDestroy() {
-        ExtensionManager.attachPromptActivity(null)
+        ExtensionManager.detachPromptActivity(this)
         super.onDestroy()
     }
 
@@ -310,8 +310,13 @@ class ExtensionsActivity : Activity() {
 
         val actions = mutableListOf<SheetAction>()
         if (meta.enabled) {
-            actions += SheetAction(R.drawable.ic_menu_play, "Ejecutar en esta pestaña") {
-                ExtensionManager.runAction(extension) { _, message -> toast(message) }
+            actions += SheetAction(R.drawable.ic_menu_play, "Abrir sobre la página actual") {
+                // El panel se abre sobre la pestaña, no sobre esta pantalla.
+                ExtensionManager.requestActionInBrowser(extension)
+                startActivity(
+                    Intent(this, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                )
             }
         }
         meta.optionsPageUrl?.takeIf { it.isNotBlank() }?.let { url ->

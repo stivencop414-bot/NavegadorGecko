@@ -6,6 +6,7 @@ import android.app.AlertDialog
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
+import android.app.SearchManager
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
 import android.graphics.drawable.Icon
@@ -30,6 +31,7 @@ import android.view.WindowInsetsController
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.HorizontalScrollView
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -41,7 +43,11 @@ import androidx.core.content.ContextCompat
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
 
-class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Listener {
+class MainActivity :
+    Activity(),
+    TabManager.Listener,
+    BrowserMediaController.Listener,
+    BrowserHost {
     private lateinit var geckoView: GeckoView
     private lateinit var omnibox: EditText
     private lateinit var progress: ProgressBar
@@ -84,6 +90,22 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     private var fullScreenActive = false
     private var pendingPipEntry: Runnable? = null
 
+    // Selector de archivos y permisos pedidos por páginas web.
+    private var filePickerCallback: ((List<Uri>) -> Unit)? = null
+    private val permissionCallbacks = mutableMapOf<Int, (Boolean) -> Unit>()
+    private var nextPermissionRequest = REQUEST_SITE_PERMISSIONS
+
+    // Buscar en la página.
+    private lateinit var findBar: View
+    private lateinit var findInput: EditText
+    private lateinit var findCount: TextView
+
+    /** Última miniatura automática por pestaña (evita capturar en cada carga). */
+    private val lastAutoPreview = mutableMapOf<String, Long>()
+    private val idlePreview = Runnable { captureCurrentTabPreview() }
+
+    override val hostActivity: Activity get() = this
+
     /** Botones reproducir/pausar de la ventana PiP. */
     private val pipControlReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -118,6 +140,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         }
 
         viewModel = BrowserViewModel(applicationContext)
+        BrowserHosts.attach(this)
         bindViews()
         BrowserMediaController.attach(this)
         applyTheme()
@@ -169,6 +192,9 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         clearOmniboxButton = findViewById(R.id.clearOmniboxButton)
         privateBanner = findViewById(R.id.privateBanner)
         miniPlayerButton = findViewById(R.id.miniPlayerButton)
+        findBar = findViewById(R.id.findBar)
+        findInput = findViewById(R.id.findInput)
+        findCount = findViewById(R.id.findCount)
     }
 
     private fun configureUi() {
@@ -220,6 +246,70 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
                 tab?.let { renderOmnibox(it) }
             }
         }
+
+        findInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) = findInPage(restart = true)
+        })
+        findInput.setOnEditorActionListener { _, _, _ ->
+            findInPage()
+            true
+        }
+        findViewById<ImageButton>(R.id.findPrev).setOnClickListener { findInPage(backwards = true) }
+        findViewById<ImageButton>(R.id.findNext).setOnClickListener { findInPage() }
+        findViewById<ImageButton>(R.id.findClose).setOnClickListener { hideFindBar() }
+    }
+
+    // ---------------------------------------------------------------
+    // Buscar en la página
+    // ---------------------------------------------------------------
+
+    private fun showFindBar() {
+        if (BrowserPrefs.isNexoHome(TabManager.activeTab()?.url)) {
+            Toast.makeText(this, "Abre una página para buscar en ella", Toast.LENGTH_SHORT).show()
+            return
+        }
+        findBar.visibility = View.VISIBLE
+        findCount.text = ""
+        findInput.requestFocus()
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+            .showSoftInput(findInput, 0)
+        if (!findInput.text.isNullOrEmpty()) findInPage(restart = true)
+    }
+
+    private fun hideFindBar() {
+        if (findBar.visibility != View.VISIBLE) return
+        findBar.visibility = View.GONE
+        runCatching { TabManager.activeSession()?.finder?.clear() }
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(findInput.windowToken, 0)
+        findInput.clearFocus()
+    }
+
+    private fun findInPage(backwards: Boolean = false, restart: Boolean = false) {
+        val finder = TabManager.activeSession()?.finder ?: return
+        val term = findInput.text?.toString().orEmpty()
+        if (term.isEmpty()) {
+            runCatching { finder.clear() }
+            findCount.text = ""
+            return
+        }
+        runCatching {
+            finder.displayFlags = GeckoSession.FINDER_DISPLAY_HIGHLIGHT_ALL or
+                GeckoSession.FINDER_DISPLAY_DRAW_LINK_OUTLINE
+            // Repetir el mismo texto avanza al siguiente resultado.
+            if (restart) finder.clear()
+            finder.find(term, if (backwards) GeckoSession.FINDER_FIND_BACKWARDS else 0).accept(
+                { result ->
+                    findCount.text = when {
+                        result == null || !result.found -> "0/0"
+                        else -> "${result.current}/${result.total}"
+                    }
+                },
+                { findCount.text = "" }
+            )
+        }
     }
 
     private fun navigateOmnibox() {
@@ -257,7 +347,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             SheetAction(R.drawable.ic_menu_copy, "Copiar enlace") {
                 current?.let { copyText("Enlace", it.url) }
             },
-            SheetAction(R.drawable.ic_menu_tabs, "Pestañas") { showTabsDialog() },
+            SheetAction(R.drawable.ic_menu_find, "Buscar en página") { showFindBar() },
             SheetAction(R.drawable.ic_menu_settings, "Ajustes") { openScreen(SettingsActivity::class.java) },
             SheetAction(R.drawable.ic_menu_close, "Cerrar", danger = true) { viewModel.closeCurrentTab() }
         )
@@ -272,7 +362,79 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             ),
             NexoSheets.grid(this, actions, dismiss = dismiss)
         )
+        extensionShortcuts(dismiss)?.let { content.addView(it) }
         sheet = NexoSheets.show(this, content)
+    }
+
+    /** Botones de las extensiones activas (p. ej. el panel de PhantomShield). */
+    private fun extensionShortcuts(dismiss: () -> Unit): View? {
+        val items = ExtensionManager.actionableExtensions()
+        if (items.isEmpty()) return null
+        val p = ThemeManager.palette(this)
+        val d = resources.displayMetrics.density
+        fun dp(value: Float) = (value * d).toInt()
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(16f), 0, dp(16f), dp(4f))
+        }
+        items.take(10).forEach { extension ->
+            val icon = ImageView(this).apply {
+                setImageResource(R.drawable.ic_extension_placeholder)
+                imageTintList = android.content.res.ColorStateList.valueOf(p.accent)
+            }
+            ExtensionManager.loadIcon(extension, dp(40f)) { bitmap ->
+                if (bitmap != null) runOnUiThread {
+                    icon.imageTintList = null
+                    icon.setImageBitmap(bitmap)
+                }
+            }
+            val chip = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(dp(12f), 0, dp(14f), 0)
+                background = ThemeManager.ripple(
+                    this@MainActivity,
+                    ThemeManager.rounded(this@MainActivity, p.elevated, 20f),
+                    20f
+                )
+                isClickable = true
+                contentDescription = extension.metaData.name ?: extension.id
+                setOnClickListener {
+                    dismiss()
+                    ExtensionManager.runAction(extension) { ok, message ->
+                        if (!ok) runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
+                    }
+                }
+                addView(icon, LinearLayout.LayoutParams(dp(22f), dp(22f)).apply { marginEnd = dp(8f) })
+                addView(TextView(this@MainActivity).apply {
+                    text = extension.metaData.name ?: extension.id
+                    textSize = 13f
+                    setTextColor(p.text)
+                    maxLines = 1
+                    maxWidth = dp(150f)
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+            }
+            row.addView(chip, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(40f)
+            ).apply { marginEnd = dp(8f) })
+        }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                text = "Extensiones"
+                textSize = 12.5f
+                ThemeManager.styleSectionLabel(this@MainActivity, this)
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setPadding(dp(24f), dp(12f), dp(24f), dp(8f))
+            })
+            addView(HorizontalScrollView(this@MainActivity).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(row)
+            })
+        }
     }
 
     private fun openScreen(screen: Class<out Activity>) {
@@ -300,6 +462,20 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
                 { _ -> Unit }
             )
         }
+    }
+
+    /**
+     * Miniatura automática al terminar de cargar: como mucho una cada 30 s
+     * por pestaña y con la página ya asentada. Capturar la vista completa en
+     * cada carga costaba CPU y memoria (un bitmap de varios MB cada vez).
+     */
+    private fun scheduleIdlePreview(tab: BrowserTab) {
+        geckoView.removeCallbacks(idlePreview)
+        val last = lastAutoPreview[tab.id] ?: 0L
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - last < 30_000L) return
+        lastAutoPreview[tab.id] = now
+        geckoView.postDelayed(idlePreview, 1_500L)
     }
 
     private fun showTabsDialog() {
@@ -430,6 +606,13 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
             findViewById<ImageButton>(R.id.newTabButton)
         ).forEach { ThemeManager.styleIconButton(this, it) }
 
+        findBar.background = ThemeManager.barBackground(this, lineOnTop = false)
+        ThemeManager.styleEdit(this, findInput)
+        findCount.setTextColor(p.muted)
+        listOf(R.id.findPrev, R.id.findNext, R.id.findClose).forEach {
+            ThemeManager.styleIconButton(this, findViewById(it))
+        }
+
         privateBanner.setBackgroundColor(p.accentSoft)
         privateBanner.setTextColor(p.accent)
         progress.progressTintList = android.content.res.ColorStateList.valueOf(p.accent)
@@ -457,17 +640,21 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
      * (about:, moz-extension:…). Desde fuera solo se aceptan http/https.
      */
     private fun handleNavigationIntent(intent: Intent?) {
-        if (intent == null) return
-        val raw = intent
-            .getStringExtra(EXTRA_OPEN_URL)
+        if (intent == null || intent.getBooleanExtra(EXTRA_CONSUMED, false)) return
+        val internal = intent.component?.className == INTERNAL_OPEN_ALIAS
+
+        val raw = (
+            if (internal) intent.getStringExtra(EXTRA_OPEN_URL)
+            else externalNavigationTarget(intent)
+            )
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: return
 
-        // Consumir el extra para no reabrirlo al volver a la Activity.
+        // Consumir el intent para no reabrirlo al volver a la Activity.
         intent.removeExtra(EXTRA_OPEN_URL)
+        intent.putExtra(EXTRA_CONSUMED, true)
 
-        val internal = intent.component?.className == INTERNAL_OPEN_ALIAS
         val allowed =
             if (internal) UrlSafety.isAppNavigable(raw)
             else UrlSafety.isExternallyOpenable(raw)
@@ -487,6 +674,23 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         if (internal) TabManager.navigate(raw) else TabManager.createTab(raw)
     }
 
+    /**
+     * Enlaces de otras apps: VIEW (Nexo como navegador predeterminado),
+     * texto compartido y búsquedas web del sistema.
+     */
+    private fun externalNavigationTarget(intent: Intent): String? =
+        when (intent.action) {
+            Intent.ACTION_VIEW -> intent.dataString
+            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)?.let { text ->
+                SHARED_URL.find(text)?.value ?: SearchResolver.resolve(this, text.take(500))
+            }
+            Intent.ACTION_WEB_SEARCH, Intent.ACTION_SEARCH ->
+                intent.getStringExtra(SearchManager.QUERY)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { SearchResolver.resolve(this, it.take(500)) }
+            else -> intent.getStringExtra(EXTRA_OPEN_URL)
+        }
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -495,7 +699,12 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
     override fun onActiveTabChanged(tab: BrowserTab, session: GeckoSession) {
         if (attachedSession !== session) {
+            hideFindBar()
             if (attachedSession != null) geckoView.releaseSession()
+            // Fondo del tema mientras la página pinta (evita el destello blanco).
+            runCatching {
+                session.compositorController.setClearColor(ThemeManager.palette(this).background)
+            }
             geckoView.setSession(session)
             attachedSession = session
         }
@@ -569,7 +778,7 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         if (tab.id != TabManager.activeTab()?.id) return
         progress.progress = progressValue
         progress.visibility = if (loading && !immersive) View.VISIBLE else View.GONE
-        if (!loading) captureCurrentTabPreview()
+        if (!loading) scheduleIdlePreview(tab)
     }
 
     override fun onTabCountChanged(count: Int) {
@@ -686,7 +895,11 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         }
 
         super.onResume()
+        BrowserHosts.attach(this)
         ExtensionManager.attachPromptActivity(this)
+        ExtensionManager.consumePendingAction { ok, message ->
+            if (!ok) runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
+        }
         if (themeKey.isNotBlank() && themeKey != ThemeManager.themeKey(this)) {
             // Diálogos, menús y controles del sistema dependen del tema de la
             // Activity: recrearla para aplicarlo entero.
@@ -1079,6 +1292,74 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_MEDIA_NOTIFICATIONS) MediaPlaybackService.sync(this)
+        permissionCallbacks.remove(requestCode)?.invoke(
+            grantResults.isNotEmpty() && grantResults.any { it == PackageManager.PERMISSION_GRANTED }
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // BrowserHost: lo que piden las páginas web
+    // ---------------------------------------------------------------
+
+    override fun requestAndroidPermissions(permissions: Array<String>, onResult: (Boolean) -> Unit) {
+        val code = nextPermissionRequest++
+        if (nextPermissionRequest > REQUEST_SITE_PERMISSIONS + 500) nextPermissionRequest = REQUEST_SITE_PERMISSIONS
+        permissionCallbacks[code] = onResult
+        suppressAutoPipOnce = true
+        requestPermissions(permissions, code)
+    }
+
+    override fun pickFiles(mimeTypes: List<String>, multiple: Boolean, onResult: (List<Uri>) -> Unit) {
+        // Un selector anterior sin respuesta se da por cancelado.
+        filePickerCallback?.invoke(emptyList())
+        filePickerCallback = onResult
+
+        val types = mimeTypes.map { it.trim().lowercase() }.filter { '/' in it }.distinct()
+        val picker = Intent(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = types.singleOrNull() ?: "*/*"
+            if (types.size > 1) putExtra(Intent.EXTRA_MIME_TYPES, types.toTypedArray())
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
+        }
+        runCatching {
+            suppressAutoPipOnce = true
+            @Suppress("DEPRECATION")
+            startActivityForResult(Intent.createChooser(picker, "Elegir archivo"), REQUEST_FILE_PICKER)
+        }.onFailure {
+            filePickerCallback = null
+            onResult(emptyList())
+            Toast.makeText(this, "No hay una app para elegir archivos", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun launch(intent: Intent) {
+        suppressAutoPipOnce = true
+        startActivity(intent)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_FILE_PICKER) return
+        val callback = filePickerCallback ?: return
+        filePickerCallback = null
+
+        val uris = mutableListOf<Uri>()
+        if (resultCode == RESULT_OK && data != null) {
+            data.clipData?.let { clip ->
+                for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let { uris += it }
+            }
+            if (uris.isEmpty()) data.data?.let { uris += it }
+        }
+        callback(uris.distinct())
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // La Activity gestiona la rotación: Gecko debe enterarse para
+        // actualizar screen.orientation y las media queries.
+        runCatching { GeckoRuntimeHolder.get(this).configurationChanged(newConfig) }
     }
 
     override fun onDestroy() {
@@ -1086,7 +1367,13 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
         if (!isInPictureInPictureMode) ExtensionManager.setPipMode(attachedSession, false)
         runCatching { unregisterReceiver(pipControlReceiver) }
         BrowserMediaController.attach(null)
-        ExtensionManager.attachPromptActivity(null)
+        ExtensionManager.detachPromptActivity(this)
+        BrowserHosts.detach(this)
+        filePickerCallback?.invoke(emptyList())
+        filePickerCallback = null
+        permissionCallbacks.values.forEach { it(false) }
+        permissionCallbacks.clear()
+        geckoView.removeCallbacks(idlePreview)
         TabManager.attach(null)
         if (attachedSession != null) {
             geckoView.releaseSession()
@@ -1098,6 +1385,10 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        if (findBar.visibility == View.VISIBLE) {
+            hideFindBar()
+            return
+        }
         if (TabManager.exitFullScreen()) return
         if (TabManager.canGoBackOrPrevious()) TabManager.goBackOrPrevious()
         else super.onBackPressed()
@@ -1105,8 +1396,14 @@ class MainActivity : Activity(), TabManager.Listener, BrowserMediaController.Lis
 
     companion object {
         const val EXTRA_OPEN_URL = "nexo.open_url"
+        private const val EXTRA_CONSUMED = "nexo.intent_consumed"
         private const val REQUEST_MEDIA_NOTIFICATIONS = 912
         private const val REQUEST_PIP_CONTROL = 913
+        private const val REQUEST_FILE_PICKER = 920
+        private const val REQUEST_SITE_PERMISSIONS = 2000
+
+        /** Primer enlace web dentro de un texto compartido. */
+        private val SHARED_URL = Regex("""https?://[^\s<>"']+""", RegexOption.IGNORE_CASE)
 
         private const val ACTION_PIP_CONTROL = "com.ejemplo.navegador.action.PIP_CONTROL"
         private const val EXTRA_PIP_COMMAND = "command"

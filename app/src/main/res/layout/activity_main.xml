@@ -84,6 +84,67 @@
             android:text="" />
     </LinearLayout>
 
+    <!-- Buscar en la página: aparece bajo la barra de direcciones. -->
+    <LinearLayout
+        android:id="@+id/findBar"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="4dp"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/findInput"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:hint="@string/find_in_page_hint"
+            android:imeOptions="actionSearch"
+            android:importantForAutofill="no"
+            android:inputType="text"
+            android:maxLines="1"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:singleLine="true"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/findCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:minWidth="44dp"
+            android:paddingStart="6dp"
+            android:paddingEnd="2dp"
+            android:textSize="13sp" />
+
+        <ImageButton
+            android:id="@+id/findPrev"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:contentDescription="@string/find_previous"
+            android:scaleType="center"
+            android:src="@drawable/ic_nav_up" />
+
+        <ImageButton
+            android:id="@+id/findNext"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:contentDescription="@string/find_next"
+            android:scaleType="center"
+            android:src="@drawable/ic_nav_down" />
+
+        <ImageButton
+            android:id="@+id/findClose"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:contentDescription="@string/find_close"
+            android:scaleType="center"
+            android:src="@drawable/ic_menu_close" />
+    </LinearLayout>
+
     <ProgressBar
         android:id="@+id/pageProgress"
         style="?android:attr/progressBarStyleHorizontal"

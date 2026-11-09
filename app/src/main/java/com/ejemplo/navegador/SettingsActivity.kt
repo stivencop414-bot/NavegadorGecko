@@ -2,6 +2,11 @@ package com.ejemplo.navegador
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.role.RoleManager
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -99,6 +104,45 @@ class SettingsActivity : Activity() {
         applyTheme()
         findViewById<Button>(R.id.saveSettingsButton).setOnClickListener { save() }
         findViewById<Button>(R.id.clearDataButton).setOnClickListener { confirmClear() }
+        findViewById<Button>(R.id.defaultBrowserButton).setOnClickListener { requestDefaultBrowser() }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        findViewById<Button>(R.id.defaultBrowserButton).visibility =
+            if (isDefaultBrowser()) View.GONE else View.VISIBLE
+    }
+
+    private fun isDefaultBrowser(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roles = getSystemService(RoleManager::class.java)
+            if (roles != null && roles.isRoleAvailable(RoleManager.ROLE_BROWSER)) {
+                return roles.isRoleHeld(RoleManager.ROLE_BROWSER)
+            }
+        }
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))
+            .addCategory(Intent.CATEGORY_BROWSABLE)
+        @Suppress("DEPRECATION")
+        val handler = packageManager.resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)
+        return handler?.activityInfo?.packageName == packageName
+    }
+
+    private fun requestDefaultBrowser() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roles = getSystemService(RoleManager::class.java)
+            if (roles != null && roles.isRoleAvailable(RoleManager.ROLE_BROWSER) &&
+                !roles.isRoleHeld(RoleManager.ROLE_BROWSER)
+            ) {
+                @Suppress("DEPRECATION")
+                startActivityForResult(roles.createRequestRoleIntent(RoleManager.ROLE_BROWSER), REQUEST_DEFAULT_BROWSER)
+                return
+            }
+        }
+        runCatching {
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+        }.onFailure {
+            Toast.makeText(this, "Elige Nexo en Ajustes › Apps predeterminadas › Navegador", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun populate() {
@@ -229,10 +273,15 @@ class SettingsActivity : Activity() {
         ThemeManager.styleText(this, findViewById(R.id.settingsTitle))
         ThemeManager.styleButton(this, findViewById(R.id.saveSettingsButton), primary = true)
         ThemeManager.styleButton(this, findViewById(R.id.clearDataButton), danger = true)
+        ThemeManager.styleButton(this, findViewById(R.id.defaultBrowserButton))
         ThemeManager.styleBackButton(this, findViewById(R.id.backButton))
         findViewById<View>(R.id.settingsFooter).background =
             ThemeManager.barBackground(this, lineOnTop = true)
         findViewById<View>(R.id.settingsHeader).setBackgroundColor(p.background)
         ThemeManager.takeInitialFocus(settingsRoot)
+    }
+
+    companion object {
+        private const val REQUEST_DEFAULT_BROWSER = 51
     }
 }

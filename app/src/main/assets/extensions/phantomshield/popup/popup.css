@@ -1,11 +1,33 @@
 :root {
-  --bg: #121214;
-  --card-bg: #1c1c1f;
-  --text: #f0f0f3;
-  --text-muted: #8e8e93;
+  /* Misma paleta que las hojas de Nexo para que el panel no "desentone". */
+  color-scheme: dark light;
+  --bg: #171a24;
+  --card-bg: #222634;
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
   --accent: #30d158;
-  --accent-off: #ff453a;
-  --border: #2c2c2e;
+  --accent-text: #30d158;
+  --accent-off: #ff6b62;
+  --border: #2b3040;
+  --soft: rgba(255, 255, 255, 0.04);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --card-bg: #f6f7fb;
+    --text: #0f172a;
+    --text-muted: #64748b;
+    --accent: #22c55e;
+    --accent-text: #15803d;
+    --accent-off: #dc2626;
+    --border: #e2e6ee;
+    --soft: rgba(15, 23, 42, 0.04);
+  }
+}
+
+html {
+  background-color: var(--bg);
 }
 
 * {
@@ -15,8 +37,11 @@
 }
 
 body {
-  width: 320px;
-  max-width: 100%;
+  /* En Nexo el panel ocupa el ancho del teléfono. */
+  width: auto;
+  min-width: 300px;
+  max-width: 560px;
+  margin: 0 auto;
   background-color: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -57,13 +82,13 @@ body {
 
 .status-badge.active {
   background-color: rgba(48, 209, 88, 0.2);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .card {
   background-color: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 16px;
   padding: 14px;
   margin-bottom: 12px;
 }
@@ -139,7 +164,7 @@ input:checked + .slider:before {
 }
 
 .stat-item {
-  background-color: rgba(255, 255, 255, 0.03);
+  background-color: var(--soft);
   padding: 8px;
   border-radius: 8px;
   text-align: center;
@@ -148,7 +173,7 @@ input:checked + .slider:before {
 .stat-value {
   font-size: 18px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .stat-label {
@@ -231,6 +256,7 @@ input:disabled + .slider {
 
 @media (max-width: 360px) {
   body {
+    min-width: 0;
     width: 100%;
   }
 }

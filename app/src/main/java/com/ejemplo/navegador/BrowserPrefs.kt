@@ -111,8 +111,9 @@ object BrowserPrefs {
     fun maxLiveTabs(c: Context) = p(c).getInt("max_live", 5).coerceIn(1, 8)
     fun setMaxLiveTabs(c: Context, v: Int) = p(c).edit().putInt("max_live", v.coerceIn(1, 8)).apply()
 
+    /** Formato antiguo: solo se lee una vez para migrar a [TabStore]. */
     fun tabsJson(c: Context) = p(c).getString("tabs_json", null)
-    fun setTabsJson(c: Context, v: String) = p(c).edit().putString("tabs_json", v).apply()
+    fun clearTabsJson(c: Context) = p(c).edit().remove("tabs_json").apply()
 
     fun activeTabId(c: Context) = p(c).getString("active_tab", null)
     fun setActiveTabId(c: Context, v: String?) = p(c).edit().putString("active_tab", v).apply()

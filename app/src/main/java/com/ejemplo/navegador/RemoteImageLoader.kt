@@ -25,6 +25,10 @@ object RemoteImageLoader {
     }
     private val main = Handler(Looper.getMainLooper())
 
+    fun trimMemory(level: Int) {
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) cache.evictAll()
+    }
+
     fun load(url: String, target: ImageView) {
         showPlaceholder(target)
         target.tag = url

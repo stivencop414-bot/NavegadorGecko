@@ -43,11 +43,15 @@ class StoreAddonAdapter(
             )
         }
         root.removeAllViews()
-        root.background = ThemeManager.rounded(
+        root.background = ThemeManager.ripple(
             activity,
-            p.surface,
-            16f,
-            ColorUtils.setAlphaComponent(p.muted, 40)
+            ThemeManager.rounded(
+                activity,
+                p.surface,
+                18f,
+                if (p.isDark) p.outline else ColorUtils.setAlphaComponent(p.muted, 40)
+            ),
+            18f
         )
 
         val header = LinearLayout(activity).apply {

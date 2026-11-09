@@ -199,9 +199,12 @@ object TabSwitcher {
 
         val card = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = ThemeManager.rounded(
+            background = ThemeManager.rounded(activity, p.surface, 20f)
+            // El borde va por encima del contenido: la miniatura ya no lo tapa
+            // ni deja esquinas cuadradas en la parte inferior.
+            foreground = ThemeManager.rounded(
                 activity,
-                p.surface,
+                Color.TRANSPARENT,
                 20f,
                 if (active) p.accent else p.outline,
                 if (active) 2.5f else 1f
@@ -236,36 +239,45 @@ object TabSwitcher {
         card.addView(header)
 
         val previewHeight = dp(activity, 190f)
-        val bitmap = if (tab.isPrivate || BrowserPrefs.isNexoHome(tab.url)) null
-        else TabPreviewStore.load(activity, tab.id)
-        if (bitmap != null) {
-            card.addView(TopCropImageView(activity).apply {
-                setImageBitmap(bitmap)
-                setBackgroundColor(Color.WHITE)
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, previewHeight))
-        } else {
-            val host = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull()
-                ?.removePrefix("www.").orEmpty()
-            card.addView(LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
+        val hasPreview = !tab.isPrivate && !BrowserPrefs.isNexoHome(tab.url)
+        val host = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull()
+            ?.removePrefix("www.").orEmpty()
+
+        // Marcador (logo + dominio) debajo; la miniatura lo cubre al cargar.
+        val preview = FrameLayout(activity).apply { setBackgroundColor(p.accentSoft) }
+        preview.addView(LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            addView(ImageView(activity).apply {
+                setImageResource(if (tab.isPrivate) R.drawable.ic_menu_private else R.drawable.ic_nexo_logo)
+                if (tab.isPrivate) imageTintList = ColorStateList.valueOf(p.accent)
+                layoutParams = LinearLayout.LayoutParams(dp(activity, 40f), dp(activity, 40f))
+            })
+            addView(TextView(activity).apply {
+                text = if (BrowserPrefs.isNexoHome(tab.url)) "Página de inicio" else host.ifBlank { tab.url }
+                textSize = 12f
+                setTextColor(p.muted)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
                 gravity = Gravity.CENTER
-                setBackgroundColor(p.accentSoft)
-                addView(ImageView(activity).apply {
-                    setImageResource(if (tab.isPrivate) R.drawable.ic_menu_private else R.drawable.ic_nexo_logo)
-                    if (tab.isPrivate) imageTintList = ColorStateList.valueOf(p.accent)
-                    layoutParams = LinearLayout.LayoutParams(dp(activity, 40f), dp(activity, 40f))
-                })
-                addView(TextView(activity).apply {
-                    text = if (BrowserPrefs.isNexoHome(tab.url)) "Página de inicio" else host.ifBlank { tab.url }
-                    textSize = 12f
-                    setTextColor(p.muted)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    gravity = Gravity.CENTER
-                    setPadding(dp(activity, 8f), dp(activity, 8f), dp(activity, 8f), 0)
-                })
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, previewHeight))
+                setPadding(dp(activity, 8f), dp(activity, 8f), dp(activity, 8f), 0)
+            })
+        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        if (hasPreview) {
+            // Decodificación en segundo plano con caché: el hilo principal no
+            // lee JPEG del disco al abrir o desplazar el selector.
+            val image = TopCropImageView(activity).apply { tag = tab.id }
+            fun show(bitmap: android.graphics.Bitmap) {
+                image.setBackgroundColor(p.elevated)
+                image.setImageBitmap(bitmap)
+            }
+            TabPreviewStore.cached(tab.id)?.let { show(it) } ?: TabPreviewStore.loadAsync(activity, tab.id) { bitmap ->
+                if (bitmap != null && image.tag == tab.id) show(bitmap)
+            }
+            preview.addView(image, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
+        card.addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, previewHeight))
 
         return card
     }

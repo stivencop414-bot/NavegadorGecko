@@ -282,7 +282,12 @@ object TabManager {
         }
 
         if (wasActive) {
-            val next = tabs[index.coerceAtMost(tabs.lastIndex)]
+            // Volver a la pestaña usada justo antes (p. ej. la que abrió esta
+            // ventana); si no hay, a la vecina.
+            val previous = activationHistory.lastOrNull { id -> tabs.any { it.id == id } }
+            val next = previous?.let { id -> tabs.firstOrNull { it.id == id } }
+                ?: tabs[index.coerceAtMost(tabs.lastIndex)]
+            activationHistory.remove(next.id)
             switchTo(next.id, rememberPrevious = false)
         } else {
             listener?.onTabCountChanged(tabs.size)
@@ -545,12 +550,8 @@ object TabManager {
         trimSessions()
     }
 
-    private fun ensureSession(
-        tab: BrowserTab,
-        loadUrl: Boolean = true
-    ): GeckoSession {
-        tab.session?.let { return it }
-
+    /** Sesión nueva, con sus delegados, todavía sin abrir. */
+    private fun newSession(tab: BrowserTab): GeckoSession {
         val context = requireContext()
         val settings = GeckoSessionSettings.Builder()
             .usePrivateMode(tab.isPrivate)
@@ -568,11 +569,26 @@ object TabManager {
 
         val session = GeckoSession(settings)
         tab.session = session
-
         configureDelegates(tab, session)
-        session.open(GeckoRuntimeHolder.get(context))
+        return session
+    }
+
+    /** Enlaza extensiones y traductor cuando la sesión ya está abierta. */
+    private fun bindOpenedSession(session: GeckoSession) {
         ExtensionManager.bindSession(session)
         TranslatorManager.bindSession(session)
+    }
+
+    private fun ensureSession(
+        tab: BrowserTab,
+        loadUrl: Boolean = true
+    ): GeckoSession {
+        tab.session?.let { return it }
+
+        val context = requireContext()
+        val session = newSession(tab)
+        session.open(GeckoRuntimeHolder.get(context))
+        bindOpenedSession(session)
 
         if (loadUrl) {
             val restored =
@@ -598,7 +614,45 @@ object TabManager {
         return session
     }
 
+    /**
+     * Ventana nueva pedida por la página (target=_blank, window.open).
+     * GeckoView exige devolver una sesión SIN abrir y con el mismo modo
+     * privado que la que la pidió; Gecko la abre y carga la URL.
+     */
+    private fun openWindowFrom(opener: BrowserTab, uri: String): GeckoSession {
+        val tab = BrowserTab(
+            url = uri.takeIf { isSafeAppNavigationUrl(it) } ?: "about:blank",
+            title = if (opener.isPrivate) "Pestaña privada" else "Nueva pestaña",
+            isPrivate = opener.isPrivate,
+            desktopMode = opener.desktopMode,
+            isLoading = true
+        )
+        // Insertarla junto a la pestaña que la abrió.
+        val openerIndex = tabs.indexOfFirst { it.id == opener.id }
+        if (openerIndex >= 0) tabs.add(openerIndex + 1, tab) else tabs += tab
+
+        val session = newSession(tab)
+        listener?.onTabCountChanged(tabs.size)
+        switchTo(tab.id, loadUrl = false)
+        whenOpen(session) { bindOpenedSession(it) }
+        return session
+    }
+
+    /** Ejecuta [action] en cuanto GeckoView haya abierto [session]. */
+    private fun whenOpen(session: GeckoSession, attempt: Int = 0, action: (GeckoSession) -> Unit) {
+        if (session.isOpen) {
+            action(session)
+            return
+        }
+        if (attempt >= 40 || tabs.none { it.session === session }) return
+        mainHandler.postDelayed({ whenOpen(session, attempt + 1, action) }, 50L)
+    }
+
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
     private fun configureDelegates(tab: BrowserTab, session: GeckoSession) {
+        session.setPromptDelegate(PagePrompts)
+        session.setPermissionDelegate(SitePermissions)
         session.setContentDelegate(
             object : GeckoSession.ContentDelegate {
                 override fun onCrash(session: GeckoSession) {
@@ -665,6 +719,11 @@ object TabManager {
                         listener?.onFullScreenChanged(tab, fullScreen)
                     }
                 }
+
+                // window.focus() desde otra pestaña (p. ej. tras un inicio de sesión).
+                override fun onFocusRequest(session: GeckoSession) {
+                    if (tab.id != activeId) switchTo(tab.id, loadUrl = false)
+                }
             }
         )
 
@@ -718,6 +777,17 @@ object TabManager {
                     session: GeckoSession,
                     request: GeckoSession.NavigationDelegate.LoadRequest
                 ): GeckoResult<AllowOrDeny>? {
+                    // tel:, mailto:, intent://, market:… los abre otra app.
+                    if (UrlSafety.isExternalAppUrl(request.uri)) {
+                        ExternalApps.open(
+                            requireContext(),
+                            request.uri,
+                            request.hasUserGesture,
+                            tab.isPrivate
+                        ) { fallback -> session.loadUri(fallback) }
+                        return GeckoResult.fromValue(AllowOrDeny.DENY)
+                    }
+
                     if (ExtensionManager.isRemoteExtensionPackage(request.uri)) {
                         listener?.onMessage("Abriendo instalador de extensión…")
                         ExtensionManager.installUrl(
@@ -735,7 +805,12 @@ object TabManager {
                             tab.desktopMode
                         )
 
-                    if (target != request.uri) {
+                    // Una ventana nueva se resuelve en onNewSession: no
+                    // redirigir aquí o se cargaría en la pestaña actual.
+                    if (
+                        target != request.uri &&
+                        request.target != GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW
+                    ) {
                         tab.url = target
                         tab.sessionState = null
                         persist()
@@ -747,6 +822,14 @@ object TabManager {
                     }
 
                     return null
+                }
+
+                override fun onNewSession(
+                    session: GeckoSession,
+                    uri: String
+                ): GeckoResult<GeckoSession>? {
+                    if (!isSafeAppNavigationUrl(uri) && !uri.isBlank()) return null
+                    return GeckoResult.fromValue(openWindowFrom(tab, uri))
                 }
 
                 override fun onCanGoBack(
@@ -785,6 +868,7 @@ object TabManager {
 
                 override fun onPageStart(session: GeckoSession, url: String) {
                     TranslatorManager.onPageStart(session)
+                    PagePrompts.onPageStart(session)
                     BrowserMediaController.resetVideo(tab.id)
                     tab.url = url
                     tab.isLoading = true
@@ -934,8 +1018,9 @@ object TabManager {
     private fun restoreOrCreate() {
         val context = requireContext()
 
+        val saved = TabStore.read(context)
         if (BrowserPrefs.restoreTabs(context)) {
-            BrowserPrefs.tabsJson(context)?.let { raw ->
+            saved?.let { raw ->
                 runCatching {
                     val array = JSONArray(raw)
 
@@ -1010,31 +1095,76 @@ object TabManager {
         persistHandler.postDelayed(persistTask, 500L)
     }
 
+    private class TabSnapshot(
+        val id: String,
+        val url: String,
+        val title: String,
+        val desktopMode: Boolean,
+        val lastUsed: Long,
+        val loading: Boolean,
+        val sessionState: String
+    )
+
     /** Escritura inmediata: al ir a segundo plano o cerrar sesiones. */
     fun persistNow() {
         persistHandler.removeCallbacks(persistTask)
         val context = appContext ?: return
-        val array = JSONArray()
 
-        tabs.filterNot { it.isPrivate }.forEach { tab ->
-            array.put(
-                JSONObject().apply {
-                    put("id", tab.id)
-                    put("url", tab.url)
-                    put("title", tab.title)
-                    put("desktopMode", tab.desktopMode)
-                    put("lastUsed", tab.lastUsed)
-                    put("loading", tab.isLoading)
-                    put("sessionState", tab.sessionState ?: "")
-                }
+        // Copia barata en el hilo principal; el JSON se arma en segundo plano.
+        val snapshot = tabs.filterNot { it.isPrivate }.map { tab ->
+            TabSnapshot(
+                tab.id, tab.url, tab.title, tab.desktopMode,
+                tab.lastUsed, tab.isLoading, tab.sessionState ?: ""
             )
         }
 
-        BrowserPrefs.setTabsJson(context, array.toString())
-        BrowserPrefs.setActiveTabId(
-            context,
-            activeTab()?.takeUnless { it.isPrivate }?.id
-        )
+        TabStore.write(context) {
+            val array = JSONArray()
+            snapshot.forEach { tab ->
+                array.put(
+                    JSONObject().apply {
+                        put("id", tab.id)
+                        put("url", tab.url)
+                        put("title", tab.title)
+                        put("desktopMode", tab.desktopMode)
+                        put("lastUsed", tab.lastUsed)
+                        put("loading", tab.loading)
+                        put("sessionState", tab.sessionState)
+                    }
+                )
+            }
+            array.toString()
+        }
+
+        val activeTabId = activeTab()?.takeUnless { it.isPrivate }?.id
+        if (BrowserPrefs.activeTabId(context) != activeTabId) {
+            BrowserPrefs.setActiveTabId(context, activeTabId)
+        }
+    }
+
+    /**
+     * Android avisa que falta memoria: cerrar las sesiones de pestañas en
+     * segundo plano (conservan URL e historial y se restauran al volver).
+     * Las privadas se respetan: cerrarlas borraría su contenido.
+     */
+    fun onTrimMemory(level: Int) {
+        if (!initialized) return
+        val keep = when {
+            level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND -> 0
+            level == 10 /* TRIM_MEMORY_RUNNING_LOW */ || level == 15 /* RUNNING_CRITICAL */ -> 1
+            else -> return
+        }
+        tabs.filter {
+            it.id != activeId && it.session != null && !it.isPrivate &&
+                !BrowserMediaController.isPlaying(it.id)
+        }
+            .sortedByDescending { it.lastUsed }
+            .drop(keep)
+            .forEach { tab ->
+                tab.session?.let { closeSession(it) }
+                tab.session = null
+            }
+        TabPreviewStore.trimMemory()
     }
 
     private fun notifyActive() {

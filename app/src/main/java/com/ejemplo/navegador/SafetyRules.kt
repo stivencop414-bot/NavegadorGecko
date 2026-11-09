@@ -48,6 +48,22 @@ object UrlSafety {
             scheme(url) in extensionTabSchemes
 
     /**
+     * Esquemas que Gecko nunca debe pasar a otra app: los que carga él mismo
+     * y los que permitirían ejecutar código o leer archivos locales.
+     */
+    private val neverExternalSchemes = setOf(
+        "http", "https", "about", "resource", "moz-extension", "chrome",
+        "javascript", "data", "blob", "file", "content", "view-source",
+        "jar", "ws", "wss", "moz-icon", "moz-page-thumb", "wyciwyg"
+    )
+
+    /** Enlaces que corresponden a otra app (tel:, mailto:, intent:, market:…). */
+    fun isExternalAppUrl(url: String): Boolean {
+        val scheme = scheme(url) ?: return false
+        return scheme !in neverExternalSchemes
+    }
+
+    /**
      * Quita de la URL los parámetros que suelen llevar credenciales
      * (tokens OAuth, sesiones, firmas) y los fragmentos con pares clave=valor.
      * Se usa antes de guardar el historial en disco.

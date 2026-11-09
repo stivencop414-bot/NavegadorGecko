@@ -359,7 +359,9 @@ object ThemeManager {
                     val d = resources.displayMetrics.density
                     if (dropdown) {
                         setPadding((18 * d).toInt(), (14 * d).toInt(), (18 * d).toInt(), (14 * d).toInt())
-                        setBackgroundColor(p.surface)
+                        // Sin fondo cuadrado propio: antes tapaba las esquinas
+                        // redondeadas de la lista desplegable.
+                        background = ripple(activity, null, 12f)
                     } else {
                         // El fondo y la flecha los pone styleSpinner.
                         setPadding((16 * d).toInt(), 0, (40 * d).toInt(), 0)
@@ -491,7 +493,13 @@ object ThemeManager {
             setLayerInsetEnd(1, dp(activity, 18f))
         }
         spinner.backgroundTintList = null
-        spinner.setPopupBackgroundDrawable(rounded(activity, p.surface, 16f, p.outline))
+        // Margen interior: la selección de la primera y la última opción no
+        // llega a las esquinas redondeadas de la lista.
+        spinner.setPopupBackgroundDrawable(
+            LayerDrawable(arrayOf(rounded(activity, p.surface, 16f, p.outline))).apply {
+                setPadding(dp(activity, 6f), dp(activity, 8f), dp(activity, 6f), dp(activity, 8f))
+            }
+        )
     }
 
     fun styleSwitch(activity: Activity, toggle: Switch) {
