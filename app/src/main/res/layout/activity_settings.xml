@@ -227,8 +227,15 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
                     android:layout_marginBottom="8dp"
-                    android:text="Idioma de destino al traducir"
+                    android:text="Idioma para Google Translate"
                     android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Traducción en línea sin modelos locales. Al solicitarla, eliges si compartes la dirección de la página con Google. Funciona con páginas públicas y necesita conexión."
+                    android:textSize="13sp"
+                    android:layout_marginBottom="12dp" />
 
                 <Spinner
                     android:id="@+id/translatorTargetSpinner"

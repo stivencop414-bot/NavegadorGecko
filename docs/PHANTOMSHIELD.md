@@ -18,6 +18,25 @@ hojas de Nexo y sigue el tema claro/oscuro (`prefers-color-scheme`). El manifest
 8.3.1 para que Gecko recargue los archivos al actualizar; el ID no cambia y se conservan
 el almacenamiento y las excepciones por sitio.
 
+### Modernización en 8.3.2
+
+La base continúa siendo el paquete original, con cambios revisados en la interfaz y en la
+planificación de los content scripts. El panel destaca los controles locales y el estado real
+por sitio; las opciones de IA solo muestran los campos técnicos al activarlas. La IA sigue
+requiriendo consentimiento y hosts exactos, y la clave guardada no se revela en el formulario.
+La cabecera propia del panel sustituye la fila nativa duplicada en Nexo. La disposición,
+colores, iconos y fuentes locales siguen el prototipo HTML aportado; los valores demostrativos
+se sustituyen por datos reales.
+
+Los indicadores de Nexo usan el badge estándar `browserAction`: total general y contador por
+pestaña, más `OFF` y `PAUSE`. Se agrupan los cambios una vez por segundo, sin polling ni envío
+de URL/título. Los bloqueos privados no incrementan el total persistente. Las cifras son
+acumuladas desde el último reinicio del contador, no una estadística diaria inventada.
+
+Los observadores de YouTube y los escaneos de IA se suspenden en pestañas ocultas o cuando
+no están habilitados. Los lotes IA son acotados y se libera su observador al agotar el cupo.
+No se modifican por ello las reglas de bloqueo ni se habilita IA automáticamente.
+
 ## Uso y actualización
 
 `ExtensionManager` usa `ensureBuiltIn` con la URI
@@ -49,7 +68,7 @@ para XPI importados. Tampoco cambia una posible resolución de bloqueo/revisión
 - Tests Node con el background real: bloqueo local sin red, apagado general/excepción por
   sitio, contadores privados, ausencia de llamadas IA por defecto y recursos declarados.
 - Targets Android habituales: tests JVM, assembleDebug/Release, lintDebug/Release.
-- Inspección de los APK: todos los recursos deben coincidir con los assets originales.
+- Inspección de los APK: los recursos empaquetados deben coincidir con los assets versionados.
 - Pendiente en dispositivo GeckoView: primera instalación, reinicio, conservación de una
   excepción por sitio al actualizar, panel/opciones, permisos opcionales y YouTube/PiP con
   PhantomShield activado y desactivado. No se afirma que esas pruebas en Android se hayan ejecutado.

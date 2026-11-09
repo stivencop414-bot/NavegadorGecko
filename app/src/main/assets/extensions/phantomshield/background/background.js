@@ -22,6 +22,58 @@
   const tabHosts = new Map();
   const tabBlocked = new Map();
 
+  // A compact, count-only channel also read by the native browser action UI.
+  let badgeTimer = null;
+  let lastGlobalBadge = null;
+  const lastTabBadges = new Map();
+  const dirtyBadgeTabs = new Set();
+  const badgeFallbackHosts = new Map();
+
+  function badgeCount(value) {
+    const count = Math.max(0, Math.floor(Number(value) || 0));
+    return count > 999 ? '999+' : String(count);
+  }
+
+  function writeBadge(details) {
+    try {
+      Promise.resolve(browser.browserAction.setBadgeText(details)).catch(function() {});
+    } catch (error) {}
+  }
+
+  function flushBadges() {
+    badgeTimer = null;
+    const globalText = settings.adblockEnabled ? badgeCount(engine && engine.getBlockedCount()) : 'OFF';
+    if (globalText !== lastGlobalBadge) {
+      lastGlobalBadge = globalText;
+      writeBadge({ text: globalText });
+    }
+    for (const tabId of dirtyBadgeTabs) {
+      if (!tabHosts.has(tabId) && !tabBlocked.has(tabId) && !lastTabBadges.has(tabId) && !badgeFallbackHosts.has(tabId)) continue;
+      const text = !settings.adblockEnabled ? 'OFF'
+        : isHostDisabled(tabHosts.get(tabId) || badgeFallbackHosts.get(tabId) || '') ? 'PAUSE'
+        : badgeCount(tabBlocked.get(tabId));
+      if (text !== lastTabBadges.get(tabId)) {
+        lastTabBadges.set(tabId, text);
+        writeBadge({ tabId: tabId, text: text });
+      }
+    }
+    dirtyBadgeTabs.clear();
+  }
+
+  function queueBadgeUpdate(tabId, allTabs) {
+    if (!browser.browserAction || typeof browser.browserAction.setBadgeText !== 'function') return;
+    if (typeof tabId === 'number' && tabId >= 0) dirtyBadgeTabs.add(tabId);
+    if (allTabs) {
+      for (const id of tabHosts.keys()) dirtyBadgeTabs.add(id);
+      for (const id of badgeFallbackHosts.keys()) dirtyBadgeTabs.add(id);
+      for (const id of tabBlocked.keys()) dirtyBadgeTabs.add(id);
+      for (const id of lastTabBadges.keys()) dirtyBadgeTabs.add(id);
+    }
+    // Requests may arrive in bursts. Update each changed badge once per second,
+    // with no repeating timer and no host, title or URL in the action payload.
+    if (badgeTimer === null) badgeTimer = setTimeout(flushBadges, 1000);
+  }
+
   const TRACKING_PARAMS = new Set([
     'gclid', 'dclid', 'fbclid', 'msclkid', 'mc_eid', 'yclid', '_hsenc',
     'gbraid', 'wbraid', 'utm_id', 'utm_source', 'utm_medium',
@@ -79,6 +131,7 @@
   function countTabBlock(tabId) {
     if (typeof tabId !== 'number' || tabId < 0) return;
     tabBlocked.set(tabId, (tabBlocked.get(tabId) || 0) + 1);
+    queueBadgeUpdate(tabId);
   }
 
   function topHostForRequest(details) {
@@ -98,6 +151,7 @@
   }
 
   function scheduleCountPersist() {
+    queueBadgeUpdate();
     if (!engine || countPersistTimer !== null) return;
     countPersistTimer = setTimeout(function() {
       countPersistTimer = null;
@@ -146,6 +200,7 @@
         console.warn('[PhantomShield] Filter updater failed to start.', error);
       }
     }
+    queueBadgeUpdate(undefined, true);
   }
 
   browser.storage.onChanged.addListener(function(changes, areaName) {
@@ -160,6 +215,7 @@
           : Boolean(changes[key].newValue);
       }
     }
+    if (changes.adblockEnabled || changes.disabled_domains) queueBadgeUpdate(undefined, true);
   });
 
   browser.webRequest.onBeforeRequest.addListener(
@@ -168,10 +224,19 @@
 
       if (details.type === 'main_frame' && typeof details.tabId === 'number' && details.tabId >= 0) {
         tabHosts.set(details.tabId, hostOf(details.url));
+        badgeFallbackHosts.delete(details.tabId);
         tabBlocked.set(details.tabId, 0);
+        queueBadgeUpdate(details.tabId);
       }
 
-      if (!isEnabledForHost(topHostForRequest(details))) return {};
+      const topHost = topHostForRequest(details);
+      if (typeof details.tabId === 'number' && details.tabId >= 0 && topHost &&
+          !tabHosts.has(details.tabId) && badgeFallbackHosts.get(details.tabId) !== topHost) {
+        // Badge-only metadata must not change the request engine's routing state.
+        badgeFallbackHosts.set(details.tabId, topHost);
+        queueBadgeUpdate(details.tabId);
+      }
+      if (!isEnabledForHost(topHost)) return {};
 
       const url = details.url;
       const documentUrl = details.documentUrl || details.originUrl || details.initiator || null;
@@ -216,6 +281,9 @@
     browser.tabs.onRemoved.addListener(function(tabId) {
       tabHosts.delete(tabId);
       tabBlocked.delete(tabId);
+      badgeFallbackHosts.delete(tabId);
+      lastTabBadges.delete(tabId);
+      dirtyBadgeTabs.delete(tabId);
     });
   }
 
@@ -223,7 +291,11 @@
     browser.tabs.onUpdated.addListener(function(tabId, changeInfo) {
       if (changeInfo && changeInfo.url) {
         const host = hostOf(changeInfo.url);
-        if (host) tabHosts.set(tabId, host);
+        if (host) {
+          tabHosts.set(tabId, host);
+          badgeFallbackHosts.delete(tabId);
+          queueBadgeUpdate(tabId);
+        }
       }
     });
   }
@@ -304,6 +376,7 @@
     if (message.type === 'RESET_STATS') {
       if (engine) engine.resetBlockedCount();
       tabBlocked.clear();
+      queueBadgeUpdate(undefined, true);
       if (countPersistTimer !== null) {
         clearTimeout(countPersistTimer);
         countPersistTimer = null;

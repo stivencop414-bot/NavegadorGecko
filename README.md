@@ -12,7 +12,8 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Historial, descargas y compartir.
 - Limpieza de datos.
 - Administrador de extensiones.
-- PhantomShield 8.3.1 integrado, con bloqueo local y controles por sitio.
+- PhantomShield 8.3.2 integrado, con bloqueo local, contadores reales y controles por sitio.
+- Inicio y menú basados en el prototipo: barra inferior, accesos editables y fuentes locales.
 - Paneles de extensiones como hoja inferior redondeada y accesos directos en el menú.
 - Diálogos de páginas: `<select>`, alert/confirm/prompt, fecha y hora, color, subida de
   archivos, inicio de sesión HTTP, "¿salir de la página?" y `navigator.share()`.
@@ -24,7 +25,7 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Sitios en modo oscuro cuando Nexo usa un tema oscuro.
 - Tienda Android de addons.mozilla.org.
 - Importación de XPI firmado e instalación por URL.
-- Traducción de páginas en el dispositivo (ML Kit).
+- Traducción de páginas públicas con Google Translate en línea, sin modelos locales y con confirmación antes de compartir la dirección.
 - Mini reproductor (Picture-in-Picture) y reproducción en segundo plano.
 
 ## Extensiones propias
@@ -47,8 +48,7 @@ Una extensión privada/sin firma puede integrarse dentro de
   redirecciones sin toque del usuario o en pestaña privada piden confirmación.
 - **Permisos de sitios**: se pregunta siempre mostrando el dominio real; las notificaciones
   web se rechazan porque Nexo aún no las muestra.
-- **Puentes nativos** (`nexo_bridge`, `nexo_translator`): solo aceptan mensajes de su propia
-  extensión y del frame principal. El bridge no envía URL, título ni contenido de la página.
+- **Puente nativo** (`nexo_bridge`): solo acepta mensajes de su propia extensión y del frame principal. No envía URL, título ni contenido de la página. El puente del traductor local se retira al actualizar.
 - **Privacidad**: el historial elimina parámetros sensibles (tokens, sesiones, firmas) antes de
   guardarse; las pestañas privadas no se guardan en historial, pestañas ni miniaturas; la
   notificación multimedia no muestra el título en la pantalla de bloqueo.
@@ -87,4 +87,5 @@ La compilación corre sin acceso a esos secrets; solo el paso de firma los recib
 Usa siempre la misma clave: un APK firmado con otra clave no se puede instalar encima.
 
 La integración se documenta en [PhantomShield](docs/PHANTOMSHIELD.md).
+El nuevo traductor se documenta en [traducción en línea](docs/TRADUCCION-EN-LINEA.md).
 Para conservar los datos al actualizar, consulta [actualizaciones y firma](docs/ACTUALIZACIONES-Y-FIRMA.md).

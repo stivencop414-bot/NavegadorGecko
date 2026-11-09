@@ -1,172 +1,159 @@
-/**
- * PhantomShield 8.2 - Popup.
- * Usa las mismas claves de almacenamiento que el background:
- *  - adblockEnabled, privacyEnabled: interruptores globales.
- *  - disabled_domains: sitios en los que el usuario apagó la protección.
- *  - blockedCount (vía GET_STATS): contador total.
- */
+/** PhantomShield panel. Reads real counters; no polling or automatic AI requests. */
 document.addEventListener('DOMContentLoaded', async () => {
-  const siteToggle = document.getElementById('site-toggle');
-  const adblockToggle = document.getElementById('adblock-toggle');
-  const privacyToggle = document.getElementById('privacy-toggle');
-  const domainEl = document.getElementById('current-domain');
-  const siteHintEl = document.getElementById('site-hint');
-  const siteBlocksEl = document.getElementById('site-blocks');
-  const totalBlocksEl = document.getElementById('total-blocks');
-  const statusBadge = document.getElementById('shield-status');
-  const updateButton = document.getElementById('update-lists');
-  const resetButton = document.getElementById('reset-stats');
-  const messageEl = document.getElementById('message');
-  const lastUpdateEl = document.getElementById('last-update');
-  const versionEl = document.getElementById('version');
-
+  const field = id => document.getElementById(id);
   let currentTab = null;
+  let host = '';
   let domain = '';
-
-  versionEl.textContent = 'v' + browser.runtime.getManifest().version;
-
-  function normalizeHost(host) {
-    return String(host || '').toLowerCase().replace(/^www\./, '');
+  let loaded = false;
+  let busy = false;
+  let scanAvailable = false;
+  let refreshId = 0;
+  field('version').textContent = 'v' + browser.runtime.getManifest().version;
+  const normalizeHost = value => String(value || '').trim().toLowerCase().replace(/^www\./, '');
+  const excludedBy = (site, exception) => site === exception || site.endsWith('.' + exception);
+  function showMessage(text, error) {
+    field('message').textContent = text;
+    field('message').className = error ? 'message error' : 'message';
   }
-
-  function showMessage(text, isError) {
-    messageEl.textContent = text;
-    messageEl.className = 'message' + (isError ? ' error' : '');
+  function controls() {
+    field('adblock-toggle').disabled = !loaded || busy;
+    field('privacy-toggle').disabled = !loaded || busy;
+    field('site-toggle').disabled = !loaded || busy || !domain || !field('adblock-toggle').checked;
+    field('scan-ai').disabled = !loaded || busy || !scanAvailable;
+    field('update-lists').disabled = !loaded || busy;
+    field('reset-stats').disabled = !loaded || busy;
   }
-
-  function formatNumber(value) {
-    return Number(value || 0).toLocaleString('es');
+  function userError(message) {
+    const error = new Error(message);
+    error.userFacing = true;
+    return error;
   }
-
-  function updateBadge(globalOn, siteOn) {
-    if (!globalOn) {
-      statusBadge.textContent = 'Apagado';
-      statusBadge.className = 'status-badge off';
-    } else if (!siteOn) {
-      statusBadge.textContent = 'Pausado aquí';
-      statusBadge.className = 'status-badge';
-    } else {
-      statusBadge.textContent = 'Activo';
-      statusBadge.className = 'status-badge active';
-    }
-  }
-
   async function refresh() {
-    const stats = await browser.runtime.sendMessage({
-      type: 'GET_STATS',
-      tabId: currentTab ? currentTab.id : -1,
-      host: domain
-    });
-    if (!stats || !stats.ok) return;
-    const globalOn = Boolean(stats.settings.adblockEnabled);
+    const id = ++refreshId;
+    const [stats, stored] = await Promise.all([
+      browser.runtime.sendMessage({ type: 'GET_STATS', tabId: currentTab ? currentTab.id : -1, host: domain }),
+      browser.storage.local.get({ phantom_last_update: 0, phantom_update_results: [], disabled_domains: [], aiConfig: {} })
+    ]);
+    if (id !== refreshId) return;
+    if (!stats || stats.ok !== true || !stats.settings) throw userError('No se pudo leer el estado de protección.');
+    const globalOn = stats.settings.adblockEnabled === true;
     const siteOn = !stats.siteDisabled;
-    adblockToggle.checked = globalOn;
-    privacyToggle.checked = Boolean(stats.settings.privacyEnabled);
-    siteToggle.checked = siteOn;
-    siteToggle.disabled = !domain || !globalOn;
-    siteBlocksEl.textContent = formatNumber(stats.tabBlocked);
-    totalBlocksEl.textContent = formatNumber(stats.blockedCount);
-    updateBadge(globalOn, siteOn);
-
-    const stored = await browser.storage.local.get({ phantom_last_update: 0, phantom_update_results: [] });
+    field('adblock-toggle').checked = globalOn;
+    field('privacy-toggle').checked = stats.settings.privacyEnabled === true;
+    field('site-toggle').checked = globalOn && siteOn;
+    field('site-control').hidden = !domain;
+    field('current-domain').textContent = domain || 'Página segura de Nexo';
+    const inherited = (Array.isArray(stored.disabled_domains) ? stored.disabled_domains : [])
+      .filter(value => typeof value === 'string').map(normalizeHost)
+      .find(value => value !== domain && excludedBy(domain, value));
+    field('site-hint').textContent = !domain
+      ? 'PhantomShield se activa al navegar en sitios web.'
+      : !globalOn ? 'Activa el bloqueo general para proteger este sitio.'
+      : !siteOn && inherited ? 'Pausado por ' + inherited + '. Activar quitará esa excepción.'
+      : siteOn ? 'Reglas locales activas. Puedes pausarlas para este sitio.' : 'Protección pausada para este sitio.';
+    field('site-blocks').textContent = domain ? Number(stats.tabBlocked || 0).toLocaleString('es') : '—';
+    field('total-blocks').textContent = Number(stats.blockedCount || 0).toLocaleString('es');
+    const badge = field('shield-status');
+    badge.textContent = !globalOn ? 'Apagado' : !domain ? 'Listo' : siteOn ? 'Activo' : 'Pausado aquí';
+    badge.className = 'status-badge' + (!globalOn ? ' off' : siteOn && domain ? ' active' : '');
+    const config = stored.aiConfig && typeof stored.aiConfig === 'object' ? stored.aiConfig : {};
+    const authorized = Array.isArray(config.allowedHosts) && config.allowedHosts.includes(host);
+    scanAvailable = Boolean(domain && globalOn && siteOn && config.enabled === true && config.consent === true && authorized && !(currentTab && currentTab.incognito));
+    field('ai-hint').textContent = !config.enabled ? 'IA apagada. Tu protección local funciona sin modelos ni claves.'
+      : currentTab && currentTab.incognito ? 'La IA no se utiliza en pestañas privadas.'
+      : !authorized ? 'Este sitio no está autorizado para IA. Puedes gestionarlo en ajustes.'
+      : !globalOn || !siteOn ? 'Activa la protección de este sitio para analizarlo.'
+      : 'Análisis manual con el proveedor que autorizaste. Puede consumir cuota.';
     const last = Number(stored.phantom_last_update) || 0;
-    if (stored.phantom_update_results.some(result => !result.ok)) {
-      lastUpdateEl.textContent = 'Listas: actualización incompleta';
-    } else {
-      lastUpdateEl.textContent = last
-        ? 'Listas: ' + new Date(last).toLocaleDateString('es', { day: 'numeric', month: 'short' })
-        : 'Listas: sin actualizar';
-    }
+    const results = Array.isArray(stored.phantom_update_results) ? stored.phantom_update_results : [];
+    field('last-update').textContent = results.some(result => !result || !result.ok)
+      ? 'Listas: actualización parcial'
+      : last ? 'Listas: ' + new Date(last).toLocaleDateString('es', { day: 'numeric', month: 'short' }) : 'Listas incluidas';
+    loaded = true;
+    controls();
   }
-
+  async function mutate(operation) {
+    if (busy || !loaded) return;
+    busy = true; controls();
+    try { await operation(); await refresh(); }
+    catch (error) {
+      try { await refresh(); } catch (_) { loaded = false; }
+      showMessage(error.userFacing ? error.message : 'No se pudo guardar el cambio. Inténtalo de nuevo.', true);
+    } finally { busy = false; controls(); }
+  }
   try {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     currentTab = tabs[0] || null;
     if (currentTab && currentTab.url) {
-      try {
-        const url = new URL(currentTab.url);
-        if (url.protocol === 'http:' || url.protocol === 'https:') {
-          domain = normalizeHost(url.hostname);
-        }
-      } catch (error) {}
+      const url = new URL(currentTab.url);
+      if (url.protocol === 'http:' || url.protocol === 'https:') { host = url.hostname.toLowerCase(); domain = normalizeHost(host); }
     }
-  } catch (error) {
-    console.error('PhantomShield: no se pudo leer la pestaña activa.', error);
-  }
-
-  domainEl.textContent = domain || 'Página interna';
-  if (!domain) siteHintEl.textContent = 'No aplica en esta página';
-
-  document.getElementById('configure-ai').addEventListener('click', function() {
-    browser.runtime.openOptionsPage().catch(function() { showMessage('No se pudieron abrir los ajustes IA.', true); });
+  } catch (_) { showMessage('No se pudo leer la pestaña. Abre el panel de nuevo desde una web.', true); }
+  field('close-panel').addEventListener('click', () => window.close());
+  field('configure-ai').addEventListener('click', () => {
+    browser.runtime.openOptionsPage().catch(() => showMessage('No se pudieron abrir los ajustes de IA.', true));
   });
-  const scanButton = document.getElementById('scan-ai');
-  scanButton.disabled = !domain;
-  scanButton.addEventListener('click', async function() {
-    if (!currentTab || !domain) return;
-    scanButton.disabled = true;
-    showMessage('Analizando candidatos publicitarios…');
-    try {
-      const result = await browser.tabs.sendMessage(currentTab.id, { type: 'AI_SCAN' }, { frameId: 0 });
-      if (!result || !result.ok) showMessage((result && result.error) || 'Configura IA y autoriza este sitio.', true);
-      else showMessage(result.analyzed + ' candidatos analizados; ' + result.hidden + ' ocultados.');
-    } catch (error) { showMessage('Recarga esta página para habilitar el análisis IA.', true); }
-    finally { scanButton.disabled = false; }
+  field('scan-ai').addEventListener('click', () => mutate(async () => {
+    if (!scanAvailable || !currentTab) return;
+    showMessage('Analizando posibles anuncios…');
+    let result;
+    try { result = await browser.tabs.sendMessage(currentTab.id, { type: 'AI_SCAN' }, { frameId: 0 }); }
+    catch (_) { throw userError('Recarga esta página para habilitar el análisis de IA.'); }
+    if (!result || !result.ok) throw userError(result && result.error || 'Revisa la configuración y los permisos de IA.');
+    showMessage(Number(result.analyzed || 0) + ' candidatos analizados · ' + Number(result.hidden || 0) + ' ocultados.');
+  }));
+  field('site-toggle').addEventListener('change', () => {
+    const enabled = field('site-toggle').checked;
+    mutate(async () => {
+      if (!domain) return;
+      const stored = await browser.storage.local.get({ disabled_domains: [] });
+      let list = (Array.isArray(stored.disabled_domains) ? stored.disabled_domains : []).filter(value => typeof value === 'string').map(normalizeHost);
+      // The background applies parent-domain exceptions to their subdomains too.
+      // Remove the responsible parent when re-enabling, not just an exact hostname.
+      list = list.filter(entry => enabled ? !excludedBy(domain, entry) : entry !== domain);
+      if (!enabled) list.push(domain);
+      await browser.storage.local.set({ disabled_domains: [...new Set(list)] });
+      if (currentTab) browser.tabs.reload(currentTab.id).catch(() => {});
+      showMessage(enabled ? 'Protección activada. Se recargará la página.' : 'Protección pausada. Se recargará la página.');
+    });
   });
-
-  siteToggle.addEventListener('change', async () => {
-    if (!domain) return;
-    const enabled = siteToggle.checked;
-    const stored = await browser.storage.local.get({ disabled_domains: [] });
-    let list = Array.isArray(stored.disabled_domains)
-      ? stored.disabled_domains.map(normalizeHost)
-      : [];
-    list = list.filter((entry) => entry !== domain);
-    if (!enabled) list.push(domain);
-    await browser.storage.local.set({ disabled_domains: list });
-    await refresh();
-    if (currentTab) browser.tabs.reload(currentTab.id).catch(() => {});
+  field('adblock-toggle').addEventListener('change', () => {
+    const enabled = field('adblock-toggle').checked;
+    mutate(async () => {
+      await browser.storage.local.set({ adblockEnabled: enabled });
+      if (currentTab && domain) browser.tabs.reload(currentTab.id).catch(() => {});
+      showMessage(enabled ? 'Bloqueo local activado.' : 'Bloqueo local desactivado.');
+    });
   });
-
-  adblockToggle.addEventListener('change', async () => {
-    await browser.storage.local.set({ adblockEnabled: adblockToggle.checked });
-    await refresh();
-    if (currentTab && domain) browser.tabs.reload(currentTab.id).catch(() => {});
+  field('privacy-toggle').addEventListener('change', () => {
+    const enabled = field('privacy-toggle').checked;
+    mutate(async () => { await browser.storage.local.set({ privacyEnabled: enabled }); showMessage('El cambio de Canvas se aplica al recargar la página.'); });
   });
-
-  privacyToggle.addEventListener('change', async () => {
-    await browser.storage.local.set({ privacyEnabled: privacyToggle.checked });
-    showMessage('Se aplicará al recargar la página.');
-  });
-
-  updateButton.addEventListener('click', async () => {
-    updateButton.disabled = true;
+  field('update-lists').addEventListener('click', () => mutate(async () => {
     showMessage('Descargando listas…');
-    try {
-      const results = await browser.runtime.sendMessage({ type: 'FORCE_UPDATE' });
-      if (Array.isArray(results)) {
-        const ok = results.filter((r) => r && r.ok).length;
-        showMessage(ok + ' de ' + results.length + ' listas actualizadas.', ok < results.length);
-      } else {
-        showMessage((results && results.error) || 'No se pudieron actualizar las listas.', true);
-      }
-      await refresh();
-    } catch (error) {
-      showMessage('No se pudieron actualizar las listas.', true);
-    } finally {
-      updateButton.disabled = false;
+    const results = await browser.runtime.sendMessage({ type: 'FORCE_UPDATE' });
+    if (!Array.isArray(results)) throw userError(results && results.error || 'No se pudieron actualizar las listas.');
+    const count = results.filter(result => result && result.ok).length;
+    showMessage(count + ' de ' + results.length + ' listas actualizadas.', count < results.length);
+  }));
+  field('reset-stats').addEventListener('click', () => { field('reset-confirm').hidden = false; field('cancel-reset').focus(); });
+  field('cancel-reset').addEventListener('click', () => { field('reset-confirm').hidden = true; field('reset-stats').focus(); });
+  field('confirm-reset').addEventListener('click', () => mutate(async () => {
+    const result = await browser.runtime.sendMessage({ type: 'RESET_STATS' });
+    if (!result || !result.ok) throw userError('No se pudieron reiniciar los contadores.');
+    field('reset-confirm').hidden = true;
+    field('reset-stats').focus();
+    showMessage('Contadores reiniciados.');
+  }));
+  const changed = (values, area) => {
+    if (area === 'local' && ['adblockEnabled','privacyEnabled','disabled_domains','aiConfig','blockedCount','phantom_last_update','phantom_update_results'].some(key => key in values)) {
+      refresh().catch(() => showMessage('No se pudo actualizar el estado de protección.', true));
     }
-  });
-
-  resetButton.addEventListener('click', async () => {
-    await browser.runtime.sendMessage({ type: 'RESET_STATS' });
-    showMessage('Contador reiniciado.');
-    await refresh();
-  });
-
-  try {
-    await refresh();
-  } catch (error) {
-    showMessage('No se pudo conectar con el bloqueador.', true);
-  }
+  };
+  if (browser.storage.onChanged) browser.storage.onChanged.addListener(changed);
+  window.addEventListener('pagehide', () => {
+    if (browser.storage.onChanged && browser.storage.onChanged.removeListener) browser.storage.onChanged.removeListener(changed);
+  }, { once: true });
+  try { await refresh(); }
+  catch (_) { showMessage('No se pudo conectar con el bloqueador. Abre el panel de nuevo.', true); }
 });

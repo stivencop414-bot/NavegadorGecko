@@ -11,6 +11,7 @@
   let batches = 0;
   let seen = new WeakMap();
   const pendingRoots = new Set();
+  const MAX_NODES_PER_SCAN = 200;
   let walker = null;
   const hidden = new Map();
   const marker = /(?:^|[\s_-])(?:ads?|advert(?:isement|ising)?|sponsor(?:ed)?|promo(?:ted|tion)?|publicidad|banner)(?:$|[\s_-])/i;
@@ -28,7 +29,7 @@
   function* nextElements() {
     let visited = 0;
     // Continue where the previous scan stopped; do not repeatedly scan only the top of a long feed.
-    while (visited < 800) {
+    while (visited < MAX_NODES_PER_SCAN) {
       let element;
       if (!walker) {
         const root = pendingRoots.values().next().value;
@@ -79,6 +80,11 @@
 
   async function scan() {
     if (!enabled) return { ok: false, error: 'Activa IA y autoriza este sitio en los ajustes.' };
+    if (document.visibilityState === 'hidden') {
+      stopObserver();
+      return { ok: false, error: 'Vuelve a esta página para analizarla.' };
+    }
+    startObserver();
     if (busy) return { ok: false, error: 'Análisis IA en curso.' };
     if (batches >= 3) return { ok: false, error: 'Límite de tres lotes por página; recarga para analizar de nuevo.' };
     const candidates = [];
@@ -113,7 +119,7 @@
     });
     try {
       const result = await browser.runtime.sendMessage({ type: 'AI_CLASSIFY', candidates: candidates });
-      if (!enabled || epoch !== revision) return { ok: false, error: 'El estado de protección cambió.' };
+      if (!enabled || epoch !== revision || document.visibilityState === 'hidden') return { ok: false, error: 'El estado de protección cambió.' };
       if (!result || !result.ok) return result || { ok: false, error: 'IA no disponible.' };
       let count = 0;
       for (const candidate of candidates) {
@@ -136,15 +142,56 @@
       return { ok: false, error: 'IA no disponible; continúa el bloqueo local.' };
     } finally {
       watcher.disconnect(); busy = false;
-      if (walker || pendingRoots.size) schedule();
+      if (batches >= 3) {
+        stopObserver();
+        pendingRoots.clear();
+        walker = null;
+      } else if (walker || pendingRoots.size) schedule();
     }
   }
 
   function schedule() {
+    if (document.visibilityState === 'hidden') { stopObserver(); return; }
     if (!enabled || busy || batches >= 3) return;
     if (timer !== null) return;
     timer = setTimeout(function() { timer = null; scan(); }, 1200);
   }
+
+  function stopObserver() {
+    if (observer) observer.disconnect();
+    observer = null;
+    clearTimeout(timer);
+    timer = null;
+  }
+
+  function startObserver() {
+    if (!enabled || observer || batches >= 3 || !document.body || document.visibilityState === 'hidden') return;
+    observer = new MutationObserver(function(records) {
+      for (const record of records) {
+        const roots = record.type === 'characterData' ? [record.target.parentElement] : record.addedNodes;
+        if (roots.length > 40) {
+          // A large insertion is one subtree of work, not hundreds of queued roots.
+          enqueue(record.target);
+          continue;
+        }
+        for (const root of roots) {
+          enqueue(root);
+        }
+      }
+      schedule();
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  }
+
+  function updateVisibility() {
+    if (document.visibilityState === 'hidden') stopObserver();
+    else if (enabled && batches < 3) { enqueue(document.body); startObserver(); schedule(); }
+  }
+  document.addEventListener('visibilitychange', updateVisibility);
+  // Native media protection can consume visibilitychange before content listeners.
+  window.addEventListener('focus', updateVisibility);
+  window.addEventListener('pageshow', updateVisibility);
+
 
   async function refresh() {
     const revision = ++epoch;
@@ -163,21 +210,7 @@
       enabled = Boolean(state && state.enabled && state.aiEnabled);
       if (enabled && document.body) {
         pendingRoots.add(document.body);
-        observer = new MutationObserver(function(records) {
-          for (const record of records) {
-            const roots = record.type === 'characterData' ? [record.target.parentElement] : record.addedNodes;
-            if (roots.length > 40) {
-              // A large insertion is one subtree of work, not hundreds of queued roots.
-              enqueue(record.target);
-              continue;
-            }
-            for (const root of roots) {
-              enqueue(root);
-            }
-          }
-          schedule();
-        });
-        observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+        startObserver();
         schedule();
       }
     } catch (error) { enabled = false; }

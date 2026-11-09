@@ -118,6 +118,7 @@
   }
 
   function scheduleProceduralScan() {
+    if (!rules.procedural.length) return;
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(evaluateProceduralFilters, 200);
   }

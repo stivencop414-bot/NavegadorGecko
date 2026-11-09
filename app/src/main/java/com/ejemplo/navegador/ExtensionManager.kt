@@ -153,6 +153,18 @@ object ExtensionManager {
         known[id]?.let { runAction(it, onDone) }
     }
 
+    /** Estado real de la extensión incluida, también cuando está desactivada. */
+    fun installedPhantom(): WebExtension? = known[PHANTOMSHIELD_ID]
+
+    /** Standard browser-action badge; no native messaging or page data is exposed. */
+    fun phantomBadge(global: Boolean = false): String? {
+        if (known[PHANTOMSHIELD_ID]?.metaData?.enabled == false) return "OFF"
+        val raw = if (global) defaultActions[PHANTOMSHIELD_ID]?.badgeText
+        else TabManager.activeSession()?.let { sessionActions[it]?.get(PHANTOMSHIELD_ID)?.badgeText }
+            ?: defaultActions[PHANTOMSHIELD_ID]?.badgeText?.takeIf { it == "OFF" }
+        return raw?.takeIf { it == "OFF" || it == "PAUSE" || it.matches(Regex("""[0-9]{1,3}\+?""")) }
+    }
+
     /** Extensiones activas que tienen botón (browser_action/page_action). */
     fun actionableExtensions(): List<WebExtension> {
         val session = TabManager.activeSession()
@@ -1306,39 +1318,43 @@ object ExtensionManager {
             clipToOutline = true
         }
 
-        // Asa + nombre de la extensión + cerrar.
-        sheet.addView(android.view.View(activity).apply {
-            background = ThemeManager.rounded(activity, p.outline, 3f)
-        }, android.widget.LinearLayout.LayoutParams(dp(36f), dp(4f)).apply {
-            gravity = Gravity.CENTER_HORIZONTAL
-            topMargin = dp(10f)
-        })
         val dialog = Dialog(activity)
-        val header = android.widget.LinearLayout(activity).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20f), dp(2f), dp(8f), dp(2f))
-            addView(android.widget.TextView(activity).apply {
-                text = extension?.metaData?.name ?: "Extensión"
-                textSize = 15f
-                setTextColor(p.text)
-                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-            }, android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(android.widget.ImageButton(activity).apply {
-                setImageResource(R.drawable.ic_menu_close)
-                contentDescription = "Cerrar"
-                ThemeManager.styleIconButton(activity, this)
-                imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
-                setOnClickListener { dialog.dismiss() }
-            }, android.widget.LinearLayout.LayoutParams(dp(44f), dp(44f)))
+        if (extension?.id != PHANTOMSHIELD_ID) {
+            // PhantomShield supplies its own handle, title and close button.
+            sheet.addView(android.view.View(activity).apply {
+                background = ThemeManager.rounded(activity, p.outline, 3f)
+            }, android.widget.LinearLayout.LayoutParams(dp(36f), dp(4f)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = dp(10f)
+            })
+            val header = android.widget.LinearLayout(activity).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(20f), dp(2f), dp(8f), dp(2f))
+                addView(android.widget.TextView(activity).apply {
+                    text = extension?.metaData?.name ?: "Extensión"
+                    textSize = 15f
+                    setTextColor(p.text)
+                    typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                }, android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(android.widget.ImageButton(activity).apply {
+                    setImageResource(R.drawable.ic_menu_close)
+                    contentDescription = "Cerrar"
+                    ThemeManager.styleIconButton(activity, this)
+                    imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
+                    setOnClickListener { dialog.dismiss() }
+                }, android.widget.LinearLayout.LayoutParams(dp(44f), dp(44f)))
+            }
+            sheet.addView(header)
         }
-        sheet.addView(header)
         sheet.addView(view, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         dialog.apply {
             requestWindowFeature(Window.FEATURE_NO_TITLE)
+            setTitle(extension?.metaData?.name ?: "Extensión")
+            setCanceledOnTouchOutside(true)
             setContentView(sheet)
             setOnDismissListener {
                 view.releaseSession()

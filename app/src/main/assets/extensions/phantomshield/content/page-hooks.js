@@ -17,6 +17,7 @@
     privacyEnabled: false
   };
   let canvasRestore = null;
+  let updateYouTubeMonitoring = function() {};
 
   function readBooleanAttribute(name, fallback) {
     const root = document.documentElement;
@@ -32,6 +33,7 @@
     if (state.privacyEnabled) installCanvasPrivacy();
     else if (canvasRestore) { canvasRestore(); canvasRestore = null; }
     if (!state.adblockEnabled) restoreYouTubeVideo();
+    updateYouTubeMonitoring();
   }
 
   document.addEventListener('phantomshield:settings', syncSettings, false);
@@ -202,41 +204,63 @@
       youtubeVideoState = { muted: video.muted, playbackRate: video.playbackRate };
     }
 
-    video.muted = true;
+    if (!video.muted) video.muted = true;
     if (skipButton) {
       skipButton.click();
     } else {
-      video.playbackRate = Math.min(8, video.playbackRate < 1 ? 1 : video.playbackRate * 2);
+      const nextRate = Math.min(8, video.playbackRate < 1 ? 1 : video.playbackRate * 2);
+      if (video.playbackRate !== nextRate) video.playbackRate = nextRate;
     }
   }
 
   function installYouTubePlayerGuard() {
     if (!hostnameMatches(location.hostname, 'youtube.com')) return;
-    let scheduled = false;
+    let observer = null;
+    let timer = null;
     const schedule = function() {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(function() {
-        scheduled = false;
-        handleYouTubePlayer();
-      });
+      if (!state.adblockEnabled) return;
+      if (document.visibilityState === 'hidden') {
+        if (observer || timer !== null) updateYouTubeMonitoring();
+        return;
+      }
+      if (!observer) { updateYouTubeMonitoring(); return; }
+      if (timer !== null) return;
+      // Class animations can mutate on every frame. One scan per 250 ms is enough.
+      timer = setTimeout(function() {
+        timer = null;
+        if (document.visibilityState === 'hidden') updateYouTubeMonitoring();
+        else if (state.adblockEnabled) handleYouTubePlayer();
+      }, 250);
     };
-    const start = function() {
-      const observer = new MutationObserver(schedule);
-      observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['class']
-      });
-      document.addEventListener('timeupdate', schedule, true);
+    updateYouTubeMonitoring = function() {
+      if (!state.adblockEnabled || document.visibilityState === 'hidden' || !document.documentElement) {
+        if (observer) observer.disconnect();
+        observer = null;
+        clearTimeout(timer);
+        timer = null;
+        // Nexo may consume visibilitychange to keep media playing in PiP.
+        // A cheap media event can wake us after returning; there is no polling.
+        if (state.adblockEnabled) document.addEventListener('timeupdate', schedule, true);
+        else document.removeEventListener('timeupdate', schedule, true);
+        restoreYouTubeVideo();
+        return;
+      }
+      if (!observer) {
+        observer = new MutationObserver(schedule);
+        observer.observe(document.documentElement, {
+          childList: true, subtree: true, attributes: true, attributeFilter: ['class']
+        });
+        document.addEventListener('timeupdate', schedule, true);
+      }
       schedule();
     };
+    document.addEventListener('visibilitychange', updateYouTubeMonitoring);
+    window.addEventListener('focus', updateYouTubeMonitoring);
+    window.addEventListener('pageshow', updateYouTubeMonitoring);
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', start, { once: true });
-    } else {
-      start();
+      document.addEventListener('DOMContentLoaded', updateYouTubeMonitoring, { once: true });
     }
+    updateYouTubeMonitoring();
   }
 
   installPopupGuard();

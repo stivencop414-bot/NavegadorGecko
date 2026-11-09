@@ -2,6 +2,7 @@ package com.ejemplo.navegador
 
 import java.io.ByteArrayOutputStream
 import java.nio.charset.Charset
+import java.net.URI
 
 /**
  * Reglas de seguridad para URLs. Kotlin puro (sin android.*) para que
@@ -46,6 +47,21 @@ object UrlSafety {
     fun isExtensionTabUrl(url: String): Boolean =
         url.trim().equals("about:blank", ignoreCase = true) ||
             scheme(url) in extensionTabSchemes
+
+    /** Sharing to a public translation service is narrower than in-browser navigation. */
+    fun isPublicTranslationCandidate(url: String): Boolean {
+        if (url.any { it <= ' ' } || !isWebUrl(url)) return false
+        val uri = runCatching { URI(url) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase()?.trimEnd('.') ?: return false
+        if (uri.rawUserInfo != null || uri.isOpaque || host.length > 253) return false
+        if (!host.contains('.') || host.contains(':') || host.all { it.isDigit() || it == '.' }) return false
+        if (listOf("localhost", "local", "localdomain", "lan", "home.arpa", "internal", "test", "invalid", "onion").any {
+                host == it || host.endsWith(".$it")
+            }) return false
+        if (uri.port != -1 && uri.port != 80 && uri.port != 443) return false
+        // Reject known credentials instead of silently handing them to another service.
+        return redactSensitiveQuery(url) == url
+    }
 
     /**
      * Esquemas que Gecko nunca debe pasar a otra app: los que carga él mismo
