@@ -31,7 +31,6 @@ import android.view.WindowInsetsController
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
-import android.widget.HorizontalScrollView
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -169,8 +168,10 @@ class MainActivity :
         browserFrame = findViewById(R.id.browserFrame)
         startPage = StartPageView(
             this,
-            onSearch = { focusOmnibox() },
-            onOpen = { url -> TabManager.navigate(url) }
+            onOpen = { url -> TabManager.navigate(url) },
+            onPrivate = { viewModel.newTab(true) },
+            onShield = { openShieldPanel() },
+            onExtensions = { openScreen(ExtensionStoreActivity::class.java) }
         ).apply { visibility = View.GONE }
         // Encima de la GeckoView y debajo del botón "Mini video".
         browserFrame.addView(
@@ -325,115 +326,144 @@ class MainActivity :
         var sheet: android.app.Dialog? = null
         val dismiss = { sheet?.dismiss(); Unit }
 
-        val actions = listOf(
+        val primaryActions = listOf(
             SheetAction(R.drawable.ic_nav_add, "Nueva pestaña") { viewModel.newTab(false) },
-            SheetAction(R.drawable.ic_menu_private, "Privada") { viewModel.newTab(true) },
+            SheetAction(R.drawable.ic_menu_private, "Privada") { viewModel.newTab(true) }
+        )
+        val actions = listOf(
             SheetAction(R.drawable.ic_menu_history, "Historial") { openScreen(HistoryActivity::class.java) },
             SheetAction(R.drawable.ic_menu_download, "Descargas") { openScreen(DownloadsActivity::class.java) },
-            SheetAction(R.drawable.ic_extension_placeholder, "Extensiones") {
-                openScreen(ExtensionStoreActivity::class.java)
-            },
             SheetAction(R.drawable.ic_menu_translate, "Traducir") {
                 TranslatorManager.translateActive(this) { _, message ->
                     runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
                 }
             },
-            SheetAction(R.drawable.ic_menu_share, "Compartir") { shareCurrent() },
-            SheetAction(
-                R.drawable.ic_menu_desktop,
-                "Escritorio",
-                active = current?.desktopMode == true
-            ) { TabManager.setDesktopMode(!(current?.desktopMode ?: false)) },
-            SheetAction(R.drawable.ic_menu_copy, "Copiar enlace") {
-                current?.let { copyText("Enlace", it.url) }
+            SheetAction(R.drawable.ic_menu_desktop, "Escritorio", active = current?.desktopMode == true) {
+                TabManager.setDesktopMode(!(current?.desktopMode ?: false))
             },
-            SheetAction(R.drawable.ic_menu_find, "Buscar en página") { showFindBar() },
-            SheetAction(R.drawable.ic_menu_settings, "Ajustes") { openScreen(SettingsActivity::class.java) },
-            SheetAction(R.drawable.ic_menu_close, "Cerrar", danger = true) { viewModel.closeCurrentTab() }
+            SheetAction(R.drawable.ic_menu_copy, "Copiar URL") { current?.let { copyText("Enlace", it.url) } },
+            SheetAction(R.drawable.ic_menu_share, "Compartir") { shareCurrent() },
+            SheetAction(R.drawable.ic_menu_find, "Buscar") { showFindBar() },
+            SheetAction(R.drawable.ic_menu_settings, "Ajustes") { openScreen(SettingsActivity::class.java) }
         )
-
+        val menuHeader = LinearLayout(this).apply {
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(NexoSheets.header(
+                this@MainActivity, "Menú de Nexo",
+                if (BrowserPrefs.isNexoHome(current?.url)) "Página de inicio" else current?.url?.let { displayUrl(it) }
+            ), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(ImageButton(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_menu_close)
+                contentDescription = "Cerrar menú"
+                ThemeManager.styleIconButton(this@MainActivity, this)
+                setOnClickListener { dismiss() }
+            }, LinearLayout.LayoutParams((48 * resources.displayMetrics.density).toInt(), (48 * resources.displayMetrics.density).toInt()).apply {
+                marginEnd = (16 * resources.displayMetrics.density).toInt()
+            })
+        }
         val content = NexoSheets.column(
-            this,
-            NexoSheets.header(
-                this,
-                if (BrowserPrefs.isNexoHome(current?.url)) "Página de inicio"
-                else current?.title?.ifBlank { null } ?: "Nexo Browser",
-                current?.url?.takeUnless { BrowserPrefs.isNexoHome(it) }
-            ),
-            NexoSheets.grid(this, actions, dismiss = dismiss)
+            this, menuHeader, NexoSheets.primaryActions(this, primaryActions, dismiss)
         )
+        content.addView(NexoSheets.grid(this, actions, dismiss = dismiss))
         extensionShortcuts(dismiss)?.let { content.addView(it) }
         sheet = NexoSheets.show(this, content)
     }
 
-    /** Botones de las extensiones activas (p. ej. el panel de PhantomShield). */
+    /** Controles de extensiones con insignias publicadas por el propio bloqueador. */
     private fun extensionShortcuts(dismiss: () -> Unit): View? {
-        val items = ExtensionManager.actionableExtensions()
-        if (items.isEmpty()) return null
+        val phantom = ExtensionManager.installedPhantom()
+        val items = listOfNotNull(phantom) + ExtensionManager.actionableExtensions().filterNot { it.id == ExtensionManager.PHANTOMSHIELD_ID }
         val p = ThemeManager.palette(this)
         val d = resources.displayMetrics.density
         fun dp(value: Float) = (value * d).toInt()
-
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(16f), 0, dp(16f), dp(4f))
-        }
-        items.take(10).forEach { extension ->
-            val icon = ImageView(this).apply {
-                setImageResource(R.drawable.ic_extension_placeholder)
-                imageTintList = android.content.res.ColorStateList.valueOf(p.accent)
-            }
-            ExtensionManager.loadIcon(extension, dp(40f)) { bitmap ->
-                if (bitmap != null) runOnUiThread {
-                    icon.imageTintList = null
-                    icon.setImageBitmap(bitmap)
-                }
-            }
-            val chip = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = android.view.Gravity.CENTER_VERTICAL
-                setPadding(dp(12f), 0, dp(14f), 0)
-                background = ThemeManager.ripple(
-                    this@MainActivity,
-                    ThemeManager.rounded(this@MainActivity, p.elevated, 20f),
-                    20f
-                )
-                isClickable = true
-                contentDescription = extension.metaData.name ?: extension.id
-                setOnClickListener {
-                    dismiss()
-                    ExtensionManager.runAction(extension) { ok, message ->
-                        if (!ok) runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
-                    }
-                }
-                addView(icon, LinearLayout.LayoutParams(dp(22f), dp(22f)).apply { marginEnd = dp(8f) })
-                addView(TextView(this@MainActivity).apply {
-                    text = extension.metaData.name ?: extension.id
-                    textSize = 13f
-                    setTextColor(p.text)
-                    maxLines = 1
-                    maxWidth = dp(150f)
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                })
-            }
-            row.addView(chip, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, dp(40f)
-            ).apply { marginEnd = dp(8f) })
-        }
-
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(dp(16f), dp(8f), dp(16f), dp(10f))
             addView(TextView(this@MainActivity).apply {
-                text = "Extensiones"
-                textSize = 12.5f
-                ThemeManager.styleSectionLabel(this@MainActivity, this)
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                setPadding(dp(24f), dp(12f), dp(24f), dp(8f))
+                text = "EXTENSIONES  ›"; textSize = 10f; letterSpacing = 0.08f
+                typeface = resources.getFont(R.font.inter_variable); setTextColor(if (p.isDark) 0xFFC4B5FD.toInt() else p.accent)
+                minimumHeight = dp(40f); gravity = android.view.Gravity.CENTER_VERTICAL
+                isClickable = true; contentDescription = "Administrar extensiones"
+                setOnClickListener { dismiss(); openScreen(ExtensionsActivity::class.java) }
             })
-            addView(HorizontalScrollView(this@MainActivity).apply {
-                isHorizontalScrollBarEnabled = false
-                addView(row)
+            if (items.isEmpty()) addView(TextView(this@MainActivity).apply {
+                text = "Administrar extensiones"; textSize = 13f; setTextColor(p.muted)
+                minimumHeight = dp(48f); gravity = android.view.Gravity.CENTER_VERTICAL
+                isClickable = true; setOnClickListener { dismiss(); openScreen(ExtensionsActivity::class.java) }
             })
+            items.take(4).forEach { extension ->
+                val isShield = extension.id == ExtensionManager.PHANTOMSHIELD_ID
+                val badge = if (isShield) ExtensionManager.phantomBadge() else null
+                val icon = ImageView(this@MainActivity).apply {
+                    setImageResource(if (isShield) R.drawable.ic_quick_shield else R.drawable.ic_extension_placeholder)
+                    if (!isShield) imageTintList = android.content.res.ColorStateList.valueOf(p.accent)
+                    setPadding(dp(7f), dp(7f), dp(7f), dp(7f))
+                    background = ThemeManager.rounded(this@MainActivity, if (isShield) 0x2210B981 else p.accentSoft, 12f)
+                }
+                if (!isShield) ExtensionManager.loadIcon(extension, dp(40f)) { bitmap ->
+                    if (bitmap != null) runOnUiThread { icon.imageTintList = null; icon.setImageBitmap(bitmap) }
+                }
+                val row = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+                    minimumHeight = dp(76f); setPadding(dp(12f), dp(12f), dp(12f), dp(12f))
+                    val surface = if (isShield) androidx.core.graphics.ColorUtils.blendARGB(p.surface, 0xFF10B981.toInt(), if (p.isDark) 0.10f else 0.05f) else p.elevated
+                    background = ThemeManager.ripple(this@MainActivity, ThemeManager.rounded(this@MainActivity, surface, 16f, if (isShield) 0x5510B981 else p.outline), 16f)
+                    isClickable = true; isFocusable = true
+                    contentDescription = "Abrir panel de ${extension.metaData.name ?: "extensión"}"
+                    setOnClickListener {
+                        dismiss()
+                        if (!extension.metaData.enabled) openScreen(ExtensionsActivity::class.java)
+                        else ExtensionManager.runAction(extension) { ok, message ->
+                            if (!ok) runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
+                        }
+                    }
+                    addView(icon, LinearLayout.LayoutParams(dp(36f), dp(36f)).apply { marginEnd = dp(12f) })
+                    addView(LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        addView(TextView(this@MainActivity).apply {
+                            text = extension.metaData.name ?: "Extensión"; textSize = 12.5f
+                            typeface = android.graphics.Typeface.create(resources.getFont(R.font.inter_variable), android.graphics.Typeface.BOLD)
+                            setTextColor(p.text); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                        })
+                        addView(TextView(this@MainActivity).apply {
+                            text = when {
+                                !extension.metaData.enabled -> "Extensión desactivada"
+                                badge == "OFF" -> "Bloqueo pausado"
+                                badge == "PAUSE" -> "Pausada en esta página"
+                                badge != null -> "$badge bloqueos en esta página"
+                                else -> "Abrir controles y ajustes"
+                            }
+                            textSize = 10.5f; setTextColor(p.muted); setPadding(0, dp(4f), 0, 0)
+                            if (badge?.matches(Regex("[0-9]{1,3}\\+?")) == true) typeface = resources.getFont(R.font.jetbrains_mono)
+                        })
+                    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                    if (isShield) addView(android.widget.Switch(this@MainActivity).apply {
+                        isChecked = extension.metaData.enabled
+                        contentDescription = "Habilitar extensión PhantomShield"; ThemeManager.styleSwitch(this@MainActivity, this)
+                        setOnCheckedChangeListener { _, enabled ->
+                            dismiss()
+                            ExtensionManager.setEnabled(this@MainActivity, extension, enabled) { ok, message ->
+                                runOnUiThread {
+                                    if (!ok) Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                                    TabManager.activeTab()?.takeIf { BrowserPrefs.isNexoHome(it.url) }?.let { startPage.render(it.isPrivate) }
+                                }
+                            }
+                        }
+                    }) else addView(TextView(this@MainActivity).apply { text = "›"; textSize = 22f; setTextColor(p.muted) })
+                }
+                addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8f) })
+            }
+        }
+    }
+
+    private fun openShieldPanel() {
+        val shield = ExtensionManager.actionableExtensions().firstOrNull { it.id == ExtensionManager.PHANTOMSHIELD_ID }
+        if (shield == null) {
+            openScreen(ExtensionsActivity::class.java)
+            return
+        }
+        ExtensionManager.runAction(shield) { ok, message ->
+            if (!ok) runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
         }
     }
 
@@ -821,12 +851,6 @@ class MainActivity :
         applyPipCrop()
     }
 
-    private fun focusOmnibox() {
-        omnibox.requestFocus()
-        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-            .showSoftInput(omnibox, InputMethodManager.SHOW_IMPLICIT)
-    }
-
     /** Página de inicio de Nexo en pestañas nuevas (about:blank). */
     private fun updateStartPage(tab: BrowserTab) {
         val show = BrowserPrefs.isNexoHome(tab.url) && !immersive
@@ -850,7 +874,11 @@ class MainActivity :
         }
         omnibox.setText(displayUrl(tab.url))
         setOmniboxIcon(
-            if (UrlSafety.scheme(tab.url) == "https") R.drawable.ic_lock else R.drawable.ic_search
+            when (UrlSafety.scheme(tab.url)) {
+                "https" -> R.drawable.ic_lock
+                "moz-extension" -> R.drawable.ic_extension_placeholder
+                else -> R.drawable.ic_search
+            }
         )
     }
 
@@ -860,7 +888,15 @@ class MainActivity :
     }
 
     private fun displayUrl(url: String): String {
-        if (!UrlSafety.isWebUrl(url)) return url
+        if (UrlSafety.scheme(url) == "moz-extension") {
+            val installedOptions = ExtensionManager.actionableExtensions().mapNotNull { candidate ->
+                val options = candidate.metaData.optionsPageUrl ?: return@mapNotNull null
+                val name = candidate.metaData.name ?: return@mapNotNull null
+                options to name
+            }
+            return BrowserPagePresentation.extensionLabel(url, installedOptions) ?: "Página de extensión"
+        }
+        if (!UrlSafety.isWebUrl(url)) return "Página interna de Nexo"
         val host = runCatching { Uri.parse(url).host }.getOrNull()?.lowercase() ?: return url
         return host.removePrefix("www.").removePrefix("m.")
     }
@@ -897,6 +933,7 @@ class MainActivity :
         super.onResume()
         BrowserHosts.attach(this)
         ExtensionManager.attachPromptActivity(this)
+        TabManager.activeTab()?.takeIf { BrowserPrefs.isNexoHome(it.url) }?.let { startPage.render(it.isPrivate) }
         ExtensionManager.consumePendingAction { ok, message ->
             if (!ok) runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
         }

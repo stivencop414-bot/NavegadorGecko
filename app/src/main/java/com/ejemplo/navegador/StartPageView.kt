@@ -2,190 +2,262 @@ package com.ejemplo.navegador
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.text.InputType
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import org.json.JSONArray
+import org.json.JSONObject
 
-/**
- * Página de inicio nativa de Nexo (nueva pestaña): logo, buscador y accesos
- * rápidos a los sitios más visitados. En pestañas privadas explica qué se
- * guarda y qué no.
- */
+/** Native rendering of the supplied Nexo prototype; it never fabricates protection counters. */
 @SuppressLint("ViewConstructor")
 class StartPageView(
     private val activity: Activity,
-    private val onSearch: () -> Unit,
-    private val onOpen: (String) -> Unit
+    private val onOpen: (String) -> Unit,
+    private val onPrivate: () -> Unit,
+    private val onShield: () -> Unit,
+    private val onExtensions: () -> Unit
 ) : ScrollView(activity) {
+    private data class Link(val label: String, val url: String = "", val kind: String = "web") {
+        val id get() = if (kind == "web") url else kind
+    }
+    private val content = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+    private val prefs get() = activity.getSharedPreferences("nexo_quick_access", Context.MODE_PRIVATE)
+    private val emerald = Color.rgb(16, 185, 129)
+    private var renderedPrivate = false
+    private var renderedShieldToken: String? = null
+    private val delayedShieldRefresh = Runnable { refreshShieldIfChanged() }
 
-    private val content = LinearLayout(activity).apply {
-        orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER_HORIZONTAL
+    private fun shieldToken() =
+        "${ExtensionManager.installedPhantom()?.metaData?.enabled}|${ExtensionManager.phantomBadge(global = true)}"
+
+    private fun refreshShieldIfChanged() {
+        if (isShown && hasWindowFocus() && renderedShieldToken != shieldToken()) render(renderedPrivate)
     }
 
-    init {
-        isFillViewport = true
-        isVerticalScrollBarEnabled = false
-        addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        removeCallbacks(delayedShieldRefresh)
+        if (hasWindowFocus) {
+            refreshShieldIfChanged()
+            // One recheck lets a batched extension badge arrive after closing its panel.
+            postDelayed(delayedShieldRefresh, 1200L)
+        }
     }
 
-    private fun dp(value: Float): Int = (value * resources.displayMetrics.density).toInt()
+    override fun onDetachedFromWindow() {
+        removeCallbacks(delayedShieldRefresh)
+        super.onDetachedFromWindow()
+    }
+    private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
+    private fun params(width: Int = ViewGroup.LayoutParams.MATCH_PARENT, height: Int = ViewGroup.LayoutParams.WRAP_CONTENT) = LinearLayout.LayoutParams(width, height)
+    private fun text(label: String, size: Float, color: Int, bold: Boolean = false) = TextView(activity).apply {
+        text = label; textSize = size; setTextColor(color)
+        if (bold) typeface = Typeface.create(resources.getFont(R.font.inter_variable), Typeface.BOLD)
+    }
+    private fun bento() = ThemeManager.palette(activity).let { p -> GradientDrawable(
+        GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(p.elevated, p.surface)
+    ).apply { cornerRadius = dp(18f).toFloat(); setStroke(dp(1f), p.outline) } }
+    init { isFillViewport = true; isVerticalScrollBarEnabled = false; addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)) }
 
-    /** Vuelve a dibujar con el tema actual y el historial más reciente. */
     fun render(isPrivate: Boolean) {
+        renderedPrivate = isPrivate
+        renderedShieldToken = shieldToken()
         val p = ThemeManager.palette(activity)
-        setBackgroundColor(p.background)
-        content.removeAllViews()
-        content.setPadding(dp(20f), dp(48f), dp(20f), dp(32f))
+        setBackgroundColor(p.background); content.removeAllViews(); content.setPadding(dp(20f), dp(16f), dp(20f), dp(16f))
+        val top = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
+        val badge = ExtensionManager.phantomBadge(global = true)
+        val available = ExtensionManager.installedPhantom()?.metaData?.enabled == true && badge != "OFF" && badge != "PAUSE"
+        val shieldColor = if (available) { if (p.isDark) 0xFF6EE7B7.toInt() else 0xFF047857.toInt() } else p.muted
+        top.addView(LinearLayout(activity).apply {
+            gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(44f); setPadding(dp(10f), 0, dp(10f), 0)
+            background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.surface, 22f, p.outline), 22f)
+            isClickable = true; isFocusable = true; contentDescription = "Abrir panel de PhantomShield"
+            setOnClickListener { onShield() }
+            addView(View(activity).apply { background = ThemeManager.rounded(activity, shieldColor, 4f) }, params(dp(6f), dp(6f)).apply { marginEnd = dp(7f) })
+            addView(text("PhantomShield", 11f, p.text, true))
+            addView(text(when (badge) { "OFF" -> "Pausado"; "PAUSE" -> "Pausado"; null -> "Panel"; else -> "$badge total" }, 10.5f, shieldColor, true).apply {
+                typeface = resources.getFont(R.font.jetbrains_mono)
+                setPadding(dp(6f), dp(3f), dp(6f), dp(3f))
+                background = ThemeManager.rounded(activity, androidx.core.graphics.ColorUtils.setAlphaComponent(emerald, 24), 12f)
+            }, params().apply { width = ViewGroup.LayoutParams.WRAP_CONTENT; marginStart = dp(8f) })
+        })
+        top.addView(View(activity), params(0, dp(1f)).apply { weight = 1f })
+        top.addView(ImageView(activity).apply {
+            setImageResource(R.drawable.ic_menu_private); imageTintList = ColorStateList.valueOf(p.muted)
+            setPadding(dp(12f), dp(12f), dp(12f), dp(12f)); background = ThemeManager.ripple(activity, bento(), 22f)
+            contentDescription = "Abrir pestaña privada"; isClickable = true; isFocusable = true
+            setOnClickListener { onPrivate() }
+        }, params(dp(44f), dp(44f)))
+        content.addView(top, params())
 
         content.addView(ImageView(activity).apply {
-            setImageResource(if (isPrivate) R.drawable.ic_menu_private else R.drawable.ic_nexo_logo)
-            if (isPrivate) {
-                imageTintList = ColorStateList.valueOf(p.accent)
-                background = ThemeManager.rounded(activity, p.accentSoft, 28f)
-                val pad = dp(14f)
-                setPadding(pad, pad, pad, pad)
+            setImageResource(if (isPrivate) R.drawable.ic_menu_private else R.drawable.ic_nexo_emblem)
+            setPadding(dp(16f), dp(16f), dp(16f), dp(16f))
+            imageTintList = if (isPrivate) ColorStateList.valueOf(Color.WHITE) else null
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF7C3AED.toInt(), 0xFF4F46E5.toInt(), 0xFF06B6D4.toInt())).apply {
+                cornerRadius = dp(26f).toFloat(); setStroke(dp(1f), 0x55FFFFFF)
             }
-            layoutParams = LinearLayout.LayoutParams(dp(68f), dp(68f))
-        })
-        content.addView(TextView(activity).apply {
-            text = if (isPrivate) "Navegación privada" else "Nexo"
-            textSize = 26f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(p.text)
-            gravity = Gravity.CENTER
-            setPadding(0, dp(12f), 0, dp(22f))
-        })
-
-        // Buscador grande: abre el omnibox.
-        content.addView(LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20f), 0, dp(20f), 0)
-            background = ThemeManager.ripple(
-                activity,
-                ThemeManager.rounded(activity, p.surface, 28f, p.outline),
-                28f
-            )
-            elevation = dp(2f).toFloat()
-            isClickable = true
-            setOnClickListener { onSearch() }
-            addView(ImageView(activity).apply {
-                setImageResource(R.drawable.ic_search)
-                imageTintList = ColorStateList.valueOf(p.muted)
-                layoutParams = LinearLayout.LayoutParams(dp(20f), dp(20f)).apply { marginEnd = dp(12f) }
-            })
-            addView(TextView(activity).apply {
-                text = activity.getString(R.string.omnibox_hint)
-                textSize = 15.5f
-                setTextColor(p.muted)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56f)))
-
+            elevation = dp(8f).toFloat()
+        }, params(dp(80f), dp(80f)).apply { topMargin = dp(25f); bottomMargin = dp(10f) })
+        content.addView(text(if (isPrivate) "Navegación privada" else "Nexo", 26f, p.text, true).apply { gravity = Gravity.CENTER })
+        content.addView(text(if (isPrivate) "Un espacio separado para navegar" else "Navegación rápida, privacidad bajo tu control", 12f, p.muted).apply {
+            gravity = Gravity.CENTER; setPadding(0, dp(3f), 0, dp(20f))
+        }, params())
         if (isPrivate) {
-            content.addView(TextView(activity).apply {
-                text = "Nexo no guarda el historial, las cookies ni las miniaturas de las pestañas " +
-                    "privadas. Al cerrarlas se borra todo. Tu proveedor de internet y los sitios que " +
-                    "visitas pueden seguir viendo tu actividad."
-                textSize = 14f
-                setTextColor(p.muted)
-                setLineSpacing(0f, 1.2f)
-                gravity = Gravity.CENTER
-                setPadding(dp(8f), dp(24f), dp(8f), 0)
+            content.addView(text("Estas pestañas no se guardan en el historial ni en las miniaturas. Sus cookies se eliminan al cerrar todas las pestañas privadas. Los archivos que descargues permanecen guardados. Tu proveedor de internet y los sitios que visitas pueden seguir viendo tu actividad.", 14f, p.muted).apply {
+                setLineSpacing(0f, 1.2f); setPadding(dp(4f), dp(16f), dp(4f), dp(16f))
+            }, params())
+        } else {
+            val heading = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
+            heading.addView(text("ACCESOS RÁPIDOS", 11f, p.muted, true).apply { letterSpacing = 0.08f }, params(0).apply { weight = 1f })
+            heading.addView(text("Editar", 12f, if (p.isDark) 0xFFC4B5FD.toInt() else p.accent, true).apply {
+                minimumHeight = dp(44f); gravity = Gravity.CENTER; setPadding(dp(12f), 0, 0, 0)
+                isClickable = true; isFocusable = true; setOnClickListener { editLinks() }
             })
-            return
-        }
-
-        val sites = shortcuts()
-        content.addView(TextView(activity).apply {
-            text = "Accesos rápidos"
-            textSize = 13f
-            ThemeManager.styleSectionLabel(activity, this)
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(4f), dp(30f), dp(4f), dp(12f))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        })
-
-        sites.chunked(4).forEach { row ->
-            val line = LinearLayout(activity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                weightSum = 4f
+            content.addView(heading, params())
+            val hidden = prefs.getStringSet("hidden", emptySet()).orEmpty()
+            val links = allLinks().filterNot { it.id in hidden }.take(7) + Link("Añadir", kind = "add")
+            links.chunked(4).forEach { group ->
+                val row = LinearLayout(activity).apply { weightSum = 4f }
+                group.forEach { row.addView(tile(it), params(0).apply { weight = 1f }) }
+                content.addView(row, params())
             }
-            row.forEach { (label, url) -> line.addView(tile(label, url), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
-            content.addView(line, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        content.addView(View(activity), params(1, 0).apply { weight = 1f })
+        content.addView(privacyCard(), params().apply { topMargin = dp(22f) })
+    }
+
+    private fun tile(link: Link): View {
+        val p = ThemeManager.palette(activity)
+        val host = BrowserPagePresentation.shortcut(link.url)?.identity.orEmpty()
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, dp(5f), 0, dp(12f))
+            background = ThemeManager.ripple(activity, null, 18f); isClickable = true; isFocusable = true; contentDescription = link.label
+            setOnClickListener { when (link.kind) { "shield" -> onShield(); "extensions" -> onExtensions(); "add" -> addLink(); else -> onOpen(link.url) } }
+            val square = FrameLayout(activity).apply { background = bento() }
+            val iconRes = when { link.kind == "shield" -> R.drawable.ic_quick_shield; link.kind == "extensions" -> R.drawable.ic_extension_placeholder; link.kind == "add" -> R.drawable.ic_nav_add; host.startsWith("youtube.com:") -> R.drawable.ic_quick_youtube; host.startsWith("google.com:") -> R.drawable.ic_quick_google; host.startsWith("github.com:") -> R.drawable.ic_quick_github; else -> null }
+            if (iconRes != null) {
+                square.addView(ImageView(activity).apply {
+                    setImageResource(iconRes)
+                    if (link.kind == "add" || link.kind == "extensions") imageTintList = ColorStateList.valueOf(if (link.kind == "extensions") 0xFF22D3EE.toInt() else p.muted)
+                }, FrameLayout.LayoutParams(dp(25f), dp(25f), Gravity.CENTER))
+            } else {
+                square.addView(text(if (host.contains("wikipedia.org")) "W" else link.label.take(1).uppercase(), 22f, p.text, true).apply {
+                    gravity = Gravity.CENTER
+                    if (host.contains("wikipedia.org")) typeface = Typeface.create("serif", Typeface.BOLD)
+                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            }
+            addView(square, params(dp(56f), dp(56f)))
+            addView(text(link.label, 11f, if (link.kind == "shield") { if (p.isDark) 0xFF6EE7B7.toInt() else 0xFF047857.toInt() } else p.text).apply {
+                gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(dp(2f), dp(6f), dp(2f), 0)
+            }, params())
         }
     }
 
-    private fun tile(label: String, url: String): View {
+    private fun privacyCard(): View {
         val p = ThemeManager.palette(activity)
         return LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, dp(8f), 0, dp(10f))
-            background = ThemeManager.ripple(activity, null, 20f)
-            isClickable = true
-            contentDescription = label
-            setOnClickListener { onOpen(url) }
-            addView(TextView(activity).apply {
-                text = label.take(1).uppercase()
-                textSize = 20f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(p.accent)
-                background = ThemeManager.rounded(activity, p.surface, 20f, p.outline)
-                layoutParams = LinearLayout.LayoutParams(dp(56f), dp(56f))
-            })
-            addView(TextView(activity).apply {
-                text = label
-                textSize = 12f
-                setTextColor(p.text)
-                gravity = Gravity.CENTER
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(dp(4f), dp(6f), dp(4f), 0)
-            })
+            gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(76f); setPadding(dp(14f), dp(14f), dp(14f), dp(14f))
+            background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.surface, 18f, p.outline), 18f)
+            isClickable = true; isFocusable = true; contentDescription = "Abrir protección PhantomShield"
+            setOnClickListener { onShield() }
+            addView(ImageView(activity).apply {
+                setImageResource(R.drawable.ic_quick_shield); setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
+                background = ThemeManager.rounded(activity, androidx.core.graphics.ColorUtils.setAlphaComponent(emerald, 32), 12f)
+            }, params(dp(38f), dp(38f)).apply { marginEnd = dp(12f) })
+            addView(LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                val badge = ExtensionManager.phantomBadge(global = true)
+                val status = when (badge) { "OFF" -> "PAUSADA"; "PAUSE" -> "PAUSADA"; null -> "PANEL"; else -> "ACTIVA" }
+                addView(LinearLayout(activity).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(text("Protección PhantomShield", 12f, p.text, true), params(0).apply { weight = 1f })
+                    addView(text(status, 8.5f, if (p.isDark) 0xFF6EE7B7.toInt() else 0xFF047857.toInt(), true).apply {
+                        setPadding(dp(5f), dp(3f), dp(5f), dp(3f)); typeface = resources.getFont(R.font.jetbrains_mono)
+                        background = ThemeManager.rounded(activity, androidx.core.graphics.ColorUtils.setAlphaComponent(emerald, 28), 5f)
+                    })
+                })
+                addView(text(if (badge != null && badge.matches(Regex("[0-9]{1,3}\\+?"))) "$badge bloqueos en total" else "Consulta la protección de cada sitio", 10.5f, p.muted).apply { setPadding(0, dp(4f), 0, 0) })
+            }, params(0).apply { weight = 1f })
+            addView(text("›", 22f, p.muted))
         }
     }
 
-    /** Sitios recientes del historial (uno por dominio) completados con sugerencias. */
-    private fun shortcuts(): List<Pair<String, String>> {
-        val seen = mutableSetOf<String>()
-        val recent = HistoryStore.list(activity).mapNotNull { entry ->
-            val host = runCatching { android.net.Uri.parse(entry.url).host }.getOrNull()
-                ?.lowercase()?.removePrefix("www.")?.removePrefix("m.")
-                ?: return@mapNotNull null
-            if (!seen.add(host)) return@mapNotNull null
-            prettyName(host) to "https://$host/"
-        }.take(8)
-
-        val defaults = listOf(
-            "YouTube" to "https://m.youtube.com/",
-            "Wikipedia" to "https://es.wikipedia.org/",
-            "GitHub" to "https://github.com/",
-            "Extensiones" to "https://addons.mozilla.org/android/"
-        ).filter { (_, url) ->
-            val host = android.net.Uri.parse(url).host?.removePrefix("www.")?.removePrefix("m.")?.removePrefix("es.")
-            seen.none { it.endsWith(host.orEmpty()) }
+    private fun allLinks(): List<Link> {
+        val links = ArrayList<Link>()
+        try {
+            val stored = JSONArray(prefs.getString("custom", "[]"))
+            for (index in 0 until stored.length()) {
+                val shortcut = BrowserPagePresentation.shortcut(stored.getJSONObject(index).optString("url"))
+                if (shortcut != null) links.add(Link(shortcut.title, shortcut.origin))
+            }
+        } catch (_: org.json.JSONException) {
+            // An invalid saved list must not prevent showing the built-in shortcuts.
         }
-        return (recent + defaults).take(8)
+        links.addAll(listOf(
+            Link("YouTube", "https://m.youtube.com/"),
+            Link("Google", "https://www.google.com/"),
+            Link("Shield", kind = "shield"),
+            Link("Wikipedia", "https://es.wikipedia.org/"),
+            Link("GitHub", "https://github.com/"),
+            Link("Extensiones", kind = "extensions")
+        ))
+        for (entry in HistoryStore.list(activity)) {
+            val shortcut = BrowserPagePresentation.shortcut(entry.url)
+            if (shortcut != null) links.add(Link(shortcut.title, shortcut.origin))
+        }
+        val seen = HashSet<String>()
+        val unique = ArrayList<Link>()
+        for (link in links) {
+            val identity = if (link.kind == "web") {
+                BrowserPagePresentation.shortcut(link.url)?.identity ?: continue
+            } else link.id
+            if (seen.add(identity)) unique.add(link)
+        }
+        return unique
     }
 
-    private fun prettyName(host: String): String {
-        if (host.matches(Regex("""^[0-9.:]+$"""))) return host
-        val labels = host.split('.').filter { it.isNotBlank() }
-        val main = if (labels.size >= 2) labels[labels.size - 2] else labels.firstOrNull().orEmpty()
-        return main.replaceFirstChar { it.uppercase() }
+    private fun addLink() {
+        val input = EditText(activity).apply {
+            hint = "https://ejemplo.com"; setSingleLine(true); inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            ThemeManager.styleEdit(activity, this); setPadding(dp(16f), dp(12f), dp(16f), dp(12f))
+        }
+        val dialog = AlertDialog.Builder(activity).setTitle("Añadir acceso rápido").setView(input)
+            .setNegativeButton("Cancelar", null).setPositiveButton("Añadir", null).create()
+        dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val raw = input.text.toString().trim(); val candidate = if (raw.contains("://")) raw else "https://$raw"
+            val link = BrowserPagePresentation.shortcut(candidate)
+            if (link == null) { input.error = "Introduce una dirección web válida"; return@setOnClickListener }
+            val saved = runCatching { JSONArray(prefs.getString("custom", "[]")) }.getOrDefault(JSONArray())
+            saved.put(JSONObject().put("url", link.origin))
+            prefs.edit().putString("custom", saved.toString()).apply()
+            dialog.dismiss(); render(false)
+        } }
+        dialog.show()
+    }
+
+    private fun editLinks() {
+        val links = allLinks().take(20)
+        val hidden = prefs.getStringSet("hidden", emptySet()).orEmpty().toMutableSet()
+        AlertDialog.Builder(activity).setTitle("Mostrar accesos rápidos")
+            .setMultiChoiceItems(links.map { it.label }.toTypedArray(), links.map { it.id !in hidden }.toBooleanArray()) { _, index, checked ->
+                if (checked) hidden.remove(links[index].id) else hidden.add(links[index].id)
+            }.setNegativeButton("Cancelar", null).setPositiveButton("Guardar") { _, _ ->
+                prefs.edit().putStringSet("hidden", hidden).apply(); render(false)
+            }.show()
     }
 }

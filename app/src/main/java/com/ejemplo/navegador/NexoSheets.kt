@@ -81,7 +81,9 @@ object NexoSheets {
             setDimAmount(0.45f)
             navigationBarColor = p.surface
         }
+        dialog.setCanceledOnTouchOutside(true)
         dialog.show()
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         return dialog
     }
 
@@ -95,7 +97,7 @@ object NexoSheets {
                 text = title
                 textSize = 17f
                 setTextColor(p.text)
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                typeface = Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
             })
@@ -107,6 +109,50 @@ object NexoSheets {
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.MIDDLE
                     setPadding(0, dp(activity, 2f), 0, 0)
+                })
+            }
+        }
+    }
+
+    /** Dos tarjetas primarias horizontales como en el prototipo. */
+    fun primaryActions(activity: Activity, actions: List<SheetAction>, dismiss: () -> Unit): View {
+        val p = ThemeManager.palette(activity)
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(activity, 16f), 0, dp(activity, 16f), dp(activity, 12f))
+            actions.forEachIndexed { index, action ->
+                val accent = if (index == 0) p.accent else Color.rgb(6, 182, 212)
+                val cell = LinearLayout(activity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    minimumHeight = dp(activity, 72f)
+                    setPadding(dp(activity, 12f), dp(activity, 12f), dp(activity, 12f), dp(activity, 12f))
+                    background = ThemeManager.ripple(activity, GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(p.elevated, p.surface)).apply {
+                        cornerRadius = dp(activity, 16f).toFloat(); setStroke(dp(activity, 1f), p.outline)
+                    }, 16f)
+                    isClickable = true; isFocusable = true; contentDescription = action.label
+                    setOnClickListener { dismiss(); action.onClick() }
+                    addView(ImageView(activity).apply {
+                        setImageResource(action.icon)
+                        imageTintList = ColorStateList.valueOf(if (p.isDark) ColorUtilsCompat.withAlpha(Color.WHITE, 235) else accent)
+                        setPadding(dp(activity, 8f), dp(activity, 8f), dp(activity, 8f), dp(activity, 8f))
+                        background = ThemeManager.rounded(activity, ColorUtilsCompat.withAlpha(accent, 40), 12f)
+                    }, LinearLayout.LayoutParams(dp(activity, 36f), dp(activity, 36f)).apply { marginEnd = dp(activity, 9f) })
+                    addView(LinearLayout(activity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        addView(TextView(activity).apply {
+                            text = action.label; textSize = 12f
+                            typeface = Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
+                            setTextColor(p.text); maxLines = 2
+                        })
+                        addView(TextView(activity).apply {
+                            text = if (index == 0) "Inicio rápido" else "Sin historial"
+                            textSize = 10f; setTextColor(p.muted); setPadding(0, dp(activity, 3f), 0, 0)
+                        })
+                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                }
+                addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    if (index > 0) marginStart = dp(activity, 10f)
                 })
             }
         }
@@ -133,20 +179,17 @@ object NexoSheets {
             rowActions.forEach { action ->
                 val tint = when {
                     action.danger -> p.danger
-                    action.active -> p.onAccent
+                    action.active -> if (p.isDark) p.text else p.accent
                     else -> p.text
                 }
-                val bubbleColor = when {
-                    action.active -> p.accent
-                    action.danger -> ColorUtilsCompat.withAlpha(p.danger, 30)
-                    else -> p.elevated
-                }
+
 
                 val cell = LinearLayout(activity).apply {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER_HORIZONTAL
-                    setPadding(0, dp(activity, 8f), 0, dp(activity, 10f))
-                    background = ThemeManager.ripple(activity, null, 20f)
+                    minimumHeight = dp(activity, 68f)
+                    setPadding(dp(activity, 4f), dp(activity, 12f), dp(activity, 4f), dp(activity, 10f))
+                    background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, if (action.active) p.accentSoft else p.surface, 16f, p.outline), 16f)
                     isClickable = true
                     contentDescription = action.label
                     setOnClickListener {
@@ -158,19 +201,20 @@ object NexoSheets {
                     setImageResource(action.icon)
                     imageTintList = ColorStateList.valueOf(tint)
                     scaleType = ImageView.ScaleType.CENTER
-                    background = ThemeManager.rounded(activity, bubbleColor, 18f)
-                    layoutParams = LinearLayout.LayoutParams(dp(activity, 52f), dp(activity, 52f))
+                    layoutParams = LinearLayout.LayoutParams(dp(activity, 22f), dp(activity, 22f))
                 })
                 cell.addView(TextView(activity).apply {
                     text = action.label
-                    textSize = 12f
+                    textSize = 11f
                     gravity = Gravity.CENTER
                     setTextColor(if (action.danger) p.danger else p.text)
                     maxLines = 2
                     ellipsize = TextUtils.TruncateAt.END
                     setPadding(dp(activity, 2f), dp(activity, 6f), dp(activity, 2f), 0)
                 })
-                row.addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                row.addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    setMargins(dp(activity, 4f), dp(activity, 4f), dp(activity, 4f), dp(activity, 4f))
+                })
             }
             root.addView(row)
         }

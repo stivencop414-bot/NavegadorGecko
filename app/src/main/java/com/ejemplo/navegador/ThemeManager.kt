@@ -107,7 +107,7 @@ object ThemeManager {
                 surface = Color.rgb(16, 16, 20),
                 elevated = Color.rgb(30, 31, 38),
                 text = Color.rgb(248, 250, 252),
-                muted = Color.rgb(148, 163, 184),
+                muted = Color.rgb(156, 163, 175),
                 accent = accent,
                 onAccent = onAccent,
                 outline = Color.rgb(38, 40, 48),
@@ -116,14 +116,14 @@ object ThemeManager {
                 isDark = true
             )
             else -> BrowserPalette(
-                background = Color.rgb(14, 16, 23),
-                surface = Color.rgb(23, 26, 36),
-                elevated = Color.rgb(34, 38, 52),
-                text = Color.rgb(241, 245, 249),
-                muted = Color.rgb(148, 163, 184),
+                background = Color.rgb(9, 10, 15),
+                surface = Color.rgb(18, 20, 29),
+                elevated = Color.rgb(25, 28, 40),
+                text = Color.rgb(243, 244, 246),
+                muted = Color.rgb(156, 163, 175),
                 accent = accent,
                 onAccent = onAccent,
-                outline = Color.rgb(43, 48, 64),
+                outline = Color.rgb(35, 38, 51),
                 accentSoft = ColorUtils.setAlphaComponent(accent, 52),
                 danger = Color.rgb(248, 113, 113),
                 isDark = true

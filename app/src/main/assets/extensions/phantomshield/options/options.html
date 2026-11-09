@@ -1,41 +1,35 @@
 <!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PhantomShield · Privacidad e IA</title>
-  <link rel="stylesheet" href="options.css">
-</head>
-<body>
-  <main>
-    <h1>PhantomShield: privacidad e IA</h1>
-    <p>El bloqueo local funciona sin IA. La extensión descarga listas de filtros desde EasyList y GitHub; esos servidores ven tu dirección de conexión y las solicitudes de descarga. No se les envía tu historial de navegación. <a href="../privacy/privacy.html">Información de privacidad y limitaciones</a>.</p>
-    <p>Puedes añadir un proveedor compatible con Chat Completions para clasificar señales de posibles anuncios. Es opcional, puede tener coste y no garantiza detectar todos los anuncios. Aceptar permite enviar los datos indicados abajo; rechazar mantiene el bloqueo local.</p>
-    <form id="ai-form">
-      <label class="check"><input type="checkbox" id="enabled"> Activar ayuda de IA</label>
-      <label for="endpoint">URL base de tu API</label>
-      <input type="url" id="endpoint" placeholder="https://tu-proxy.example/v1" autocomplete="off">
-      <p class="hint">Se añade /chat/completions si la URL no termina así. Solo HTTPS.</p>
-      <label for="model">Identificador del modelo</label>
-      <input type="text" id="model" maxlength="200" placeholder="Identificador exacto de tu proveedor" autocomplete="off">
-      <label for="api-key">Clave API (opcional si tu proxy no la requiere)</label>
-      <input type="password" id="api-key" maxlength="4096" autocomplete="new-password" placeholder="Introduce una clave">
-      <p class="hint" id="key-status">La clave se guarda localmente en el perfil del navegador y solo se envía a la API configurada. Para distribuir tu app, usa credenciales de usuario o un backend; no incluyas una clave compartida en la extensión.</p>
-      <label class="check"><input type="checkbox" id="clear-key"> Borrar la clave guardada</label>
-      <label for="hosts">Sitios autorizados para IA (uno por línea)</label>
-      <textarea id="hosts" rows="5" placeholder="www.ejemplo.com&#10;otro-sitio.com" spellcheck="false"></textarea>
-      <p class="hint">Nombres de host exactos. Autorizar ejemplo.com no autoriza sus subdominios. Ningún sitio está autorizado al instalar.</p>
-      <label for="timeout">Tiempo límite por petición (ms)</label>
-      <input type="number" id="timeout" min="1000" max="15000" step="100" value="5000">
-      <label class="check"><input type="checkbox" id="json-mode"> Mi API admite response_format: json_object</label>
-      <label class="check consent"><input type="checkbox" id="consent"> Acepto enviar al proveedor configurado el nombre del sitio y señales de posibles anuncios: tipo de elemento, etiquetas publicitarias normalizadas y tamaño aproximado. No se envían texto de página, HTML, formularios, cookies, capturas ni URLs de navegación completas.</label>
-      <p class="hint">El proveedor recibe también la clave configurada y la conexión de red. La IA puede equivocarse y consumir cuota. Se limita a 12 candidatos por lote y tres lotes por página; las ventanas privadas quedan excluidas. Puedes desactivarla o pausar un sitio para restaurar lo ocultado por IA.</p>
-      <button type="submit" id="save" disabled>Guardar configuración</button>
-      <button type="button" id="local-only" disabled>Rechazar IA y usar bloqueo local</button>
-      <p id="status" role="status" aria-live="polite"></p>
-    </form>
-  </main>
-  <script src="../data/ai-config.js"></script>
-  <script src="options.js"></script>
-</body>
-</html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>PhantomShield · Privacidad e IA</title><link rel="stylesheet" href="options.css"></head>
+<body><main>
+  <header class="page-header"><p class="eyebrow">Configuración avanzada</p><h1>PhantomShield: Privacidad e IA</h1></header>
+  <ul class="trust-pills" aria-label="Cómo funciona la protección"><li class="green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg> Bloqueo local sin IA</li><li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg> EasyList + GitHub</li><li class="violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg> BYOK (Tu propia API)</li></ul>
+  <details class="privacy-details"><summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Cómo funciona la privacidad y límites</summary><div class="privacy-copy"><p>El bloqueo local funciona sin IA. Las listas se descargan desde EasyList y GitHub: esos servidores ven tu conexión y las solicitudes de descarga, pero no reciben tu historial.</p><p>Puedes usar un proveedor compatible con Chat Completions para clasificar señales de posibles anuncios. Es opcional, puede tener coste y no garantiza detectar todos los anuncios.</p><p>La clave se guarda en el perfil local, sin cifrado adicional, y solo se envía a la API configurada. La IA no se utiliza en ventanas privadas.</p><a href="../privacy/privacy.html">Privacidad y limitaciones completas</a></div></details>
+  <form id="ai-form">
+    <section class="enable-card"><div><h2>Activar ayuda de IA <span class="optional">Opcional</span></h2><p>Tu proveedor, solo en sitios que autorices.</p></div><label class="switch"><input type="checkbox" id="enabled" aria-label="Activar ayuda de IA" aria-controls="ai-fields" aria-expanded="false" disabled><span class="slider"></span></label></section>
+    <p id="ai-off-note" class="local-note">La IA está apagada. Las reglas locales siguen protegiéndote sin llamadas a un modelo.</p>
+    <fieldset id="ai-fields" hidden disabled><legend class="sr-only">Configuración de IA</legend>
+      <section class="form-card"><div class="card-heading"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M12 5l7 7-7 7"/></svg> 1. Conexión del proveedor</h2><span class="protocol-tag">Solo HTTPS</span></div>
+        <label for="endpoint">URL base de tu API</label><input type="url" id="endpoint" placeholder="https://tu-proxy.example/v1" autocomplete="off" aria-describedby="endpoint-hint"><p class="hint" id="endpoint-hint"><span class="code-tag">Se añade <strong>/chat/completions</strong> si hace falta</span></p>
+        <label for="model">Identificador del modelo</label><input type="text" id="model" maxlength="200" placeholder="Nombre exacto de tu proveedor" autocomplete="off">
+        <label for="api-key">Clave API <span class="optional-copy">(opcional con proxy)</span></label>        <div class="key-field">
+          <input type="password" id="api-key" maxlength="4096" autocomplete="new-password" placeholder="Introduce una clave" aria-describedby="key-status">
+          <button type="button" id="show-key" class="icon-button" aria-label="Mostrar clave escrita" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          <button type="button" id="delete-key" class="icon-button danger" aria-label="Borrar clave guardada" disabled><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>
+        </div>
+        <p class="hint" id="key-status">No hay una clave guardada.</p>
+        <div id="delete-confirm" class="confirmation" role="alertdialog" aria-labelledby="delete-title" hidden>
+          <h3 id="delete-title">¿Borrar la clave guardada?</h3><p>La IA se desactivará. El bloqueo local seguirá funcionando.</p>
+          <div class="confirm-actions"><button type="button" id="confirm-delete" class="danger-button">Borrar clave</button><button type="button" id="cancel-delete" class="secondary">Cancelar</button></div>
+        </div>
+
+      </section>
+      <section class="form-card"><div class="card-heading"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg> 2. Dominios y rendimiento</h2></div>
+        <label for="new-domain">Sitios autorizados para IA</label><div class="domains-input"><div id="domain-chips" class="domain-chips"></div><div class="add-domain-row"><input type="text" id="new-domain" placeholder="Añadir dominio (ej. diario.com)…" autocomplete="off" autocapitalize="none" spellcheck="false"><button type="button" id="add-domain">+ Añadir</button></div></div><textarea id="hosts" hidden aria-label="Dominios autorizados" spellcheck="false"></textarea><p class="hint">Solo dominios exactos. Los subdominios necesitan autorización propia.</p>
+        <div class="timeout-heading"><label for="timeout">Tiempo límite por petición</label><div class="presets"><button type="button" id="timeout-3" aria-pressed="false">3s</button><button type="button" id="timeout-5" aria-pressed="true">5s</button><button type="button" id="timeout-10" aria-pressed="false">10s</button></div></div><div class="number-input"><input type="number" id="timeout" min="1000" max="15000" step="100" value="5000"><span>ms</span></div>
+        <div class="json-row"><div><label for="json-mode">Respuesta JSON estructurada</label><span class="code-tag cyan">response_format: json_object</span></div><label class="switch"><input type="checkbox" id="json-mode" aria-label="Mi API admite response_format: json_object"><span class="slider"></span></label></div>
+      </section>
+      <section class="form-card consent-card"><div class="consent-row"><div><h3>Consentimiento de envío de señales</h3><p>Acepto enviar al proveedor configurado el dominio y señales de posibles anuncios: tipo de elemento, etiquetas publicitarias normalizadas y tamaño aproximado.</p></div><label class="switch"><input type="checkbox" id="consent" aria-label="Acepto enviar al proveedor configurado el dominio y señales de posibles anuncios"><span class="slider"></span></label></div><div class="guarantees"><h4>Nunca se envía</h4><div><span>✕ Sin texto ni HTML</span><span>✕ Sin cookies ni formularios</span><span>✕ Sin URLs completas</span><span>✓ Máx. 12 candidatos × 3 lotes</span></div></div></section>
+    </fieldset>
+    <div class="action-bar"><button type="submit" id="save" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg><span>Guardar configuración</span></button><button type="button" id="local-only" class="secondary" disabled>Rechazar IA y usar solo bloqueo local</button><p id="status" role="status" aria-live="polite"></p></div>
+  </form>
+</main><script src="../data/ai-config.js"></script><script src="options.js"></script></body></html>

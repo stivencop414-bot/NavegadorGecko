@@ -530,7 +530,6 @@ object TabManager {
     }
 
     private fun closeSession(session: GeckoSession) {
-        TranslatorManager.forgetSession(session)
         runCatching {
             session.setActive(false)
             session.close()
@@ -573,10 +572,9 @@ object TabManager {
         return session
     }
 
-    /** Enlaza extensiones y traductor cuando la sesión ya está abierta. */
+    /** Enlaza extensiones cuando la sesión ya está abierta. */
     private fun bindOpenedSession(session: GeckoSession) {
         ExtensionManager.bindSession(session)
-        TranslatorManager.bindSession(session)
     }
 
     private fun ensureSession(
@@ -867,7 +865,6 @@ object TabManager {
                 }
 
                 override fun onPageStart(session: GeckoSession, url: String) {
-                    TranslatorManager.onPageStart(session)
                     PagePrompts.onPageStart(session)
                     BrowserMediaController.resetVideo(tab.id)
                     tab.url = url

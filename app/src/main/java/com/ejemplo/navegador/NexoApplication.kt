@@ -37,7 +37,6 @@ class NexoApplication : Application() {
         super.onTrimMemory(level)
         TabManager.onTrimMemory(level)
         RemoteImageLoader.trimMemory(level)
-        if (level >= TRIM_MEMORY_BACKGROUND) TranslatorManager.closeTranslators()
     }
 }
 

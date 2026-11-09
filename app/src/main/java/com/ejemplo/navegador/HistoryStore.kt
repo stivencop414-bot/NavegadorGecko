@@ -30,8 +30,8 @@ object HistoryStore {
 
     @Synchronized
     private fun addNow(context: Context, rawUrl: String, title: String) {
-        if (rawUrl.isBlank() || rawUrl.startsWith("resource://android/assets/home/")) return
-        if (rawUrl.equals("about:blank", ignoreCase = true)) return
+        // Pages belonging to Nexo/extensions are tools, not browsing history.
+        if (!UrlSafety.isWebUrl(rawUrl)) return
 
         // No guardar en disco tokens OAuth, ids de sesión, firmas, etc.
         val url = UrlSafety.redactSensitiveQuery(rawUrl)
@@ -62,7 +62,9 @@ object HistoryStore {
                     )
                 }
             }
-        }.getOrDefault(emptyList()).also { cache = it }
+        }.getOrDefault(emptyList())
+            .filter { UrlSafety.isWebUrl(it.url) }
+            .also { cache = it }
     }
 
     @Synchronized

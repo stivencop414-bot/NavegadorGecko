@@ -5,86 +5,8 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <LinearLayout
-        android:id="@+id/topBar"
-        android:layout_width="match_parent"
-        android:layout_height="60dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingStart="12dp"
-        android:paddingEnd="4dp">
 
-        <!-- Se conserva por compatibilidad (atajo a Inicio); el diseño actual
-             no muestra el logo en la barra para dar espacio a la dirección. -->
-        <TextView
-            android:id="@+id/brandText"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:visibility="gone" />
-
-        <EditText
-            android:id="@+id/omnibox"
-            android:layout_width="0dp"
-            android:layout_height="48dp"
-            android:layout_weight="1"
-            android:drawablePadding="10dp"
-            android:gravity="center_vertical"
-            android:hint="@string/omnibox_hint"
-            android:imeOptions="actionGo"
-            android:importantForAutofill="no"
-            android:inputType="textUri"
-            android:maxLines="1"
-            android:paddingStart="14dp"
-            android:paddingEnd="14dp"
-            android:selectAllOnFocus="true"
-            android:singleLine="true"
-            android:textSize="15sp" />
-
-        <Button
-            android:id="@+id/clearOmniboxButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="2dp"
-            android:contentDescription="@string/clear_address"
-            android:gravity="center"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:padding="0dp"
-            android:text="×"
-            android:textAllCaps="false"
-            android:textSize="22sp"
-            android:visibility="gone" />
-
-        <Button
-            android:id="@+id/tabButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="4dp"
-            android:contentDescription="@string/open_tabs"
-            android:gravity="center"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:padding="0dp"
-            android:text="1"
-            android:textAllCaps="false"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <Button
-            android:id="@+id/menuButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:contentDescription="@string/open_menu"
-            android:drawableTop="@drawable/ic_nav_menu"
-            android:gravity="center"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:paddingTop="10dp"
-            android:paddingBottom="10dp"
-            android:text="" />
-    </LinearLayout>
-
-    <!-- Buscar en la página: aparece bajo la barra de direcciones. -->
+    <!-- Buscar dentro de la página: encima del contenido. La dirección está abajo. -->
     <LinearLayout
         android:id="@+id/findBar"
         android:layout_width="match_parent"
@@ -196,6 +118,85 @@
             android:textSize="14sp"
             android:visibility="gone" />
     </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/topBar"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="4dp">
+
+        <!-- Se conserva por compatibilidad (atajo a Inicio); el diseño actual
+             no muestra el logo en la barra para dar espacio a la dirección. -->
+        <TextView
+            android:id="@+id/brandText"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone" />
+
+        <EditText
+            android:id="@+id/omnibox"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:drawablePadding="10dp"
+            android:gravity="center_vertical"
+            android:hint="@string/omnibox_hint"
+            android:imeOptions="actionGo"
+            android:importantForAutofill="no"
+            android:inputType="textUri"
+            android:maxLines="1"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:selectAllOnFocus="true"
+            android:singleLine="true"
+            android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/clearOmniboxButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="2dp"
+            android:contentDescription="@string/clear_address"
+            android:gravity="center"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:padding="0dp"
+            android:text="×"
+            android:textAllCaps="false"
+            android:textSize="22sp"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/tabButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="@string/open_tabs"
+            android:gravity="center"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:padding="0dp"
+            android:text="1"
+            android:textAllCaps="false"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/menuButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="@string/open_menu"
+            android:drawableTop="@drawable/ic_nav_menu"
+            android:gravity="center"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            android:text="" />
+    </LinearLayout>
 
     <LinearLayout
         android:id="@+id/navBar"
