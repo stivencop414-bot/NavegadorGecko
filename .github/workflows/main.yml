@@ -125,6 +125,16 @@ jobs:
             --stacktrace \
             --no-daemon
 
+      # R8 puede borrar constructores que Android o ML Kit usan por reflexión
+      # al arrancar: el APK se cerraría al abrirse (Nexo 0.15.0).
+      - name: Release APK keeps startup constructors
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check_release_reflection.py \
+            --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" \
+            app/build/outputs/apk/release/*.apk
+
       - name: Confirm build did not mutate tracked source
         shell: bash
         run: |
@@ -237,6 +247,14 @@ jobs:
           set -euo pipefail
           gradle :app:testReleaseUnitTest :app:assembleRelease :app:lintRelease --stacktrace --no-daemon
           git diff --exit-code
+
+      - name: Release APK keeps startup constructors
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check_release_reflection.py \
+            --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" \
+            app/build/outputs/apk/release/*.apk
 
       - name: Sign ABI APKs
         shell: bash

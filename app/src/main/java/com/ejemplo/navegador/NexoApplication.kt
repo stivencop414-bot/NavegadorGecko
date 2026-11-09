@@ -10,6 +10,16 @@ import java.io.StringWriter
 import kotlin.system.exitProcess
 
 class NexoApplication : Application() {
+    /*
+     * Los ContentProvider de las librerías (ML Kit, AndroidX Startup, Gecko)
+     * se crean ANTES de onCreate. Instalar aquí el registro de cierres hace
+     * que un fallo en ese arranque también quede guardado y se muestre.
+     */
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base)
+        CrashLog.install(this)
+    }
+
     override fun onCreate() {
         super.onCreate()
         AppContext.initialize(this)
@@ -61,7 +71,8 @@ object CrashLog {
         if (installed) return
         installed = true
 
-        val app = context.applicationContext
+        // En attachBaseContext applicationContext todavía es null.
+        val app = context.applicationContext ?: context
         val previous = Thread.getDefaultUncaughtExceptionHandler()
 
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
