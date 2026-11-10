@@ -118,3 +118,82 @@ test('aggregate usage survives a new classifier and configuration changes',async
  h.change({model:'other'});const stats=await h.ai.usage();assert.equal(stats.requests,4);assert.equal(stats.inputTokens,100);assert.equal(stats.detected,3);
  await h.ai.classify('one.com',candidate(),false);assert.equal((await h.ai.usage()).requests,5);
 });
+
+// --- 8.5: compatibilidad con modelos actuales, diagnóstico y análisis detallado ---
+const okBody = id => JSON.stringify({decisions:[{id,isAd:true,confidence:.9}]});
+test('Claude requests omit temperature, leave room for reasoning and skip thinking blocks',async()=>{
+ const h=harness({provider:'claude',endpoint:'https://api.anthropic.com/v1',apiKey:'k',model:'claude-haiku-5-5'},()=>new Response(JSON.stringify({stop_reason:'end_turn',content:[{type:'thinking',thinking:''},{type:'text',text:'```json\n'+okBody('c-1')+'\n```'}]})));
+ const result=await h.ai.classify('one.com',candidate(),false);assert.equal(result.ok,true);assert.equal(result.decisions[0].hide,true);
+ const body=JSON.parse(h.calls[0].options.body);
+ assert.equal('temperature' in body,false);assert.equal('response_format' in body,false);assert.equal('stream' in body,false);
+ assert.ok(body.max_tokens>=2048);assert.equal(h.calls[0].options.headers['anthropic-version'],'2023-06-01');
+});
+test('a Claude refusal hides nothing and is reported without retrying',async()=>{
+ const h=harness({provider:'claude',endpoint:'https://api.anthropic.com/v1',apiKey:'k'},()=>new Response(JSON.stringify({stop_reason:'refusal',content:[]})));
+ const result=await h.ai.classify('one.com',candidate(),false);assert.equal(result.ok,false);assert.equal(result.code,'refusal');assert.equal(h.calls.length,1);
+});
+test('OpenAI uses max_completion_tokens; compatible APIs retry once with the minimal body after HTTP 400',async()=>{
+ const openai=harness({provider:'openai',endpoint:'https://api.openai.com/v1',apiKey:'k'},()=>new Response(JSON.stringify({choices:[{message:{content:okBody('c-1')}}]})));
+ await openai.ai.classify('one.com',candidate(),false);
+ const first=JSON.parse(openai.calls[0].options.body);assert.ok(first.max_completion_tokens>0);assert.equal('max_tokens' in first,false);assert.equal('temperature' in first,false);
+ let n=0;
+ const custom=harness({},(_,options)=>{n++;const body=JSON.parse(options.body);
+  return 'max_tokens' in body?new Response('{"error":{"message":"Unsupported parameter: max_tokens secret-detail"}}',{status:400})
+   :new Response(JSON.stringify({choices:[{message:{content:okBody('c-1')}}]}));});
+ const result=await custom.ai.classify('one.com',candidate(),false);assert.equal(result.ok,true);assert.equal(n,2);
+ // La variante aceptada se recuerda: la siguiente petición no repite el error.
+ await custom.ai.classify('two.com',candidate('c-1',300),false);assert.equal(n,3);
+ assert.equal((await custom.ai.usage()).requests,3);
+});
+test('provider failures are explained by category and never echo the provider body',async()=>{
+ for(const [status,code,pattern] of [[401,'auth',/clave/],[403,'auth',/clave/],[404,'model',/modelo/],[400,'request',/solicitud/],[429,'rate',/limit/i],[500,'server',/temporal/]]){
+  const h=harness({provider:'claude',endpoint:'https://api.anthropic.com/v1',apiKey:'k'},()=>new Response('{"error":{"message":"secret-provider-body"}}',{status}));
+  const result=await h.ai.classify('one.com',candidate(),false);
+  assert.equal(result.ok,false);assert.equal(result.code,code,String(status));assert.match(result.error,pattern);assert.doesNotMatch(result.error,/secret/);
+ }
+ const offline=harness({},()=>{throw new TypeError('NetworkError')});
+ assert.equal((await offline.ai.classify('one.com',candidate(),false)).code,'network');
+});
+test('the detailed mode adds bounded, sanitized context; the basic mode never sends it',async()=>{
+ const noisy=[{id:'c-1',tag:'A',signals:['external-links','ad-size','made-up'],width:300,height:250,
+  text:'Oferta   exclusiva\n llama al 300 123 4567 o escribe a ana@correo.com '+'x'.repeat(400),
+  links:['ads.example.net','NOT A HOST','b.example','c.example','d.example'],frame:'javascript:alert(1)',cls:['Banner_Top','x','ok-class','<script>'],html:'<b>secret</b>',url:'https://one.com/private?token=1'}];
+ const rich=harness({detail:'rich'});await rich.ai.classify('one.com',noisy,false);
+ const sent=JSON.parse(JSON.parse(rich.calls[0].options.body).messages[1].content).candidates[0];
+ assert.deepEqual(Object.keys(sent).sort(),['cls','height','id','links','signals','tag','text','width']);
+ assert.ok(sent.text.length<=160);assert.doesNotMatch(sent.text,/ana@correo|300 123 4567|\n/);assert.match(sent.text,/\[correo\]|\[número\]/);
+ assert.deepEqual(sent.links,['ads.example.net','b.example','c.example']);assert.deepEqual(sent.cls,['banner_top','ok-class']);
+ assert.deepEqual(sent.signals,['ad-size','external-links']);
+ const basic=harness();await basic.ai.classify('one.com',noisy,false);
+ const plain=JSON.parse(JSON.parse(basic.calls[0].options.body).messages[1].content).candidates[0];
+ assert.deepEqual(Object.keys(plain).sort(),['height','id','signals','tag','width']);
+});
+test('decisions need 0.8 confidence; unknown ids and malformed entries are ignored instead of failing the batch',async()=>{
+ const two=[{id:'c-1',tag:'DIV',signals:['ad-class'],width:100,height:50},{id:'c-2',tag:'DIV',signals:['ad-class'],width:300,height:250}];
+ const h=harness({},()=>new Response(JSON.stringify({choices:[{message:{content:'Aquí tienes: '+JSON.stringify({decisions:[
+  {id:'c-1',isAd:true,confidence:.79},{id:'c-2',isAd:true,confidence:.8},{id:'zzz',isAd:true,confidence:1},{id:'c-1',isAd:'yes'},null]})}}]})));
+ const result=await h.ai.classify('one.com',two,false);assert.equal(result.ok,true);
+ assert.deepEqual(result.decisions.map(x=>x.hide),[false,true]);
+});
+test('existing configurations keep the basic detail level and the longer default timeout validates',()=>{
+ const h=harness();
+ assert.equal(h.api.validate({enabled:true,consent:true,endpoint:'https://api.example/v1',model:'m'}).detail,'basic');
+ assert.equal(h.api.validate({detail:'rich'}).detail,'rich');assert.throws(()=>h.api.validate({detail:'everything'}));
+ assert.equal(h.api.validate({}).timeoutMs,12000);assert.equal(h.api.validate({timeoutMs:30000}).timeoutMs,30000);assert.throws(()=>h.api.validate({timeoutMs:30001}));
+});
+test('connection test works before enabling, uses invented samples and reports the real outcome',async()=>{
+ const good=harness({enabled:false,consent:false,provider:'claude',endpoint:'https://api.anthropic.com/v1',apiKey:'saved-key',model:'old'},
+  ()=>new Response(JSON.stringify({content:[{type:'text',text:JSON.stringify({decisions:[{id:'t-1',isAd:true,confidence:.97},{id:'t-2',isAd:false,confidence:.9}]})}]})));
+ const ok=await good.ai.probe({provider:'claude',endpoint:'https://api.anthropic.com/v1',model:'claude-opus-5-5',apiKey:''});
+ assert.equal(ok.ok,true);assert.equal(ok.detected,true);assert.equal(ok.kept,true);
+ const call=good.calls[0];assert.equal(call.options.headers['x-api-key'],'saved-key','saved key reused for the same endpoint');
+ const body=JSON.parse(call.options.body);assert.equal(body.model,'claude-opus-5-5');
+ assert.equal(JSON.parse(body.messages[0].content).host,'prueba.example');
+ // Otra dirección nunca recibe la clave guardada.
+ const other=await good.ai.probe({provider:'custom',endpoint:'https://other.example/v1',model:'m',apiKey:''});
+ assert.equal(good.calls[1].options.headers.Authorization,undefined);assert.equal(other.ok,false);
+ const bad=harness({provider:'claude',endpoint:'https://api.anthropic.com/v1'},()=>new Response('{}',{status:401}));
+ const failed=await bad.ai.probe({provider:'claude',endpoint:'https://api.anthropic.com/v1',model:'m',apiKey:'wrong'});
+ assert.equal(failed.ok,false);assert.equal(failed.code,'auth');assert.equal(failed.http,401);assert.match(failed.error,/clave/);
+ assert.equal((await bad.ai.probe({provider:'claude',model:''})).ok,false);assert.equal(bad.calls.length,1);
+});

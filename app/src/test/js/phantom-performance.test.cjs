@@ -92,7 +92,8 @@ async function aiPage(visible = true) {
   }, storage: { onChanged: { addListener() {} } } };
   const window = new EventTarget(); window.top = window;
   vm.runInNewContext(fs.readFileSync(path.join(content, 'ai-detector.js'), 'utf8'), {
-    document, window, browser, Element, innerWidth: 1000, innerHeight: 800, NodeFilter: { SHOW_ELEMENT: 1 },
+    document, window, browser, Element, URL, innerWidth: 1000, innerHeight: 800, NodeFilter: { SHOW_ELEMENT: 1, SHOW_TEXT: 4 },
+    location: { hostname: 'news.example.com', href: 'https://news.example.com/' },
     getComputedStyle: () => ({ display: 'block' }),
     setTimeout: (fn, ms) => { timers.set(++id, { fn, ms }); return id; }, clearTimeout: value => timers.delete(value),
     MutationObserver: class {
@@ -115,9 +116,9 @@ test('enabled AI does not observe or schedule scans in a background document', a
   h.visibility('visible'); assert.equal(h.active(), 1); assert.equal(h.queued(), 1);
   h.visibility('hidden'); assert.equal(h.active(), 0); assert.equal(h.queued(), 0);
 });
-test('AI disconnects the document observer once its three request batches are exhausted', async () => {
+test('AI disconnects the document observer once its request batches are exhausted', async () => {
   const h = await aiPage(); assert.equal(h.active(), 1);
-  for (let n = 0; n < 3; n++) { const result = await h.scan(); assert.equal(result.ok, true); }
+  for (let n = 0; n < 4; n++) { const result = await h.scan(); assert.equal(result.ok, true); }
   assert.equal(h.active(), 0); assert.equal(h.queued(), 0);
   const result = await h.scan(); assert.equal(result.ok, false);
 });

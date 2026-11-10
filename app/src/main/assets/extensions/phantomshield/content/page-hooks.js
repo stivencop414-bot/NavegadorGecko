@@ -1,5 +1,5 @@
 /**
- * PhantomShield 8.3 - Popup controls, optional Canvas variation and DOM video controls.
+ * PhantomShield - Popup controls, optional Canvas variation and YouTube ad removal.
  * This file intentionally contains no WebExtension APIs because it runs in MAIN.
  */
 (function() {
@@ -166,6 +166,131 @@
     };
   }
 
+  // ---------------------------------------------------------------
+  // YouTube: quitar los anuncios de los datos del reproductor
+  // ---------------------------------------------------------------
+
+  const YOUTUBE_HOSTS = ['youtube.com', 'youtube-nocookie.com', 'youtubekids.com'];
+  const isYouTube = YOUTUBE_HOSTS.some(function(domain) {
+    return hostnameMatches(location.hostname, domain);
+  });
+  // Campos con los que YouTube programa anuncios antes, durante y después del video.
+  const AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
+
+  function stripAdKeys(target) {
+    if (!target || typeof target !== 'object') return false;
+    let changed = false;
+    for (const key of AD_KEYS) {
+      if (key in target) {
+        try { delete target[key]; changed = true; } catch (error) {}
+      }
+    }
+    return changed;
+  }
+
+  function isAdEntry(entry) {
+    try {
+      return Boolean(entry && entry.command && entry.command.reelWatchEndpoint &&
+        entry.command.reelWatchEndpoint.adClientParams &&
+        entry.command.reelWatchEndpoint.adClientParams.isAd);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function pruneEntries(holder) {
+    if (!holder || !Array.isArray(holder.entries) || !holder.entries.some(isAdEntry)) return;
+    // Shorts: quitar los videos publicitarios de la secuencia.
+    try { holder.entries = holder.entries.filter(function(entry) { return !isAdEntry(entry); }); } catch (error) {}
+  }
+
+  /**
+   * Elimina la publicidad de una respuesta de YouTube ya convertida en objeto.
+   * Solo comprueba un puñado de propiedades conocidas: no recorre el árbol.
+   */
+  function pruneYouTubeData(data) {
+    if (!state.adblockEnabled || !data || typeof data !== 'object') return data;
+    try {
+      if (Array.isArray(data)) {
+        // Respuestas agrupadas (m.youtube.com): [{ playerResponse }, { response }].
+        for (let i = 0; i < data.length && i < 12; i++) {
+          const item = data[i];
+          if (item && typeof item === 'object') {
+            stripAdKeys(item);
+            stripAdKeys(item.playerResponse);
+          }
+        }
+        return data;
+      }
+      stripAdKeys(data);
+      stripAdKeys(data.playerResponse);
+      const prefetch = data.endpoint && data.endpoint.watchEndpoint &&
+        data.endpoint.watchEndpoint.unserializedPrefetchData;
+      if (prefetch) stripAdKeys(prefetch.playerResponse);
+      pruneEntries(data);
+      pruneEntries(data.reelWatchSequenceResponse);
+    } catch (error) {}
+    return data;
+  }
+
+  /** Envuelve una función nativa conservando su apariencia (toString, name, length). */
+  function wrapNative(owner, name, handler) {
+    const original = owner && owner[name];
+    if (typeof original !== 'function') return;
+    try {
+      owner[name] = new Proxy(original, {
+        apply: function(target, thisArg, args) {
+          return handler(target, thisArg, args);
+        }
+      });
+    } catch (error) {}
+  }
+
+  function installYouTubeAdPruning() {
+    if (!isYouTube) return;
+
+    // 1. Datos incrustados en el HTML de la página del video.
+    for (const name of ['ytInitialPlayerResponse', 'playerResponse']) {
+      try {
+        let current = pruneYouTubeData(window[name]);
+        Object.defineProperty(window, name, {
+          configurable: true,
+          enumerable: true,
+          get: function() { return current; },
+          set: function(value) { current = pruneYouTubeData(value); }
+        });
+      } catch (error) {}
+    }
+
+    // 2. Respuestas de la API interna (cambio de video, listas, Shorts).
+    wrapNative(JSON, 'parse', function(target, thisArg, args) {
+      const result = Reflect.apply(target, thisArg, args);
+      return result && typeof result === 'object' ? pruneYouTubeData(result) : result;
+    });
+    if (window.Response && Response.prototype) {
+      wrapNative(Response.prototype, 'json', function(target, thisArg, args) {
+        const promise = Reflect.apply(target, thisArg, args);
+        return promise && typeof promise.then === 'function' ? promise.then(pruneYouTubeData) : promise;
+      });
+    }
+    // XMLHttpRequest con responseType "json" no pasa por JSON.parse.
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response');
+      if (descriptor && typeof descriptor.get === 'function' && descriptor.configurable) {
+        const getter = descriptor.get;
+        Object.defineProperty(XMLHttpRequest.prototype, 'response', Object.assign({}, descriptor, {
+          get: new Proxy(getter, {
+            apply: function(target, thisArg, args) {
+              const value = Reflect.apply(target, thisArg, args);
+              return value && typeof value === 'object' && thisArg && thisArg.responseType === 'json'
+                ? pruneYouTubeData(value) : value;
+            }
+          })
+        }));
+      }
+    } catch (error) {}
+  }
+
   let youtubeVideo = null;
   let youtubeVideoState = null;
 
@@ -180,17 +305,19 @@
     youtubeVideoState = null;
   }
 
+  const SKIP_SELECTOR = '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, ' +
+    '.ytp-ad-skip-button-slot button, .ytp-ad-skip-button-container button, ' +
+    '.ytp-ad-overlay-close-button, .ytp-ad-overlay-close-container';
+
   function handleYouTubePlayer() {
-    if (!hostnameMatches(location.hostname, 'youtube.com')) return;
-    const video = document.querySelector('video.html5-main-video');
-    const player = document.getElementById('movie_player');
-    const skipButton = document.querySelector(
-      '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button'
-    );
+    if (!isYouTube) return;
+    const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    const video = (player && player.querySelector('video')) || document.querySelector('video.html5-main-video');
+    const skipButton = document.querySelector(SKIP_SELECTOR);
     const isAd = Boolean(
       (player && (player.classList.contains('ad-showing') ||
         player.classList.contains('ad-interrupting'))) ||
-      document.querySelector('.ytp-ad-preview-text, .ytp-ad-player-overlay')
+      document.querySelector('.ytp-ad-preview-text, .ytp-ad-player-overlay, .ytp-ad-player-overlay-layout')
     );
 
     if (!state.adblockEnabled || !video || !isAd) {
@@ -204,17 +331,26 @@
       youtubeVideoState = { muted: video.muted, playbackRate: video.playbackRate };
     }
 
+    // Respaldo para el anuncio que logre empezar: sin sonido y al final.
     if (!video.muted) video.muted = true;
-    if (skipButton) {
-      skipButton.click();
-    } else {
-      const nextRate = Math.min(8, video.playbackRate < 1 ? 1 : video.playbackRate * 2);
-      if (video.playbackRate !== nextRate) video.playbackRate = nextRate;
-    }
+    if (skipButton) skipButton.click();
+    try {
+      if (Number.isFinite(video.duration) && video.duration > 0.5 &&
+          video.currentTime < video.duration - 0.3) {
+        // Saltar al final termina el anuncio de inmediato.
+        video.currentTime = video.duration - 0.1;
+      } else if (video.playbackRate !== 16) {
+        video.playbackRate = 16;
+      }
+      if (video.paused) {
+        const playing = video.play();
+        if (playing && typeof playing.catch === 'function') playing.catch(function() {});
+      }
+    } catch (error) {}
   }
 
   function installYouTubePlayerGuard() {
-    if (!hostnameMatches(location.hostname, 'youtube.com')) return;
+    if (!isYouTube) return;
     let observer = null;
     let timer = null;
     const schedule = function() {
@@ -266,4 +402,6 @@
   installPopupGuard();
   installYouTubePlayerGuard();
   syncSettings();
+  // Después de leer el estado: la poda respeta el interruptor del sitio.
+  installYouTubeAdPruning();
 })();

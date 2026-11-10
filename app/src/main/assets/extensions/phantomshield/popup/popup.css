@@ -483,7 +483,7 @@ input:focus-visible+.slider,:focus-visible {
 .ai-card { border-color:var(--line); background:var(--surface); border-radius:20px; }
 .ai-card h2 svg { color:#a9c0ff; }
 #scan-ai { background:#3d6bf2; color:#fff; box-shadow:none; }
-#disable-ai,#exclude-ai { width:100%; margin:0 0 10px; color:var(--danger); }
+/* #disable-ai / #exclude-ai: ahora enlaces compactos (.link-button). */
 .hero-card,.control-card { border-radius:20px; }
 @media(prefers-color-scheme:light) { .ai-card h2 svg { color:#3156c4; } }
 
@@ -491,3 +491,35 @@ input:focus-visible+.slider,:focus-visible {
 .ai-usage strong,.usage-card strong { font-size:22px; font-family:"JetBrains Mono",monospace; }
 #provider-advanced { margin:14px 0; }
 #provider-advanced summary { cursor:pointer; color:var(--muted); padding:10px 0; font-size:12px; }
+
+/* --- 8.5: estado de la IA y acciones secundarias compactas --- */
+.ai-state {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.ai-state.good { color: var(--accent-text); }
+.ai-state.bad { color: var(--danger); }
+.ai-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 2px 0 12px;
+}
+.ai-links:not(:has(button:not([hidden]))) { display: none; }
+.link-button {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 8px 0;
+  min-height: 36px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.link-button:disabled { opacity: .5; }

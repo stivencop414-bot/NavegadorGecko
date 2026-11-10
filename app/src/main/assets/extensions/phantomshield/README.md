@@ -24,17 +24,27 @@ WebExtension MV2 de bloqueo de solicitudes publicitarias, filtrado cosmético y 
 3. Introduce tu clave API, si tu proxy la requiere. No se incluye ninguna clave en el código.
 4. Añade los nombres de host exactos donde quieres usar IA, uno por línea; por ejemplo
    `www.ejemplo.com`. No se autorizan subdominios automáticamente.
-5. Acepta el envío de señales, activa la ayuda de IA y guarda. Si Firefox solicita un permiso
-   opcional de datos, concédelo para habilitar esta función.
+5. Elige qué analiza la IA (análisis detallado o solo señales básicas), acepta el envío de
+   señales, activa la ayuda de IA y guarda. Si el navegador muestra un aviso de datos, acéptalo.
+6. Pulsa **Probar conexión**: envía dos ejemplos inventados y dice si la clave, el modelo y la
+   dirección funcionan, o el motivo exacto del fallo (clave rechazada, modelo inexistente…).
 
 En los sitios autorizados se examinan candidatos después de cargar la página y cuando aparecen
 elementos nuevos. **Analizar página** permite solicitar un análisis desde el popup. Si ya se
-agotaron los tres lotes de esa página, hay que recargarla. La IA se aplica únicamente al documento
+agotaron los cuatro lotes de esa página, hay que recargarla. La IA se aplica únicamente al documento
 principal; los iframes siguen protegidos por las reglas locales, sin enviar su contenido a IA.
 
-La petición usa `POST /chat/completions`, `model`, `messages`, `stream: false`, `temperature: 0`
-y `max_tokens: 800`. Se envía `Authorization: Bearer ...` solo si hay una clave. Activa el modo
-JSON únicamente si tu proveedor admite `response_format: { type: "json_object" }`.
+El cuerpo depende del protocolo:
+
+- **Claude (Messages):** `model`, `max_tokens`, `system` y `messages`. No se envía `temperature`
+  (los modelos actuales la rechazan) y se ignoran los bloques de razonamiento de la respuesta.
+- **OpenAI:** `model`, `messages` y `max_completion_tokens`.
+- **OpenRouter / compatible:** `stream: false`, `temperature: 0` y `max_tokens`; si el proveedor
+  responde HTTP 400, se reintenta una vez con el cuerpo mínimo (`max_completion_tokens`) y se
+  recuerda la variante aceptada.
+
+Se envía la clave solo si existe. Activa el modo JSON únicamente si tu proveedor admite
+`response_format: { type: "json_object" }`.
 El modelo debe devolver, por ejemplo:
 
 ```json
@@ -42,8 +52,8 @@ El modelo debe devolver, por ejemplo:
 ```
 
 El modelo solo puede clasificar identificadores de candidatos enviados. No se ejecutan código,
-selectores ni URLs de su respuesta. Una confianza inferior a 0.95, un fallo de red o una respuesta
-inválida conservan el contenido. Tampoco se ocultan candidatos que cambiaron durante el análisis,
+selectores ni URLs de su respuesta. Una confianza inferior a 0.8, un fallo de red o una respuesta
+inválida conservan el contenido; las decisiones con identificadores desconocidos se ignoran. Tampoco se ocultan candidatos que cambiaron durante el análisis,
 formularios, navegación o cuadros de diálogo. Al desactivar la IA o pausar el sitio, se restaura
 el estilo de los elementos ocultados por IA. Los contadores existentes corresponden al bloqueo
 de red y popups; el resultado de un análisis IA informa sus ocultaciones por separado.
@@ -52,22 +62,24 @@ de red y popups; el resultado de un análisis IA informa sus ocultaciones por se
 
 La IA está desactivada y sin sitios autorizados al instalar. Al habilitarla se envían al proveedor
 el nombre del sitio y señales acotadas: tipo de elemento, etiquetas publicitarias normalizadas y
-tamaños redondeados. No se envían HTML, texto de página, formularios, cookies, capturas ni la URL
-completa de navegación. La clave se guarda en `browser.storage.local` del perfil del navegador,
+tamaños redondeados. Con **Análisis detallado** se añaden, por candidato, hasta 160 caracteres de
+su texto visible (correos y números largos enmascarados), hasta tres dominios enlazados, el dominio
+de un marco incrustado y hasta seis nombres de clase: es lo que permite al modelo decidir. No se
+envían la página completa, HTML, formularios, cookies, capturas ni la URL completa de navegación. La clave se guarda en `browser.storage.local` del perfil del navegador,
 sin sincronización, y se usa en las peticiones desde el background. No es un almacén cifrado de
 secretos: protege el perfil del navegador. Si cambias la URL de API, debes introducir otra vez
 la clave o borrarla para evitar enviarla por accidente a otro destino.
 
-Las ventanas privadas no usan IA. En Firefox con permisos de datos nativos, revocar el permiso
-opcional desactiva también esta función. El manifiesto declara contenido, actividad de navegación
-(dominio visitado) y autenticación cuando se utiliza una clave. No hay telemetría añadida.
-Al instalar o actualizar se abre la página de privacidad y se desactiva IA hasta una nueva elección explícita.
+Las ventanas privadas no usan IA. El consentimiento es el interruptor del formulario de opciones;
+el manifiesto declara contenido, actividad de navegación (dominio visitado) y autenticación cuando
+se utiliza una clave. No hay telemetría añadida. Al actualizar se conserva la configuración de IA
+(antes cada actualización la apagaba); cambiar el alcance o el nivel de detalle exige aceptar de nuevo.
 La información completa está en [Privacidad](privacy/privacy.html), incluida dentro del paquete.
 
 Las reglas de red y los filtros cosméticos siguen funcionando sin IA ni API. Las llamadas a IA
 ocurren después, sin esperar dentro de `webRequest`, por lo que un anuncio nuevo podría verse
-antes de ser clasificado. Hay un tiempo límite configurable de 1 a 15 segundos, un máximo de 12
-candidatos por lote y tres lotes por documento. El background limita las llamadas sin caché a tres
+antes de ser clasificado. Hay un tiempo límite configurable de 1 a 30 segundos (12 por defecto), un
+máximo de 12 candidatos por lote y cuatro lotes por documento. El background limita las llamadas sin caché a tres
 por sitio y minuto y doce globales por minuto, con una sola llamada simultánea. La caché temporal
 por sitio y señales dura diez minutos y se invalida cuando cambian los ajustes. No se promete
 latencia de un proveedor concreto, eliminación universal de anuncios ni indetectabilidad.

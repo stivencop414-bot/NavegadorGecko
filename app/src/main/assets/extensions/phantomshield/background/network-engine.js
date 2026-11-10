@@ -31,6 +31,8 @@
     'com.ar', 'com.pe', 'com.ve', 'com.ec'
   ]);
 
+  const NO_OPTIONS = Object.freeze(Object.create(null));
+
   class TrieNode {
     constructor() {
       this.children = new Map();
@@ -50,7 +52,15 @@
       this.exceptionDomainTrie = new TrieNode();
       this.exceptionTokenIndex = new Map();
       this.globalExceptionRules = [];
+      // `||dominio^` sin opciones (la gran mayoría): basta con el nombre.
+      this.plainDomains = new Set();
       this.ruleKeys = new Set();
+      this.ruleTotal = 0;
+    }
+
+    /** Libera el índice de duplicados, que solo hace falta mientras se cargan listas. */
+    finalize() {
+      this.ruleKeys = null;
     }
 
     createEmpty() {
@@ -66,7 +76,9 @@
       this.exceptionDomainTrie = other.exceptionDomainTrie;
       this.exceptionTokenIndex = other.exceptionTokenIndex;
       this.globalExceptionRules = other.globalExceptionRules;
+      this.plainDomains = other.plainDomains;
       this.ruleKeys = other.ruleKeys;
+      this.ruleTotal = other.ruleTotal;
     }
 
     init(adDomains, trackerDomains, popupDomains) {
@@ -108,7 +120,8 @@
         } else {
           const key = option.slice(0, separator);
           const value = option.slice(separator + 1);
-          options[key] = value;
+          // `from=` es el nombre de uBO para `domain=`.
+          options[key === 'from' ? 'domain' : key] = value;
         }
       }
       return options;
@@ -149,9 +162,11 @@
 
       if (!body || (body.startsWith('/') && body.endsWith('/'))) return null;
 
+      const hasOptions = Object.keys(options).length > 0;
       const rule = {
         raw: raw,
-        options: options,
+        options: hasOptions ? options : NO_OPTIONS,
+        plain: !hasOptions,
         isException: isException,
         domainAnchor: domainAnchor,
         leftAnchor: leftAnchor,
@@ -168,14 +183,33 @@
         rule.simpleDomain = domain;
       }
 
-      if (!rule.simpleDomain) {
+      // Las expresiones regulares se compilan la primera vez que una regla
+      // coincide por token: compilar ~60.000 al arrancar costaba CPU y memoria.
+      if (!rule.simpleDomain && rule.domainAnchor) {
+        const boundaryIndex = rule.pattern.search(/[\/^]/);
+        const host = boundaryIndex === -1 ? rule.pattern : rule.pattern.slice(0, boundaryIndex);
+        if (!this._isValidHostname(host.replace(/\*/g, 'a'))) return null;
+      }
+      return rule;
+    }
+
+    /** Evalúa una regla no trivial contra la URL, compilándola bajo demanda. */
+    _test(rule, url) {
+      if (rule.dead) return false;
+      if (!rule.regex) {
         try {
           rule.regex = this._compilePattern(rule);
         } catch (error) {
-          return null;
+          rule.dead = true;
+          return false;
         }
       }
-      return rule;
+      rule.regex.lastIndex = 0;
+      return rule.regex.test(url);
+    }
+
+    ruleCount() {
+      return this.ruleTotal;
     }
 
     _compilePattern(rule) {
@@ -211,9 +245,23 @@
     addRule(rule) {
       if (!rule || !rule.pattern) return false;
       const key = rule.raw.toLowerCase();
+      if (!this.ruleKeys) this.ruleKeys = new Set();
       if (this.ruleKeys.has(key)) return false;
       this.ruleKeys.add(key);
+      // El texto original solo servía para detectar duplicados.
+      rule.raw = null;
 
+      if (!rule.isException && rule.simpleDomain && rule.plain) {
+        this.plainDomains.add(rule.simpleDomain);
+        this.ruleTotal++;
+        return true;
+      }
+      const stored = this._store(rule);
+      if (stored) this.ruleTotal++;
+      return stored;
+    }
+
+    _store(rule) {
       if (rule.isException) {
         if (rule.simpleDomain) {
           this._insertIntoTrie(rule.simpleDomain, rule, this.exceptionDomainTrie);
@@ -353,6 +401,19 @@
       return matches;
     }
 
+    /** ¿El host o alguno de sus dominios padre está en la lista simple? */
+    _matchesPlainDomain(hostname) {
+      if (!this.plainDomains.size) return false;
+      let candidate = hostname;
+      while (candidate) {
+        if (this.plainDomains.has(candidate)) return true;
+        const dot = candidate.indexOf('.');
+        if (dot === -1) return false;
+        candidate = candidate.slice(dot + 1);
+      }
+      return false;
+    }
+
     _findExceptionRules(hostname, url) {
       const candidates = new Set(this.globalExceptionRules);
       for (const rule of this._findDomainRules(hostname, this.exceptionDomainTrie)) {
@@ -384,11 +445,15 @@
       const isThirdParty = this.isThirdPartyRequest(url, documentUrl);
 
       for (const rule of this._findExceptionRules(hostname, url)) {
-        if (rule.regex) rule.regex.lastIndex = 0;
-        if ((rule.simpleDomain || rule.regex.test(url)) &&
+        if ((rule.simpleDomain || this._test(rule, url)) &&
             this._matchOptions(rule, requestType, isThirdParty, documentDomain)) {
           return false;
         }
+      }
+
+      if (this._matchesPlainDomain(hostname)) {
+        if (countBlocked !== false) this.recordBlocked();
+        return true;
       }
 
       for (const rule of this._findDomainRules(hostname, this.domainTrie)) {
@@ -405,8 +470,7 @@
         const rules = this.tokenIndex.get(token);
         if (!rules) continue;
         for (const rule of rules) {
-          rule.regex.lastIndex = 0;
-          if (rule.regex.test(url) &&
+          if (this._test(rule, url) &&
               this._matchOptions(rule, requestType, isThirdParty, documentDomain)) {
             if (countBlocked !== false) this.recordBlocked();
             return true;
@@ -426,7 +490,8 @@
     isDomainBlocked(hostname) {
       const normalized = (hostname || '').toLowerCase().replace(/\.$/, '');
       if (!this._isValidHostname(normalized)) return false;
-      return this._findDomainRules(normalized, this.domainTrie).length > 0;
+      return this._matchesPlainDomain(normalized) ||
+        this._findDomainRules(normalized, this.domainTrie).length > 0;
     }
 
     addBlockedDomain(hostname) {

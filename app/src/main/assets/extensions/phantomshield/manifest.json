@@ -2,8 +2,8 @@
   "manifest_version": 2,
   "name": "PhantomShield",
   "short_name": "PhantomShield",
-  "version": "8.4.0",
-  "description": "Bloquea solicitudes publicitarias y oculta anuncios mediante reglas locales. Clasificación IA opcional, con consentimiento, exclusiones y presupuesto.",
+  "version": "8.5.0",
+  "description": "Bloquea anuncios y rastreadores con reglas locales (red, ocultación y YouTube). Clasificación IA opcional para lo que las reglas no detectan, con consentimiento, exclusiones y presupuesto.",
   "icons": {
     "48": "icons/icon-48.png",
     "96": "icons/icon-96.png"
@@ -42,7 +42,9 @@
       "data/domains-adservers.js",
       "data/domains-trackers.js",
       "data/domains-popups.js",
+      "data/cosmetic-rules.js",
       "background/network-engine.js",
+      "background/cosmetic-engine.js",
       "background/filter-lists.js",
       "background/updater.js",
       "background/surrogate-redirects.js",

@@ -8,6 +8,7 @@
   const redirector = globalThis.PhantomSurrogateRedirector;
   const updater = globalThis.PhantomUpdaterInstance;
   const listManager = globalThis.PhantomFilterListManager;
+  const cosmetic = globalThis.PhantomCosmeticEngineInstance;
 
   const DEFAULT_SETTINGS = Object.freeze({
     adblockEnabled: true,
@@ -97,6 +98,65 @@
       return changed ? url.toString() : null;
     } catch (error) {
       return null;
+    }
+  }
+
+  const POPUP_HOSTS = (Array.isArray(globalThis.PHANTOM_POPUP_DOMAINS) ? globalThis.PHANTOM_POPUP_DOMAINS : [])
+    .filter(function(entry) { return typeof entry === 'string'; });
+
+  // Peticiones con las que YouTube pide, mide o confirma anuncios.
+  const YOUTUBE_AD_PATHS = ['/pagead/', '/api/stats/ads', '/get_midroll_', '/youtubei/v1/player/ad_break', '/ptracking'];
+  function isYouTubeAdRequest(parsedUrl) {
+    const host = parsedUrl.hostname;
+    if (!(hostnameMatches(host, 'youtube.com') || hostnameMatches(host, 'youtube-nocookie.com') ||
+          hostnameMatches(host, 'youtubekids.com'))) return false;
+    const path = parsedUrl.pathname;
+    return YOUTUBE_AD_PATHS.some(function(prefix) { return path.startsWith(prefix); });
+  }
+
+  // ---------------------------------------------------------------
+  // Ocultación de elementos (filtros cosméticos)
+  // ---------------------------------------------------------------
+
+  const HIDE_BASE_SELECTOR = '[data-phantomshield-hidden="true"]';
+  const selectorValidity = new Map();
+
+  function validSelector(selector) {
+    if (typeof document === 'undefined' || !document.createDocumentFragment) return true;
+    let valid = selectorValidity.get(selector);
+    if (valid === undefined) {
+      try { document.createDocumentFragment().querySelector(selector); valid = true; }
+      catch (error) { valid = false; }
+      if (selectorValidity.size > 60000) selectorValidity.clear();
+      selectorValidity.set(selector, valid);
+    }
+    return valid;
+  }
+
+  function cosmeticCss(selectors) {
+    // Reglas pequeñas: un selector que el motor no entienda solo anula su grupo.
+    let css = '';
+    for (let i = 0; i < selectors.length; i += 40) {
+      css += selectors.slice(i, i + 40).join(',\n') + '{display:none!important;}\n';
+    }
+    return css;
+  }
+
+  /*
+   * Hoja de estilos de usuario insertada por el navegador: no depende del DOM
+   * de la página, así que ni su CSP ni sus scripts pueden quitarla.
+   */
+  async function injectCosmetic(sender, selectors) {
+    const tab = sender && sender.tab;
+    if (!selectors.length || !tab || !browser.tabs || typeof browser.tabs.insertCSS !== 'function') return false;
+    try {
+      await browser.tabs.insertCSS(tab.id, {
+        code: cosmeticCss(selectors), cssOrigin: 'user', runAt: 'document_start',
+        frameId: typeof sender.frameId === 'number' ? sender.frameId : 0
+      });
+      return true;
+    } catch (error) {
+      return false;
     }
   }
 
@@ -257,13 +317,23 @@
       }
 
       const parsedUrl = new URL(url);
-      if (hostnameMatches(parsedUrl.hostname, 'youtube.com') &&
-          (parsedUrl.pathname.startsWith('/pagead/') || parsedUrl.pathname === '/api/stats/ads')) {
+      const block = function() {
         if (engine && !details.incognito) engine.recordBlocked();
         countTabBlock(details.tabId);
         if (!details.incognito) scheduleCountPersist();
         return { cancel: true };
+      };
+
+      if (details.type === 'main_frame') {
+        // Una página que el usuario abre no se cancela (las reglas de red son
+        // para recursos): antes, tocar un resultado patrocinado o visitar el
+        // sitio de una empresa de publicidad daba error de conexión. Solo se
+        // cortan las redes de ventanas emergentes, que nadie visita a propósito.
+        return POPUP_HOSTS.some(function(domain) { return hostnameMatches(parsedUrl.hostname, domain); })
+          ? block() : {};
       }
+
+      if (isYouTubeAdRequest(parsedUrl)) return block();
 
       if (engine && engine.shouldBlock(url, details.type, documentUrl, !details.incognito)) {
         countTabBlock(details.tabId);
@@ -305,18 +375,18 @@
   if (browser.runtime.onInstalled) {
     browser.runtime.onInstalled.addListener(function(details) {
       if (!details || !['install', 'update'].includes(details.reason)) return;
-      // Make transmission choices visible for new and upgrading users, including older Gecko.
-      browser.storage.local.get({ aiConfig: globalThis.PhantomAIConfig.defaults }).then(function(stored) {
-        return browser.storage.local.set({
-          aiConfig: Object.assign({}, stored.aiConfig, { enabled: false, consent: false }),
-          phantom_last_update: 0,
-          phantom_update_results: []
-        });
+      /*
+       * Solo se fuerza una nueva descarga de listas (el formato de reglas
+       * puede haber cambiado). La configuración de IA se conserva: antes cada
+       * actualización de la app la apagaba y revocaba el consentimiento, así
+       * que la IA dejaba de funcionar sin avisar. La IA sigue apagada por
+       * defecto y solo usa el alcance que el usuario aceptó.
+       */
+      ready.then(function() {
+        return browser.storage.local.set({ phantom_last_update: 0 });
       }).then(function() {
-        return browser.runtime.openOptionsPage();
-      }).catch(function() {
-        console.warn('[PhantomShield] No se pudieron abrir los controles de privacidad. La IA requiere activación explícita.');
-      });
+        return updater ? updater.updateAllLists() : undefined;
+      }).catch(function() {});
     });
   }
 
@@ -348,9 +418,40 @@
           ok: true,
           enabled: isEnabledForHost(host),
           aiEnabled: isEnabledForHost(host) && await globalThis.PhantomAI.available(host, tab && tab.incognito),
+          aiDetail: await globalThis.PhantomAI.config().then(function(config) { return config.detail; }, function() { return 'basic'; }),
           host: host
         };
       });
+    }
+
+    if (message.type === 'GET_COSMETIC' || message.type === 'COSMETIC_LOOKUP') {
+      const tab = sender && sender.tab;
+      const topHost = tab ? (hostOf(tab.url) || tabHosts.get(tab.id) || '') : '';
+      // Las reglas dependen del documento que las pide (también dentro de marcos).
+      const frameHost = hostOf(sender && sender.url) || topHost;
+      return ready.then(async function() {
+        if (!cosmetic || !isEnabledForHost(topHost)) return { ok: true, enabled: false, generic: false, injected: false, selectors: [] };
+        let selectors;
+        let generic = true;
+        if (message.type === 'GET_COSMETIC') {
+          const result = cosmetic.forHost(frameHost);
+          generic = result.generic;
+          selectors = [HIDE_BASE_SELECTOR].concat(result.selectors.filter(validSelector));
+        } else {
+          selectors = cosmetic.lookup(frameHost, message.classes, message.ids).filter(validSelector);
+        }
+        // `inline`: la página comprobó que la inserción no surte efecto en este motor.
+        const injected = message.inline === true ? false : await injectCosmetic(sender, selectors);
+        return { ok: true, enabled: true, generic: generic, injected: injected, selectors: injected ? [] : selectors };
+      });
+    }
+
+    if (message.type === 'AI_TEST') {
+      // Solo las páginas de la propia extensión pueden probar la conexión.
+      if (!sender || sender.id !== browser.runtime.id || !String(sender.url || '').startsWith(browser.runtime.getURL(''))) {
+        return Promise.resolve({ ok: false, code: 'forbidden', error: 'Prueba no autorizada.' });
+      }
+      return ready.then(function() { return globalThis.PhantomAI.probe(message.config); });
     }
 
     if (message.type === 'GET_STATS') {
@@ -361,6 +462,7 @@
         blockedCount: engine ? engine.getBlockedCount() : 0,
         tabBlocked: tabBlocked.get(tabId) || 0,
         siteDisabled: isHostDisabled(host),
+        rules: listManager && listManager.counts ? Object.assign({}, listManager.counts) : { network: 0, cosmetic: 0 },
         settings: Object.assign({}, settings)
       });
     }

@@ -12,7 +12,9 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Historial, descargas y compartir.
 - Limpieza de datos.
 - Administrador de extensiones.
-- PhantomShield 8.4.0 integrado, con bloqueo local, contadores reales y controles por sitio.
+- PhantomShield 8.5.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
+  eliminación de anuncios de YouTube, contadores reales y controles por sitio. IA opcional
+  (tu propia API) para los anuncios que las reglas no reconocen.
 - IA opcional en sitios elegidos o automática, con exclusiones, presupuestos y apagado rápido.
 - OpenAI, Claude y OpenRouter, direcciones personalizables y contadores acumulados de tokens y decisiones IA.
 - Inicio y menú basados en el prototipo: barra inferior, accesos editables y fuentes locales.

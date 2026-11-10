@@ -120,3 +120,55 @@ El manifest usa `options_ui.open_in_tab=false` para delegar la apertura a la app
 La app reutiliza una pestaña de opciones existente, espera a que termine el
 mensaje del popup para cerrarlo y no pierde el contexto de la página original.
 Esta ruta debe comprobarse también en un dispositivo GeckoView.
+
+### Bloqueo real y IA funcional en 8.5.0
+
+**YouTube.** Antes el anuncio solo se silenciaba y aceleraba. Ahora `content/page-hooks.js`
+(mundo MAIN) elimina `adPlacements`, `playerAds`, `adSlots` y `adBreakHeartbeatParams` de
+`ytInitialPlayerResponse`, de `JSON.parse`, de `Response.json()` y de XHR con respuesta JSON,
+y quita los anuncios de la secuencia de Shorts. Las funciones se envuelven con `Proxy` para
+conservar su apariencia nativa. Si un anuncio empieza igualmente, se silencia, se pulsa omitir
+o se salta a su final. El fondo bloquea `/pagead/`, `/api/stats/ads`, `/get_midroll_`,
+`/youtubei/v1/player/ad_break` y `/ptracking`. Respeta la pausa por sitio.
+
+**Ocultación.** Nuevo `background/cosmetic-engine.js`: aprovecha las reglas `##` de EasyList y
+uBlock que antes se descartaban. Reglas por sitio y genéricas complejas se aplican siempre; las
+~13.000 genéricas simples solo cuando su clase o id aparece en la página (consulta por lotes
+desde `content/cosmetic-filter.js`). Se respetan `#@#`, `$generichide` y `$elemhide`; los filtros
+procedurales y scriptlets se ignoran. El CSS se inserta con `tabs.insertCSS` (origen de usuario,
+inmune a la CSP del sitio); si no está disponible, se usa un `<style>` en la página.
+
+**Red.** Listas incluidas ampliadas (228 servidores de anuncios, 84 rastreadores) para proteger
+antes de la primera descarga. Catálogo único con espejos: EasyList y EasyPrivacy usan
+`easylist.to` y, si falla, `raw.githubusercontent.com/uBlockOrigin/uAssetsCDN`; se añaden
+`uBlock privacy`, `uBlock unbreak` y EasyList Spanish (opcional). Las páginas que abre el
+usuario ya no se cancelan (solo redes de ventanas emergentes).
+
+**Rendimiento.** Las expresiones regulares se compilan al primer uso y los dominios simples se
+guardan en un conjunto: con las listas reales (106.000 reglas de red, 31.000 cosméticas) el
+motor pasa de ~100 MB a ~20 MB de memoria y carga en ~0,5 s.
+
+**IA.** Causas por las que no funcionaba y su corrección:
+
+- Cada actualización de la app la apagaba y revocaba el consentimiento (`onInstalled`). Ahora se
+  conserva la configuración.
+- Se enviaba `temperature: 0` y `max_tokens: 800`: los modelos Claude actuales rechazan
+  `temperature` y los de razonamiento agotaban la salida; los modelos OpenAI recientes exigen
+  `max_completion_tokens`. Cuerpo por protocolo y reintento con cuerpo mínimo tras HTTP 400.
+- Tiempo límite de 5 s, corto para redes móviles: 12 s por defecto, hasta 30 s.
+- Cualquier fallo mostraba el mismo mensaje. Ahora se clasifica (clave, modelo, solicitud,
+  límite, red, tiempo, formato), se guarda en `aiStatus` y se muestra en panel y opciones;
+  **Probar conexión** lo verifica con ejemplos inventados.
+- Un fallo del aviso nativo de permisos impedía guardar. Ahora solo bloquea una negativa
+  explícita.
+- El modelo solo recibía etiqueta, señales y tamaño, y hacía falta 0,95 de confianza: casi
+  nunca ocultaba nada. El **análisis detallado** (opcional, con consentimiento renovado) añade
+  texto breve saneado, dominios enlazados, dominio del marco y clases; se detectan también
+  banners enlazados y marcos de terceros con tamaño de anuncio; umbral 0,8.
+
+Los anuncios de video de YouTube se resuelven con reglas locales, no con IA.
+
+Verificado con tests Node (motor, fondo, YouTube, IA) y con los scripts reales en Chromium
+(detección de candidatos, ocultación, poda de YouTube por las cuatro vías). Pendiente en un
+teléfono con GeckoView: `tabs.insertCSS`, el mundo MAIN en m.youtube.com con anuncios reales
+y una llamada real al proveedor de IA.

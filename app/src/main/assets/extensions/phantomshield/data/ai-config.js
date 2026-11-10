@@ -4,14 +4,20 @@
   const defaults = Object.freeze({
     enabled: false, consent: false, provider: 'custom', endpoint: '', model: '', apiKey: '',
     allowedHosts: [], scope: 'selected', includeSubdomains: false, excludedHosts: [],
-    requestsPerMinute: 6, requestsPerHour: 60, timeoutMs: 5000, jsonMode: false
+    requestsPerMinute: 6, requestsPerHour: 60, timeoutMs: 12000, jsonMode: false,
+    // 'basic': solo tipo, señales y tamaño. 'rich': añade un fragmento corto del
+    // texto visible del candidato, dominios de sus enlaces y nombres de clase.
+    detail: 'basic'
   });
 
   const providers = Object.freeze({
-    openai: { label: 'OpenAI', endpoint: 'https://api.openai.com/v1', placeholder: 'gpt-4.1-mini' },
-    claude: { label: 'Claude (Anthropic)', endpoint: 'https://api.anthropic.com/v1', placeholder: 'claude-haiku-4-5' },
-    openrouter: { label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1', placeholder: 'openai/gpt-4.1-mini' },
-    custom: { label: 'Compatible / personalizado', endpoint: '', placeholder: 'Identificador del modelo' }
+    openai: { label: 'OpenAI', endpoint: 'https://api.openai.com/v1', placeholder: 'gpt-4.1-mini',
+      models: ['gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o-mini'] },
+    claude: { label: 'Claude (Anthropic)', endpoint: 'https://api.anthropic.com/v1', placeholder: 'claude-opus-5-5',
+      models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] },
+    openrouter: { label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1', placeholder: 'openai/gpt-4.1-mini',
+      models: [] },
+    custom: { label: 'Compatible / personalizado', endpoint: '', placeholder: 'Identificador del modelo', models: [] }
   });
   function validate(input) {
     if (!input || typeof input !== 'object') throw new Error('Configuración IA inválida.');
@@ -24,6 +30,8 @@
     config.scope = input.scope === undefined ? 'selected' : input.scope;
     if (!['selected', 'public'].includes(config.scope)) throw new Error('Alcance IA inválido.');
     config.includeSubdomains = input.includeSubdomains === true;
+    config.detail = input.detail === undefined ? 'basic' : input.detail;
+    if (!['basic', 'rich'].includes(config.detail)) throw new Error('Nivel de detalle IA inválido.');
     for (const [key, min, max] of [['requestsPerMinute', 1, 12], ['requestsPerHour', 1, 120]]) {
       config[key] = input[key] === undefined ? defaults[key] : Number(input[key]);
       if (!Number.isInteger(config[key]) || config[key] < min || config[key] > max) {
@@ -34,8 +42,8 @@
     config.model = String(input.model || '').trim();
     config.apiKey = String(input.apiKey || '').trim();
     config.timeoutMs = input.timeoutMs === undefined ? defaults.timeoutMs : Number(input.timeoutMs);
-    if (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1000 || config.timeoutMs > 15000) {
-      throw new Error('El tiempo límite debe estar entre 1000 y 15000 ms.');
+    if (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1000 || config.timeoutMs > 30000) {
+      throw new Error('El tiempo límite debe estar entre 1000 y 30000 ms.');
     }
     if (config.endpoint) {
       let url;

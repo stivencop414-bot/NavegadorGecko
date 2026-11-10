@@ -5,11 +5,8 @@
 (function() {
   'use strict';
 
-  const LISTS = [
-    { id: 'easylist', url: 'https://easylist.to/easylist/easylist.txt' },
-    { id: 'easyprivacy', url: 'https://easylist.to/easylist/easyprivacy.txt' },
-    { id: 'ubo-filters', url: 'https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters.txt' }
-  ];
+  // Catálogo compartido con el gestor de listas (direcciones y espejos).
+  const LISTS = (globalThis.PhantomFilterListManager && globalThis.PhantomFilterListManager.lists) || [];
 
   class PhantomUpdater {
     constructor() {
@@ -53,16 +50,29 @@
     async _updateAllLists() {
       const results = [];
       for (const list of LISTS) {
-        try {
-          const updated = await this.updateList(list);
-          results.push({ id: list.id, ok: true, updated: updated });
-        } catch (error) {
-          results.push({ id: list.id, ok: false, error: error ? error.message : 'Error desconocido' });
+        let failure = null;
+        let done = false;
+        // Probar cada dirección en orden: servidor principal y luego espejos.
+        for (const url of list.urls) {
+          try {
+            await this.updateList({ id: list.id, url: url });
+            done = true;
+            break;
+          } catch (error) {
+            failure = error;
+          }
         }
+        const entry = { id: list.id, name: list.name, ok: done };
+        if (list.optional) entry.optional = true;
+        if (!done) entry.error = failure && failure.name === 'AbortError' ? 'Tiempo de espera agotado'
+          : failure && failure.message ? failure.message : 'Error desconocido';
+        results.push(entry);
       }
       const status = { phantom_last_update_attempt: Date.now(), phantom_update_results: results };
-      // A failure or partial refresh is not a completed list update.
-      if (results.every(result => result.ok)) status[this.lastUpdateKey] = Date.now();
+      // Una lista opcional caída no obliga a reintentar todas en cada arranque;
+      // sí lo hace el fallo de una lista principal.
+      const required = results.filter(result => !result.optional);
+      if (required.length && required.every(result => result.ok)) status[this.lastUpdateKey] = Date.now();
       await browser.storage.local.set(status);
 
       if (globalThis.PhantomFilterListManager) {
@@ -102,7 +112,8 @@
           }
           text += decoder.decode();
         } finally { await reader.cancel().catch(function() {}); }
-        if (!text) {
+        // Una página de error HTML o una respuesta vacía no es una lista.
+        if (!text || text.length < 200 || /^\s*<(?:!doctype|html)/i.test(text)) {
           throw new Error('Lista inválida o excede el límite de tamaño');
         }
 
