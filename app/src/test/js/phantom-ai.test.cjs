@@ -21,7 +21,7 @@ function harness(overrides = {}, reply, initialStats = {}) {
   return {api:context.PhantomAIConfig,ai:context.PhantomAI,calls,
     advance(ms){time+=ms},change(values){config={...config,...values};storageListener({aiConfig:{}},'local')}};
 }
-const candidate = (id='c-1',width=100) => [{id,tag:'DIV',signals:['ad-attribute'],width,height:50}];
+const candidate = (id='c-1',width=100) => [{id,tag:'DIV',signals:['ad-class'],width,height:50}];
 test('existing configurations retain exact-site scope; automatic mode excludes local names and IPs',()=>{
   const h=harness(),old=h.api.validate({allowedHosts:['example.com']});
   assert.equal(old.scope,'selected');assert.equal(h.api.hostAllowed(old,'www.example.com'),false);
@@ -201,4 +201,14 @@ test('connection test works before enabling, uses invented samples and reports t
 test('HTTP 400 fallback cannot spend past the hourly or minute budget',async()=>{
  const h=harness({requestsPerMinute:1,requestsPerHour:1},()=>new Response('',{status:400}));
  const result=await h.ai.classify('one.com',candidate(),false);assert.equal(result.code,'budget');assert.equal(h.calls.length,1);assert.equal((await h.ai.usage()).requests,1);
+});
+
+test('definitive ad signals are hidden locally without calling the provider',async()=>{
+ const h=harness();
+ const result=await h.ai.classify('news.example.com',[
+  {id:'c-1',tag:'INS',signals:['ad-attribute'],width:300,height:250},
+  {id:'c-2',tag:'IFRAME',signals:['third-party-frame','ad-size'],width:728,height:90}],false);
+ assert.equal(result.ok,true); assert.equal(h.calls.length,0);
+ assert.deepEqual(result.decisions.map(d=>d.hide),[true,true]);
+ const usage=await h.ai.usage(); assert.equal(usage.local,2); assert.equal(usage.detected,2);
 });

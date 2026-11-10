@@ -523,3 +523,21 @@ input:focus-visible+.slider,:focus-visible {
   cursor: pointer;
 }
 .link-button:disabled { opacity: .5; }
+
+/* --- 8.7: actividad de la IA en la página actual --- */
+.ai-page {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent, #7c3aed) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, #7c3aed) 22%, transparent);
+}
+.ai-page.good { border-color: color-mix(in srgb, var(--accent-text, #6d28d9) 45%, transparent); }
+.ai-page.bad {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger, #dc2626) 8%, transparent);
+  border-color: color-mix(in srgb, var(--danger, #dc2626) 30%, transparent);
+}

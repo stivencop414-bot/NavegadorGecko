@@ -5,20 +5,22 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 ## Incluye
 - Omnibox: URL o búsqueda por palabras.
 - Google, DuckDuckGo, Bing, Brave Search y Startpage.
-- Multipestañas, sesiones LRU y pestañas privadas. Grupos con nombre, filtros y cierre del grupo visible.
-- Herramientas en la barra de direcciones: proxy SOCKS5/HTTP por pestaña, Orbot externo,
-  retardo de solicitudes y geolocalización simulada. DNS DoH configurable para todo el navegador.
-- Burner: contenedor privado aislado, correo temporal de mail.tm con buzón lateral y
+- Multipestañas, sesiones LRU y pestañas privadas. Grupos con nombre y color, píldoras con
+  contador para filtrar, mover pestañas con pulsación larga y renombrar/desagrupar/cerrar un grupo.
+- Herramientas en la barra de direcciones (hoja inferior): grupo, proxy SOCKS5/HTTP por pestaña,
+  Orbot externo, retardo de solicitudes y geolocalización simulada. DNS DoH configurable para todo el navegador.
+- Burner: contenedor privado aislado, correo temporal de mail.tm con buzón en hoja inferior y
   limpieza al cerrar la última pestaña de la identidad. Variación experimental de Canvas/WebGL.
 - Modo escritorio: User-Agent + viewport.
 - Temas Midnight, OLED y claro.
 - Siete colores de acento, con cobalto por defecto.
-- Historial, descargas y compartir.
+- Historial con búsqueda en vivo (título, dominio o dirección, sin distinguir tildes), descargas y compartir.
 - Limpieza de datos.
 - Administrador de extensiones.
-- PhantomShield 8.6.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
+- PhantomShield 8.7.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
   eliminación de anuncios de YouTube, contadores reales y controles por sitio. IA opcional
-  (tu propia API) para los anuncios que las reglas no reconocen.
+  (tu propia API) para los anuncios que las reglas no reconocen; las señales inequívocas se
+  resuelven en el dispositivo sin gastar tokens y el panel muestra lo revisado/ocultado en cada página.
 - IA opcional en sitios elegidos o automática, con exclusiones, presupuestos y apagado rápido.
 - OpenAI, Claude y OpenRouter, direcciones personalizables y contadores acumulados de tokens y decisiones IA.
 - Inicio y menú basados en el prototipo: barra inferior, accesos editables y fuentes locales.
@@ -35,7 +37,8 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Tienda Android de addons.mozilla.org.
 - Importación de XPI firmado e instalación por URL.
 - Traducción dentro de la página con Gecko, sin recargar ni abrir otra pestaña, con descarga de idiomas confirmada por el usuario.
-- Mini reproductor (Picture-in-Picture) y reproducción en segundo plano.
+- Mini reproductor (Picture-in-Picture) con título del video, botón flotante translúcido (pulsación
+  larga lo oculta en esa página) y reproducción en segundo plano.
 - Parcheador anti-bloqueo opcional, apagado inicialmente: modifica solo dos bibliotecas
   conocidas cuando sus bytes coinciden con un hash verificado.
 

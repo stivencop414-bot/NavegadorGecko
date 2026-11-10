@@ -17,7 +17,14 @@
   let walker = null;
   const hidden = new Map();
   const marker = /(?:^|[\s_-])(?:ads?|advert(?:isement|ising)?|sponsor(?:ed)?|promo(?:ted|tion)?|publicidad|banner)(?:$|[\s_-])/i;
-  const labels = /\b(sponsored|patrocinado|promocionado|advertisement|publicidad)\b/i;
+  const labels = /\b(sponsored|patrocinad[oa]s?|promocionad[oa]s?|advertisement|publicidad|anuncios?|promoted|gesponsert|werbung|pubblicità|sponsoris[ée]e?)(?![\wà-ÿ])/i;
+  // Etiqueta corta que es exactamente "Ad", "Anuncio"… (no una palabra dentro de un texto).
+  const shortLabel = /^(?:ad|ads|anuncio|anuncios|publicidad|patrocinado|patrocinada|sponsored|promoted|promocionado|advertisement)$/i;
+  const MAX_RETRIES = 3;
+  let retries = 0;
+  let reportedIdle = false;
+  let toastCount = 0;
+  let toastTimer = null;
   const selector = 'aside, iframe, ins, article, section, li, figure, a[href], div[data-ad-slot], div[data-ad-client], div[class], div[id]';
   // Tamaños estándar de anuncios (IAB) en píxeles CSS.
   const AD_SIZES = [[300, 250], [336, 280], [728, 90], [970, 90], [970, 250], [320, 50], [320, 100],
@@ -100,11 +107,13 @@
     const signals = [];
     if (element.hasAttribute('data-ad-slot') || element.hasAttribute('data-ad-client')) signals.push('ad-attribute');
     if (marker.test(element.className + ' ' + element.id)) signals.push('ad-class');
+    const labelNodes = Array.from(element.querySelectorAll('small, span, [aria-label], [class*="sponsor"], [class*="label"], [class*="badge"]')).slice(0, 16);
     const label = (element.getAttribute('aria-label') || '') + ' ' +
-      Array.from(element.querySelectorAll('small, [aria-label], [class*="sponsor"], [class*="label"]')).slice(0, 8)
-        .map(node => ((node.getAttribute('aria-label') || '') + ' ' + node.textContent).slice(0, 80)).join(' ');
+      labelNodes.slice(0, 8).map(node => ((node.getAttribute('aria-label') || '') + ' ' + node.textContent).slice(0, 80)).join(' ');
     const match = label.match(labels);
-    if (match) signals.push(/sponsor|patrocin|promocion/i.test(match[0]) ? 'sponsored-label' : 'advertisement-label');
+    const exact = labelNodes.find(node => shortLabel.test(String(node.textContent || '').trim()));
+    if (match) signals.push(/sponsor|patrocin|promo|gesponsert/i.test(match[0]) ? 'sponsored-label' : 'advertisement-label');
+    else if (exact) signals.push(/patrocin|sponsor|promo/i.test(exact.textContent) ? 'sponsored-label' : 'advertisement-label');
     if (element.querySelector('a[rel~="sponsored"]') ||
         (element.tagName === 'A' && /(?:^|\s)sponsored(?:\s|$)/i.test(element.getAttribute('rel') || ''))) {
       signals.push('sponsored-link');
@@ -126,7 +135,8 @@
     }
     const external = linkHosts.filter(host => siteOf(host) !== pageSite);
     // Banner típico: pocos enlaces, todos hacia otro sitio, con imagen y tamaño de anuncio.
-    if (rich && external.length && external.length === linkHosts.length && anchors.length <= 4 &&
+    // La señal no revela los dominios: en modo básico solo sale el nombre de la señal.
+    if (external.length && external.length === linkHosts.length && anchors.length <= 4 &&
         (adSized || signals.length) && element.querySelector('img, picture, video, iframe')) {
       signals.push('external-links');
       if (adSized && !signals.includes('ad-size')) signals.push('ad-size');
@@ -188,6 +198,7 @@
     }
     if (!candidates.length) {
       if (walker || pendingRoots.size) schedule();
+      else if (!reportedIdle) { reportedIdle = true; report({ idle: true }); }
       return { ok: true, analyzed: 0, hidden: 0 };
     }
     busy = true;
@@ -205,7 +216,18 @@
     try {
       const result = await browser.runtime.sendMessage({ type: 'AI_CLASSIFY', candidates: candidates });
       if (!enabled || epoch !== revision || document.visibilityState === 'hidden' || pipActive()) return { ok: false, error: 'El estado de protección cambió.' };
-      if (!result || !result.ok) return result || { ok: false, error: 'IA no disponible.' };
+      if (!result || !result.ok) {
+        const code = result && result.code;
+        if ((code === 'busy' || code === 'budget' || code === 'cooldown') && retries < MAX_RETRIES) {
+          // Un límite temporal no gasta el lote de esta página: se reintenta luego.
+          retries++;
+          batches--;
+          for (const element of elements.values()) enqueue(element);
+          retryLater(code === 'busy' ? 4000 : 30000);
+        }
+        report({ code: typeof code === 'string' ? code : 'error' });
+        return result || { ok: false, error: 'IA no disponible.' };
+      }
       let count = 0;
       for (const candidate of candidates) {
         const element = elements.get(candidate.id);
@@ -221,6 +243,8 @@
           count++;
         }
       }
+      report({ hidden: count, code: 'ok' });
+      if (count) showToast(count);
       return { ok: true, analyzed: candidates.length, hidden: count };
     } catch (error) {
       return { ok: false, error: 'IA no disponible; continúa el bloqueo local.' };
@@ -232,6 +256,55 @@
         walker = null;
       } else if (walker || pendingRoots.size) schedule();
     }
+  }
+
+  function report(details) {
+    try {
+      Promise.resolve(browser.runtime.sendMessage(Object.assign({ type: 'AI_PAGE' }, details))).catch(function() {});
+    } catch (error) {}
+  }
+
+  function retryLater(delay) {
+    clearTimeout(timer);
+    timer = setTimeout(function() { timer = null; scan(); }, delay);
+  }
+
+  /**
+   * Aviso breve y discreto de que la IA ocultó algo en esta página. Va en un
+   * Shadow DOM cerrado para que la página no lo altere ni lo herede.
+   */
+  function showToast(count) {
+    toastCount += count;
+    const root = document.documentElement;
+    if (!root || typeof root.attachShadow !== 'function') return;
+    let host = document.getElementById('phantomshield-ai-toast');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'phantomshield-ai-toast';
+      host.setAttribute('style', 'all:initial;position:fixed;z-index:2147483647;left:50%;bottom:18px;' +
+        'transform:translateX(-50%);pointer-events:none;');
+      const shadow = host.attachShadow({ mode: 'closed' });
+      const pill = document.createElement('div');
+      pill.setAttribute('style', 'font:600 13px/1.2 system-ui,sans-serif;color:#fff;background:rgba(17,24,39,.92);' +
+        'padding:9px 14px;border-radius:999px;box-shadow:0 6px 24px rgba(0,0,0,.25);display:flex;gap:8px;' +
+        'align-items:center;opacity:0;transition:opacity .25s ease;white-space:nowrap;');
+      const dot = document.createElement('span');
+      dot.setAttribute('style', 'width:8px;height:8px;border-radius:50%;background:#8b5cf6;display:inline-block;');
+      const text = document.createElement('span');
+      pill.append(dot, text);
+      shadow.append(pill);
+      host._phantom = { pill: pill, text: text };
+      root.appendChild(host);
+    }
+    const parts = host._phantom;
+    if (!parts) return;
+    parts.text.textContent = 'IA de PhantomShield ocultó ' + toastCount + (toastCount === 1 ? ' anuncio' : ' anuncios');
+    requestAnimationFrame(function() { parts.pill.style.opacity = '1'; });
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function() {
+      parts.pill.style.opacity = '0';
+      toastTimer = setTimeout(function() { host.remove(); toastTimer = null; }, 300);
+    }, 2600);
   }
 
   function schedule() {
@@ -293,6 +366,8 @@
     seen = new WeakMap();
     pendingRoots.clear();
     walker = null;
+    retries = 0;
+    reportedIdle = false;
     try {
       const state = await browser.runtime.sendMessage({ type: 'GET_SITE_STATE' });
       if (revision !== epoch) return;

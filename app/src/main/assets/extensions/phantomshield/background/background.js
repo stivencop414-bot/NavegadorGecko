@@ -23,6 +23,17 @@
   // Pestaña -> host de la página principal y anuncios bloqueados en ella.
   const tabHosts = new Map();
   const tabBlocked = new Map();
+  // Pestaña -> actividad de IA en la página actual (solo números y un código).
+  const tabAi = new Map();
+
+  function aiTabState(tabId) {
+    let state = tabAi.get(tabId);
+    if (!state) {
+      state = { active: false, scans: 0, analyzed: 0, hidden: 0, code: '', at: 0 };
+      tabAi.set(tabId, state);
+    }
+    return state;
+  }
 
   // A compact, count-only channel also read by the native browser action UI.
   let badgeTimer = null;
@@ -287,6 +298,7 @@
         tabHosts.set(details.tabId, hostOf(details.url));
         badgeFallbackHosts.delete(details.tabId);
         tabBlocked.set(details.tabId, 0);
+        tabAi.delete(details.tabId);
         queueBadgeUpdate(details.tabId);
       }
 
@@ -354,6 +366,7 @@
     browser.tabs.onRemoved.addListener(function(tabId) {
       tabHosts.delete(tabId);
       tabBlocked.delete(tabId);
+      tabAi.delete(tabId);
       badgeFallbackHosts.delete(tabId);
       lastTabBadges.delete(tabId);
       dirtyBadgeTabs.delete(tabId);
@@ -407,8 +420,36 @@
         }
         const result = await globalThis.PhantomAI.classify(host, message.candidates, tab.incognito);
         if (!isEnabledForHost(host)) return { ok: false, error: 'Protección desactivada.' };
+        const ai = aiTabState(tab.id);
+        ai.active = true;
+        ai.at = Date.now();
+        if (result && result.ok) {
+          ai.scans++;
+          ai.analyzed += Array.isArray(message.candidates) ? Math.min(message.candidates.length, 12) : 0;
+          ai.code = 'ok';
+        } else {
+          ai.code = (result && result.code) || 'error';
+        }
         return result;
       })();
+    }
+
+    if (message.type === 'AI_PAGE') {
+      // El detector informa de lo que realmente ocultó y de pasadas sin candidatos.
+      const tab = sender && sender.tab;
+      if (!tab || sender.id !== browser.runtime.id || sender.frameId !== 0) return Promise.resolve({ ok: false });
+      const ai = aiTabState(tab.id);
+      ai.active = true;
+      ai.at = Date.now();
+      if (Number.isSafeInteger(message.hidden) && message.hidden > 0) {
+        const count = Math.min(message.hidden, 12);
+        ai.hidden += count;
+        // Lo que oculta la IA también cuenta en el escudo de la barra.
+        for (let i = 0; i < count; i++) countTabBlock(tab.id);
+      }
+      if (message.idle === true && !ai.code) ai.code = 'idle';
+      if (typeof message.code === 'string' && /^[a-z]{2,16}$/.test(message.code)) ai.code = message.code;
+      return Promise.resolve({ ok: true });
     }
 
     if (message.type === 'GET_SITE_STATE') {
@@ -464,6 +505,7 @@
         ok: true,
         blockedCount: engine ? engine.getBlockedCount() : 0,
         tabBlocked: tabBlocked.get(tabId) || 0,
+        tabAi: tabAi.has(tabId) ? Object.assign({}, tabAi.get(tabId)) : null,
         siteDisabled: isHostDisabled(host),
         rules: listManager && listManager.counts ? Object.assign({}, listManager.counts) : { network: 0, cosmetic: 0 },
         settings: Object.assign({}, settings)
@@ -481,6 +523,7 @@
     if (message.type === 'RESET_STATS') {
       if (engine) engine.resetBlockedCount();
       tabBlocked.clear();
+      tabAi.clear();
       queueBadgeUpdate(undefined, true);
       if (countPersistTimer !== null) {
         clearTimeout(countPersistTimer);

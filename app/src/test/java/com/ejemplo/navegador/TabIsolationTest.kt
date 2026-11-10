@@ -24,3 +24,11 @@ class TabIsolationTest {
         assertFalse(DnsProfile.valid("https://dns.example.com/dns-query?token=secret"))
     }
 }
+
+class TabGroupColorTest {
+    @Test fun groupColorIsStableAndCaseInsensitive() {
+        assertEquals(TabGroupRules.color("Trabajo"),TabGroupRules.color("trabajo"))
+        assertEquals(TabGroupRules.color("Trabajo"),TabGroupRules.color(" Trabajo "))
+        assertEquals(0xFF.toLong(),(TabGroupRules.color(null).toLong() ushr 24) and 0xFF)
+    }
+}
