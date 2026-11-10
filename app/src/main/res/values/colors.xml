@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="nexo_light_background">#FFF6F7FB</color>
+    <color name="nexo_light_background">#FFF2F4F9</color>
     <color name="nexo_light_surface">#FFFFFFFF</color>
-    <color name="nexo_light_text">#FF0F172A</color>
-    <color name="nexo_dark_background">#FF090A0F</color>
-    <color name="nexo_dark_surface">#FF12141D</color>
-    <color name="nexo_dark_text">#FFF3F4F6</color>
+    <color name="nexo_light_text">#FF0F1626</color>
+    <color name="nexo_dark_background">#FF0C1222</color>
+    <color name="nexo_dark_surface">#FF131B30</color>
+    <color name="nexo_dark_text">#FFEDF1FA</color>
 </resources>

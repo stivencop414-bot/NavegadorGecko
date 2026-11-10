@@ -14,29 +14,29 @@
 }
 :root {
   color-scheme:dark light;
-  --bg:#090a0f;
-  --surface:#12141d;
-  --raised:#191c28;
-  --text:#f3f4f6;
-  --muted:#9ca3af;
-  --accent:#10b981;
-  --accent-text:#6ee7b7;
-  --on-accent:#06070b;
-  --line:rgba(255,255,255,.08);
+  --bg:#0c1222;
+  --surface:#131b30;
+  --raised:#1b2540;
+  --text:#edf1fa;
+  --muted:#96a2be;
+  --accent:#2fd6a0;
+  --accent-text:#7eeac6;
+  --on-accent:#0c1222;
+  --line:#27324f;
   --danger:#fda4af;
   font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
 }
 @media(prefers-color-scheme:light) {
   :root {
-    --bg:#f4f7f8;
+    --bg:#f2f4f9;
     --surface:#fff;
-    --raised:#edf1f2;
-    --text:#14252b;
-    --muted:#52636a;
-    --accent:#047857;
-    --accent-text:#047857;
+    --raised:#e8ecf5;
+    --text:#0f1626;
+    --muted:#5b6680;
+    --accent:#0a7656;
+    --accent-text:#0a7656;
     --on-accent:#fff;
-    --line:rgba(15,35,40,.12);
+    --line:#d8deea;
     --danger:#b42340;
   }
 }
@@ -199,7 +199,7 @@ p {
   border-radius:16px;
   border:1px solid var(--line);
   background:linear-gradient(180deg,var(--raised),var(--surface));
-  box-shadow:inset 0 1px rgba(255,255,255,.08);
+  box-shadow:inset 0 1px #27324f;
 }
 .stat-value {
   font-family:"JetBrains Mono",ui-monospace,"SFMono-Regular",Consolas,monospace;
@@ -224,7 +224,7 @@ p {
   border-radius:16px;
   padding:14px;
   margin-bottom:12px;
-  box-shadow:inset 0 1px rgba(255,255,255,.08);
+  box-shadow:inset 0 1px #27324f;
 }
 .toggle-row {
   justify-content:space-between;
@@ -419,7 +419,7 @@ button:disabled {
   height:20px;
   left:2px;
   bottom:2px;
-  background:#9ca3af;
+  background:#96a2be;
   border-radius:50%;
   box-shadow:0 2px 4px rgba(0,0,0,.4);
   transition:transform .15s;
@@ -479,3 +479,10 @@ input:focus-visible+.slider,:focus-visible {
     transition:none!important;
   }
 }
+
+.ai-card { border-color:var(--line); background:var(--surface); border-radius:20px; }
+.ai-card h2 svg { color:#a9c0ff; }
+#scan-ai { background:#3d6bf2; color:#fff; box-shadow:none; }
+#disable-ai,#exclude-ai { width:100%; margin:0 0 10px; color:var(--danger); }
+.hero-card,.control-card { border-radius:20px; }
+@media(prefers-color-scheme:light) { .ai-card h2 svg { color:#3156c4; } }

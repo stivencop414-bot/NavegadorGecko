@@ -57,13 +57,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     badge.textContent = !globalOn ? 'Apagado' : !domain ? 'Listo' : siteOn ? 'Activo' : 'Pausado aquí';
     badge.className = 'status-badge' + (!globalOn ? ' off' : siteOn && domain ? ' active' : '');
     const config = stored.aiConfig && typeof stored.aiConfig === 'object' ? stored.aiConfig : {};
-    const authorized = Array.isArray(config.allowedHosts) && config.allowedHosts.includes(host);
+    const authorized = globalThis.PhantomAIConfig.hostAllowed(config, host);
     scanAvailable = Boolean(domain && globalOn && siteOn && config.enabled === true && config.consent === true && authorized && !(currentTab && currentTab.incognito));
+    field('exclude-ai').hidden = !config.enabled || !authorized || !domain;
+    field('exclude-ai').disabled = busy;
+    field('disable-ai').hidden = !config.enabled;
+    field('disable-ai').disabled = busy;
     field('ai-hint').textContent = !config.enabled ? 'IA apagada. Tu protección local funciona sin modelos ni claves.'
       : currentTab && currentTab.incognito ? 'La IA no se utiliza en pestañas privadas.'
       : !authorized ? 'Este sitio no está autorizado para IA. Puedes gestionarlo en ajustes.'
       : !globalOn || !siteOn ? 'Activa la protección de este sitio para analizarlo.'
-      : 'Análisis manual con el proveedor que autorizaste. Puede consumir cuota.';
+      : (config.scope === 'public' ? 'IA automática en sitios públicos' : 'IA en sitios elegidos') + '. Con caché y presupuesto compartido; analizar puede consumir cuota.';
     const last = Number(stored.phantom_last_update) || 0;
     const results = Array.isArray(stored.phantom_update_results) ? stored.phantom_update_results : [];
     field('last-update').textContent = results.some(result => !result || !result.ok)
@@ -93,6 +97,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   field('configure-ai').addEventListener('click', () => {
     browser.runtime.openOptionsPage().catch(() => showMessage('No se pudieron abrir los ajustes de IA.', true));
   });
+  field('exclude-ai').addEventListener('click', () => mutate(async () => {
+    if (!host) return;
+    const stored = await browser.storage.local.get({ aiConfig: {} });
+    const config = globalThis.PhantomAIConfig.validate(Object.assign({}, stored.aiConfig, {
+      excludedHosts: [...new Set([...(stored.aiConfig.excludedHosts || []), host])]
+    }));
+    await browser.storage.local.set({ aiConfig: config });
+    showMessage('IA excluida en este sitio y sus subdominios. El bloqueo local continúa.');
+  }));
+  field('disable-ai').addEventListener('click', () => mutate(async () => {
+    const stored = await browser.storage.local.get({ aiConfig: {} });
+    await browser.storage.local.set({ aiConfig: Object.assign({}, stored.aiConfig, { enabled: false, consent: false }) });
+    showMessage('IA desactivada en todos los sitios. El bloqueo local continúa.');
+  }));
   field('scan-ai').addEventListener('click', () => mutate(async () => {
     if (!scanAvailable || !currentTab) return;
     showMessage('Analizando posibles anuncios…');

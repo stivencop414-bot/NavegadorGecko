@@ -8,11 +8,12 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Multipestañas, sesiones LRU y pestañas privadas.
 - Modo escritorio: User-Agent + viewport.
 - Temas Midnight, OLED y claro.
-- Seis colores de acento.
+- Siete colores de acento, con cobalto por defecto.
 - Historial, descargas y compartir.
 - Limpieza de datos.
 - Administrador de extensiones.
-- PhantomShield 8.3.2 integrado, con bloqueo local, contadores reales y controles por sitio.
+- PhantomShield 8.3.3 integrado, con bloqueo local, contadores reales y controles por sitio.
+- IA opcional en sitios elegidos o automática, con exclusiones, presupuestos y apagado rápido.
 - Inicio y menú basados en el prototipo: barra inferior, accesos editables y fuentes locales.
 - Paneles de extensiones como hoja inferior redondeada y accesos directos en el menú.
 - Diálogos de páginas: `<select>`, alert/confirm/prompt, fecha y hora, color, subida de

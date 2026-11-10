@@ -41,6 +41,7 @@ class SettingsActivity : Activity() {
         "Claro" to BrowserPrefs.THEME_LIGHT
     )
     private val accents = listOf(
+        "Cobalto" to BrowserPrefs.ACCENT_COBALT,
         "Violeta" to BrowserPrefs.ACCENT_VIOLET,
         "Cian" to BrowserPrefs.ACCENT_CYAN,
         "Lima" to BrowserPrefs.ACCENT_LIME,

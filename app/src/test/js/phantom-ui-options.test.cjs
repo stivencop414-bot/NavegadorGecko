@@ -64,3 +64,14 @@ test('domain chips validate exact hosts and remain drafts until saving',async()=
 test('timeout presets change the draft without enabling AI',async()=>{
   const h=await harness();await h.fire('timeout-3');assert.equal(Number(h.field('timeout').value),3000);assert.equal(h.saved.enabled,false);assert.equal(h.writes,0);
 });
+
+test('automatic scope requires renewed consent and saves exclusions and shared budgets',async()=>{
+  const h=await harness({enabled:true,consent:true,endpoint:'https://api.example/v1',model:'small'});
+  h.field('scope').value='public';await h.fire('scope','change');
+  assert.equal(h.field('consent').checked,false);assert.equal(h.field('selected-sites').hidden,true);
+  await h.fire('ai-form','submit');assert.equal(h.writes,0);
+  h.field('consent').checked=true;h.field('excluded-hosts').value='bank.com\nwork.com';
+  h.field('requests-minute').value=3;h.field('requests-hour').value=20;
+  await h.fire('ai-form','submit');assert.equal(h.saved.scope,'public');
+  assert.deepEqual(Array.from(h.saved.excludedHosts),['bank.com','work.com']);assert.equal(h.saved.requestsPerHour,20);
+});

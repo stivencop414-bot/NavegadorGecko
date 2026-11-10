@@ -250,4 +250,32 @@
         <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Red</item>
     </style>
 
+    <style name="Theme.Nexo.Dialog.Light.Cobalt" parent="Theme.Nexo.DialogBase.Light">
+        <item name="android:colorAccent">#3D6BF2</item>
+        <item name="android:colorControlActivated">#3D6BF2</item>
+    </style>
+    <style name="Theme.Nexo.Light.Cobalt" parent="Theme.Nexo.Base.Light">
+        <item name="android:colorAccent">#3D6BF2</item>
+        <item name="android:colorPrimary">#3D6BF2</item>
+        <item name="android:colorControlActivated">#3D6BF2</item>
+        <item name="android:textColorHighlight">#3D6BF255</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Cobalt</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Cobalt</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Cobalt</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Cobalt</item>
+    </style>
+    <style name="Theme.Nexo.Dialog.Dark.Cobalt" parent="Theme.Nexo.DialogBase.Dark">
+        <item name="android:colorAccent">#3D6BF2</item>
+        <item name="android:colorControlActivated">#3D6BF2</item>
+    </style>
+    <style name="Theme.Nexo.Dark.Cobalt" parent="Theme.Nexo.Base.Dark">
+        <item name="android:colorAccent">#3D6BF2</item>
+        <item name="android:colorPrimary">#3D6BF2</item>
+        <item name="android:colorControlActivated">#3D6BF2</item>
+        <item name="android:textColorHighlight">#3D6BF255</item>
+        <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Cobalt</item>
+        <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Cobalt</item>
+        <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Cobalt</item>
+        <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Cobalt</item>
+    </style>
 </resources>

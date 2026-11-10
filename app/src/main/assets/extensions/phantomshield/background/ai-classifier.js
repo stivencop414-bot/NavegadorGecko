@@ -32,6 +32,7 @@
     constructor() {
       this.cache = new Map();
       this.requests = [];
+      this.cooldownUntil = 0;
       this.active = null;
       this.epoch = 0;
     }
@@ -55,7 +56,7 @@
     async available(host, incognito) {
       try {
         const config = await this.config();
-        return !incognito && config.enabled && config.consent && config.allowedHosts.includes(host);
+        return !incognito && config.enabled && config.consent && globalThis.PhantomAIConfig.hostAllowed(config, host);
       } catch (error) { return false; }
     }
     async classify(host, candidates, incognito) {
@@ -64,7 +65,7 @@
       const epoch = this.epoch;
       try {
         const config = await this.config();
-        if (epoch !== this.epoch || incognito || !config.enabled || !config.consent || !config.allowedHosts.includes(host)) {
+        if (epoch !== this.epoch || incognito || !config.enabled || !config.consent || !globalThis.PhantomAIConfig.hostAllowed(config, host)) {
           return { ok: false, error: 'IA desactivada o sitio sin autorización.' };
         }
         const batch = sanitize(candidates);
@@ -79,8 +80,10 @@
         const missing = Array.from(new Map(batch.filter(candidate => !this.cache.has(signature(candidate)))
           .map(candidate => [signature(candidate), candidate])).values());
         if (missing.length) {
-          this.requests = this.requests.filter(request => now - request.time < 60000);
-          if (this.active || this.requests.length >= 12 || this.requests.filter(request => request.host === host).length >= 3) {
+          this.requests = this.requests.filter(request => now - request.time < 3600000);
+          if (this.active || now < this.cooldownUntil || this.requests.length >= config.requestsPerHour ||
+              this.requests.filter(request => now - request.time < 60000).length >= config.requestsPerMinute ||
+              this.requests.filter(request => request.host === host && now - request.time < 60000).length >= 3) {
             return { ok: false, error: 'Límite temporal de IA; el bloqueo local sigue activo.' };
           }
           controller = new AbortController();
@@ -102,7 +105,16 @@
             method: 'POST', headers: headers, body: JSON.stringify(body), signal: controller.signal,
             credentials: 'omit', cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer'
           });
-          if (!response.ok) throw new Error('HTTP ' + response.status);
+          if (!response.ok) {
+            // Back off across tabs; malformed or huge Retry-After values cannot overflow timers.
+            if (response.status === 429 || response.status >= 500) {
+              const value = response.headers.get('Retry-After');
+              const seconds = value && /^\d+$/.test(value) ? Number(value) :
+                value ? (Date.parse(value) - Date.now()) / 1000 : 60;
+              this.cooldownUntil = Date.now() + Math.min(3600, Math.max(60, Number.isFinite(seconds) ? seconds : 60)) * 1000;
+            }
+            throw new Error('HTTP ' + response.status);
+          }
           // Bound the response before parsing, even if the server ignores max_tokens.
           const reader = response.body.getReader();
           const decoder = new TextDecoder();

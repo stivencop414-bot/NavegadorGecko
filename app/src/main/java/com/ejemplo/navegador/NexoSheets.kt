@@ -121,7 +121,7 @@ object NexoSheets {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(activity, 16f), 0, dp(activity, 16f), dp(activity, 12f))
             actions.forEachIndexed { index, action ->
-                val accent = if (index == 0) p.accent else Color.rgb(6, 182, 212)
+                val accent = if (index == 0) p.accent else if (p.isDark) Color.rgb(185, 155, 255) else Color.rgb(116, 70, 221)
                 val cell = LinearLayout(activity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
