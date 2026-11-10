@@ -13,6 +13,7 @@ data class BrowserTab(
     var canGoForward: Boolean = false,
     var lastUsed: Long = System.currentTimeMillis(),
     var isLoading: Boolean = false,
+    var navigationEpoch: Long = 0,
     var sessionState: String? = null,
     var isFullScreen: Boolean = false,
     var session: GeckoSession? = null

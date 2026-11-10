@@ -1,21 +1,13 @@
 package com.ejemplo.navegador
 
-import java.net.URI
-import java.net.URLEncoder
-
-/** Builds a link to the public website service, never an undocumented translation API. */
+/** Resolve regional language detection against Gecko's actual supported language list. */
 object PageTranslation {
-    private val targets = setOf("es", "en", "pt", "fr", "de", "it", "ja", "ko")
-
-    fun urlFor(pageUrl: String, target: String): String? {
-        if (!UrlSafety.isPublicTranslationCandidate(pageUrl)) return null
-        val language = target.takeIf { it in targets } ?: "es"
-        return "https://translate.google.com/translate?sl=auto&tl=$language&hl=$language&u=" +
-            URLEncoder.encode(pageUrl, "UTF-8")
-    }
-
-    fun isTranslationPage(pageUrl: String): Boolean {
-        val host = runCatching { URI(pageUrl).host?.lowercase() }.getOrNull() ?: return false
-        return host == "translate.google.com" || host.endsWith(".translate.goog")
+    fun sourceIndex(detected: String?, supported: List<String>): Int {
+        val exact = supported.indexOfFirst { it.equals(detected, ignoreCase = true) }
+        if (exact >= 0) return exact
+        val language = detected?.substringBefore('-')
+        val primary = supported.indexOfFirst { it.equals(language, ignoreCase = true) }
+        if (primary >= 0) return primary
+        return supported.indexOfFirst { it == "en" }.coerceAtLeast(0)
     }
 }

@@ -12,9 +12,11 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Historial, descargas y compartir.
 - Limpieza de datos.
 - Administrador de extensiones.
-- PhantomShield 8.3.3 integrado, con bloqueo local, contadores reales y controles por sitio.
+- PhantomShield 8.4.0 integrado, con bloqueo local, contadores reales y controles por sitio.
 - IA opcional en sitios elegidos o automática, con exclusiones, presupuestos y apagado rápido.
+- OpenAI, Claude y OpenRouter, direcciones personalizables y contadores acumulados de tokens y decisiones IA.
 - Inicio y menú basados en el prototipo: barra inferior, accesos editables y fuentes locales.
+- Logos en accesos rápidos: recursos locales y favicon HTTPS del propio sitio, sin servicios externos.
 - Paneles de extensiones como hoja inferior redondeada y accesos directos en el menú.
 - Diálogos de páginas: `<select>`, alert/confirm/prompt, fecha y hora, color, subida de
   archivos, inicio de sesión HTTP, "¿salir de la página?" y `navigator.share()`.
@@ -26,7 +28,7 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Sitios en modo oscuro cuando Nexo usa un tema oscuro.
 - Tienda Android de addons.mozilla.org.
 - Importación de XPI firmado e instalación por URL.
-- Traducción de páginas públicas con Google Translate en línea, sin modelos locales y con confirmación antes de compartir la dirección.
+- Traducción dentro de la página con Gecko, sin recargar ni abrir otra pestaña, con descarga de idiomas confirmada por el usuario.
 - Mini reproductor (Picture-in-Picture) y reproducción en segundo plano.
 
 ## Extensiones propias
@@ -55,6 +57,12 @@ Una extensión privada/sin firma puede integrarse dentro de
   notificación multimedia no muestra el título en la pantalla de bloqueo.
 - **Descargas**: todas pasan por Gecko (cookies de la sesión, modo privado), se guardan en la
   carpeta privada de la app con nombres saneados, y se borran si quedan incompletas.
+
+Los favicons de accesos personalizados se consultan sin cookies en el propio sitio
+(`/favicon.ico`), sin seguir redirecciones, y se guardan en una caché limitada.
+Se admiten imágenes raster compatibles con Android y PNG dentro de ICO; si el
+servidor no ofrece un formato compatible se conserva la inicial. No se solicitan
+en la página de inicio privada.
 
 ## Desarrollo
 Requisitos: JDK 21, Gradle 9.8.2 y Android SDK con `platforms;android-37.2` y
@@ -88,5 +96,5 @@ La compilación corre sin acceso a esos secrets; solo el paso de firma los recib
 Usa siempre la misma clave: un APK firmado con otra clave no se puede instalar encima.
 
 La integración se documenta en [PhantomShield](docs/PHANTOMSHIELD.md).
-El nuevo traductor se documenta en [traducción en línea](docs/TRADUCCION-EN-LINEA.md).
+El nuevo traductor se documenta en [traducción en la página](docs/TRADUCCION-EN-LINEA.md).
 Para conservar los datos al actualizar, consulta [actualizaciones y firma](docs/ACTUALIZACIONES-Y-FIRMA.md).

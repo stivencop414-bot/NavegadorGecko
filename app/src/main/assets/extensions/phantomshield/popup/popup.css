@@ -486,3 +486,8 @@ input:focus-visible+.slider,:focus-visible {
 #disable-ai,#exclude-ai { width:100%; margin:0 0 10px; color:var(--danger); }
 .hero-card,.control-card { border-radius:20px; }
 @media(prefers-color-scheme:light) { .ai-card h2 svg { color:#3156c4; } }
+
+.ai-usage { display:flex; gap:16px; margin:12px 0; color:var(--text); flex-wrap:wrap; }
+.ai-usage strong,.usage-card strong { font-size:22px; font-family:"JetBrains Mono",monospace; }
+#provider-advanced { margin:14px 0; }
+#provider-advanced summary { cursor:pointer; color:var(--muted); padding:10px 0; font-size:12px; }

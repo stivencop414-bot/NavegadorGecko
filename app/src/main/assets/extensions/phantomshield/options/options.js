@@ -27,6 +27,33 @@
       scopeState();
     });
   }
+  function providerState(reveal = false) {
+    const provider = globalThis.PhantomAIConfig.providers[field('provider').value];
+    field('model').placeholder = provider.placeholder;
+    field('json-mode-control').hidden = field('provider').value === 'claude';
+    field('provider-advanced').open = reveal && field('provider').value === 'custom';
+  }
+  field('provider').addEventListener('change', function() {
+    field('endpoint').value = globalThis.PhantomAIConfig.providers[field('provider').value].endpoint;
+    field('model').value = '';
+    field('consent').checked = false;
+    providerState(true);
+  });
+  async function showUsage() {
+    const stored = await browser.storage.local.get({ aiStats: {} });
+    const stats = stored.aiStats || {};
+    const number = key => Number.isSafeInteger(stats[key]) && stats[key] >= 0 ? stats[key] : 0;
+    const tokens = number('inputTokens') + number('outputTokens');
+    field('usage-tokens').textContent = tokens === 0 && number('requests') && number('usageMissing') === number('requests') ? '—' : tokens.toLocaleString('es');
+    field('usage-detected').textContent = number('detected').toLocaleString('es');
+    field('usage-detail').textContent = number('requests') + ' solicitudes · ' + number('analyzed') + ' candidatos analizados · ' +
+      number('inputTokens') + ' tokens de entrada / ' + number('outputTokens') + ' de salida. ' +
+      number('usageMissing') + ' respuestas sin datos de uso; no se estiman tokens ni coste. Incluye decisiones de caché, no anuncios únicos.';
+  }
+  if (browser.storage.onChanged) browser.storage.onChanged.addListener(function(changes, area) {
+    if (area === 'local' && changes.aiStats) showUsage().catch(function() {});
+  });
+  showUsage().catch(function() {});
   function keyState() {
     field('api-key').value = '';
     field('api-key').type = 'password';
@@ -107,6 +134,8 @@
       field('consent').checked = saved.consent;
       field('json-mode').checked = saved.jsonMode;
       field('endpoint').value = saved.endpoint;
+      field('provider').value = saved.provider;
+      providerState();
       field('model').value = saved.model;
       field('hosts').value = saved.allowedHosts.join('\n');
       field('scope').value = saved.scope;
@@ -173,7 +202,7 @@
       const newKey = field('api-key').value.trim();
       // Turning AI off must work even when hidden draft fields are incomplete.
       const config = enabled ? globalThis.PhantomAIConfig.validate({
-        enabled: true, consent: field('consent').checked,
+        enabled: true, consent: field('consent').checked, provider: field('provider').value,
         endpoint: field('endpoint').value, model: field('model').value,
         apiKey: newKey || saved.apiKey,
         allowedHosts: field('hosts').value.split(/\s+/).filter(Boolean),

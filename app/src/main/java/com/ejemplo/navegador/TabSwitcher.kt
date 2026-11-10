@@ -127,19 +127,25 @@ object TabSwitcher {
         }
         root.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
+        val closeAll = Button(activity).apply {
+            text = "Cerrar todas"; contentDescription = "Cerrar todas las pestañas del grupo visible"
+            ThemeManager.styleButton(activity, this, danger = true)
+        }
+        root.addView(closeAll)
         lateinit var refresh: () -> Unit
         val adapter = object : BaseAdapter() {
             var items: List<BrowserTab> = emptyList()
             override fun getCount() = items.size
             override fun getItem(position: Int) = items[position]
-            override fun getItemId(position: Int) = position.toLong()
+            override fun getItemId(position: Int) = items[position].id.hashCode().toLong()
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
                 tabCard(activity, items[position], onOpen = {
                     TabManager.switchTo(it.id)
                     dialog.dismiss()
                 }, onClose = {
+                    val lastNormal = !showPrivate && items.size == 1
                     TabManager.closeTab(it.id)
-                    refresh()
+                    if (lastNormal) dialog.dismiss() else refresh()
                 })
         }
         grid.adapter = adapter
@@ -156,6 +162,13 @@ object TabSwitcher {
             styleSegment(activity, normalSeg, !showPrivate)
             styleSegment(activity, privateSeg, showPrivate)
             privateSeg.text = "Privadas (${all.count { it.isPrivate }})"
+        }
+        closeAll.setOnClickListener {
+            val ids = TabManager.allTabs().filter { it.isPrivate == showPrivate }.map { it.id }
+            android.app.AlertDialog.Builder(activity).setTitle("¿Cerrar ${ids.size} pestañas?")
+                .setNegativeButton("Cancelar", null).setPositiveButton("Cerrar") { _, _ ->
+                    ids.forEach { TabManager.closeTab(it) }; dialog.dismiss()
+                }.show()
         }
         normalSeg.setOnClickListener { showPrivate = false; refresh() }
         privateSeg.setOnClickListener { showPrivate = true; refresh() }
@@ -229,13 +242,13 @@ object TabSwitcher {
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         header.addView(ImageButton(activity).apply {
             setImageResource(R.drawable.ic_menu_close)
-            contentDescription = "Cerrar pestaña"
+            contentDescription = "Cerrar pestaña: ${tab.title}"
             scaleType = ImageView.ScaleType.CENTER
             setPadding(dp(activity, 10f), dp(activity, 10f), dp(activity, 10f), dp(activity, 10f))
             ThemeManager.styleIconButton(activity, this)
             imageTintList = ColorStateList.valueOf(p.muted)
             setOnClickListener { onClose(tab) }
-        }, LinearLayout.LayoutParams(dp(activity, 40f), dp(activity, 40f)))
+        }, LinearLayout.LayoutParams(dp(activity, 48f), dp(activity, 48f)))
         card.addView(header)
 
         val previewHeight = dp(activity, 190f)

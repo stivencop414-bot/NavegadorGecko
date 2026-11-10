@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "PhantomShield",
   "short_name": "PhantomShield",
-  "version": "8.3.3",
+  "version": "8.4.0",
   "description": "Bloquea solicitudes publicitarias y oculta anuncios mediante reglas locales. Clasificación IA opcional, con consentimiento, exclusiones y presupuesto.",
   "icons": {
     "48": "icons/icon-48.png",
@@ -35,7 +35,7 @@
   },
   "options_ui": {
     "page": "options/options.html",
-    "open_in_tab": true
+    "open_in_tab": false
   },
   "background": {
     "scripts": [
