@@ -3,7 +3,6 @@
   const field = id => document.getElementById(id);
   let saved = Object.assign({}, globalThis.PhantomAIConfig.defaults);
   let nativeConsent = false;
-  let permissionCheckFailed = false;
   let loaded = false;
   let busy = false;
   function status(text, error) {
@@ -21,10 +20,15 @@
   function scopeState() {
     field('selected-sites').hidden = field('scope').value === 'public';
   }
-  for (const id of ['scope', 'include-subdomains']) {
+  function detailState() {
+    field('consent-detail').hidden = field('detail').value !== 'rich';
+  }
+  // Cambiar qué sitios o qué datos se envían exige volver a aceptar.
+  for (const id of ['scope', 'include-subdomains', 'detail']) {
     field(id).addEventListener('change', function() {
       field('consent').checked = false;
       scopeState();
+      detailState();
     });
   }
   function providerState(reveal = false) {
@@ -32,6 +36,24 @@
     field('model').placeholder = provider.placeholder;
     field('json-mode-control').hidden = field('provider').value === 'claude';
     field('provider-advanced').open = reveal && field('provider').value === 'custom';
+    // Modelos sugeridos: un toque evita errores al escribir el identificador.
+    field('model-options').replaceChildren();
+    field('model-chips').replaceChildren();
+    for (const model of provider.models || []) {
+      const option = document.createElement('option');
+      option.value = model;
+      field('model-options').appendChild(option);
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'model-chip';
+      chip.textContent = model;
+      chip.addEventListener('click', function() {
+        field('model').value = model;
+        field('test-result').textContent = 'Modelo elegido. Pulsa «Probar conexión» para comprobarlo.';
+        field('test-result').className = 'test-result';
+      });
+      field('model-chips').appendChild(chip);
+    }
   }
   field('provider').addEventListener('change', function() {
     field('endpoint').value = globalThis.PhantomAIConfig.providers[field('provider').value].endpoint;
@@ -50,10 +72,34 @@
       number('inputTokens') + ' tokens de entrada / ' + number('outputTokens') + ' de salida. ' +
       number('usageMissing') + ' respuestas sin datos de uso; no se estiman tokens ni coste. Incluye decisiones de caché, no anuncios únicos.';
   }
+  const STATE_TEXT = {
+    ok: 'Última llamada correcta',
+    auth: 'La API rechazó la clave',
+    model: 'Modelo o dirección no encontrados',
+    request: 'La API rechazó la solicitud',
+    rate: 'Límite del proveedor o sin saldo',
+    server: 'Fallo temporal del proveedor',
+    timeout: 'Tiempo límite agotado',
+    network: 'Sin conexión con el proveedor',
+    format: 'Respuesta ilegible',
+    refusal: 'El modelo declinó responder'
+  };
+  async function showState() {
+    const stored = await browser.storage.local.get({ aiStatus: null });
+    const state = stored.aiStatus;
+    const node = field('ai-state');
+    if (!state || !STATE_TEXT[state.state]) { node.textContent = ''; node.className = 'ai-state'; return; }
+    const when = Number.isFinite(state.at) ? new Date(state.at).toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    node.textContent = (state.state === 'ok' ? '✓ ' : '✕ ') + STATE_TEXT[state.state] +
+      (state.http ? ' (HTTP ' + state.http + ')' : '') + (when ? ' · ' + when : '');
+    node.className = 'ai-state ' + (state.state === 'ok' ? 'good' : 'bad');
+  }
   if (browser.storage.onChanged) browser.storage.onChanged.addListener(function(changes, area) {
     if (area === 'local' && changes.aiStats) showUsage().catch(function() {});
+    if (area === 'local' && changes.aiStatus) showState().catch(function() {});
   });
   showUsage().catch(function() {});
+  showState().catch(function() {});
   function keyState() {
     field('api-key').value = '';
     field('api-key').type = 'password';
@@ -71,6 +117,7 @@
     field('enabled').disabled = !loaded || busy;
     field('delete-key').disabled = !loaded || busy || !saved.apiKey;
     field('confirm-delete').disabled = busy;
+    field('test-ai').disabled = !loaded || busy;
     field('ai-fields').disabled = !field('enabled').checked || busy;
   }
   function draftHosts() {
@@ -110,8 +157,9 @@
       status('Sitio añadido al borrador. Guarda para aplicar el cambio.');
     } catch (error) { status(error.message || 'Dominio inválido.', true); }
   }
+  const TIMEOUT_PRESETS = [8, 12, 20];
   function timeoutPresets() {
-    for (const seconds of [3, 5, 10]) {
+    for (const seconds of TIMEOUT_PRESETS) {
       field('timeout-' + seconds).setAttribute('aria-pressed', String(Number(field('timeout').value) === seconds * 1000));
     }
   }
@@ -119,7 +167,7 @@
   field('new-domain').addEventListener('keydown', function(event) {
     if (event.key === 'Enter') { event.preventDefault(); addDomain(); }
   });
-  for (const seconds of [3, 5, 10]) {
+  for (const seconds of TIMEOUT_PRESETS) {
     field('timeout-' + seconds).addEventListener('click', function() {
       field('timeout').value = seconds * 1000;
       timeoutPresets();
@@ -139,6 +187,10 @@
       field('model').value = saved.model;
       field('hosts').value = saved.allowedHosts.join('\n');
       field('scope').value = saved.scope;
+      // Sin configuración previa se propone el análisis detallado; una ya
+      // guardada conserva exactamente lo que el usuario aceptó.
+      field('detail').value = saved.model ? saved.detail : 'rich';
+      detailState();
       field('include-subdomains').checked = saved.includeSubdomains;
       field('excluded-hosts').value = saved.excludedHosts.join('\n');
       field('requests-minute').value = saved.requestsPerMinute;
@@ -151,7 +203,7 @@
         try {
           const permissions = await browser.permissions.getAll();
           nativeConsent = Array.isArray(permissions.data_collection);
-        } catch (_) { permissionCheckFailed = true; }
+        } catch (_) { nativeConsent = false; }
       }
       loaded = true;
       keyState(); disclosure(); controls();
@@ -207,6 +259,7 @@
         apiKey: newKey || saved.apiKey,
         allowedHosts: field('hosts').value.split(/\s+/).filter(Boolean),
         scope: field('scope').value,
+        detail: field('detail').value,
         includeSubdomains: field('include-subdomains').checked,
         excludedHosts: field('excluded-hosts').value.split(/\s+/).filter(Boolean),
         requestsPerMinute: Number(field('requests-minute').value),
@@ -216,10 +269,16 @@
       if (enabled && saved.apiKey && config.endpoint !== saved.endpoint && !newKey) {
         throw new Error('Al cambiar la dirección de la API, introduce una clave nueva o borra la guardada.');
       }
-      if (enabled && permissionCheckFailed) throw new Error('No se pudieron comprobar los permisos de datos. Recarga antes de activar IA.');
       if (enabled && nativeConsent) {
-        const granted = await browser.permissions.request({ data_collection: globalThis.PhantomAIConfig.requiredPermissions(config) });
-        if (!granted) throw new Error('Autoriza el envío opcional de datos en el navegador para activar IA.');
+        // Aviso nativo del navegador. Un «no» explícito se respeta; si el
+        // navegador no admite esta petición (lanza un error), vale el
+        // consentimiento marcado en este formulario: antes ese fallo impedía
+        // activar la IA sin explicar por qué.
+        let granted = true;
+        try {
+          granted = await browser.permissions.request({ data_collection: globalThis.PhantomAIConfig.requiredPermissions(config) });
+        } catch (_) { granted = true; }
+        if (granted === false) throw new Error('Autoriza el envío opcional de datos en el navegador para activar IA.');
       }
       await browser.storage.local.set({ aiConfig: config });
       saved = config;
@@ -227,6 +286,35 @@
       status(enabled ? 'Configuración guardada. IA ' + (config.scope === 'public' ? 'automática en sitios públicos' : 'en sitios elegidos') + ', con exclusiones y presupuesto.' : 'Guardado: solo bloqueo local, sin llamadas a IA.');
     } catch (error) { status(error.message || 'No se pudo guardar la configuración.', true); }
     finally { busy = false; controls(); }
+  });
+  field('test-ai').addEventListener('click', async function() {
+    if (!loaded || busy) return;
+    const result = field('test-result');
+    busy = true; controls();
+    result.className = 'test-result';
+    result.textContent = 'Probando la conexión con el proveedor…';
+    try {
+      // Se prueba lo que hay escrito en el formulario, aunque no esté guardado.
+      const reply = await browser.runtime.sendMessage({ type: 'AI_TEST', config: {
+        provider: field('provider').value, endpoint: field('endpoint').value, model: field('model').value,
+        apiKey: field('api-key').value.trim(), timeoutMs: Number(field('timeout').value) || 12000,
+        jsonMode: field('json-mode').checked, detail: 'rich'
+      } });
+      if (reply && reply.ok) {
+        result.className = 'test-result good';
+        result.textContent = '✓ Conexión correcta en ' + (Number(reply.ms) / 1000).toFixed(1) + ' s. ' +
+          (reply.detected && reply.kept ? 'El modelo distinguió el anuncio de prueba del artículo.'
+            : reply.detected ? 'Detectó el anuncio de prueba, pero también marcó el artículo: considera un modelo más capaz.'
+            : 'Respondió, pero no reconoció el anuncio de prueba: considera un modelo más capaz.');
+      } else {
+        result.className = 'test-result bad';
+        result.textContent = '✕ ' + (reply && reply.error || 'No se pudo completar la prueba.') +
+          (reply && reply.http ? ' (HTTP ' + reply.http + ')' : '');
+      }
+    } catch (_) {
+      result.className = 'test-result bad';
+      result.textContent = '✕ No se pudo contactar con el bloqueador. Recarga esta página.';
+    } finally { busy = false; controls(); }
   });
   field('endpoint').addEventListener('input', function() {
     if (field('endpoint').value.trim().replace(/\/+$/, '') !== saved.endpoint) field('consent').checked = false;

@@ -700,3 +700,72 @@ select { font:inherit; width:100%; min-height:48px; padding:12px; color:var(--te
 .ai-usage strong,.usage-card strong { font-size:22px; font-family:"JetBrains Mono",monospace; }
 #provider-advanced { margin:14px 0; }
 #provider-advanced summary { cursor:pointer; color:var(--muted); padding:10px 0; font-size:12px; }
+
+/* --- 8.5: modelos sugeridos, prueba de conexión y estado de la IA --- */
+.model-chips {
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin:10px 0 2px;
+}
+.model-chips:empty {
+  display:none;
+}
+.model-chip {
+  appearance:none;
+  min-height:36px;
+  padding:6px 12px;
+  border:1px solid var(--line);
+  border-radius:999px;
+  background:var(--raised);
+  color:var(--text);
+  font:500 12.5px/1.2 "JetBrains Mono",ui-monospace,monospace;
+  cursor:pointer;
+}
+.model-chip:active {
+  transform:scale(.97);
+}
+.test-row {
+  display:grid;
+  gap:10px;
+  margin-top:16px;
+  padding-top:16px;
+  border-top:1px solid var(--line);
+}
+.test-row button {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  width:100%;
+  min-height:46px;
+}
+.test-row button svg {
+  width:18px;
+  height:18px;
+}
+.test-result,
+.ai-state {
+  margin:0;
+  font-size:13px;
+  line-height:1.45;
+  color:var(--muted);
+}
+.test-result.good,
+.ai-state.good {
+  color:var(--green-text);
+}
+.test-result.bad,
+.ai-state.bad {
+  color:var(--danger);
+}
+.ai-state {
+  margin-top:10px;
+  font-weight:600;
+}
+.ai-state:empty {
+  display:none;
+}
+select#detail {
+  margin-bottom:0;
+}

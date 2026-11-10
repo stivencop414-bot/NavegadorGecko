@@ -1681,6 +1681,24 @@ object ExtensionManager {
         return result
     }
 
+    /** Nombres legibles de los permisos de datos de las extensiones. */
+    private fun dataPermissionLabel(permission: String): String =
+        when (permission) {
+            "websiteContent" -> "contenido de las páginas"
+            "browsingActivity" -> "sitios que visitas"
+            "authenticationInfo" -> "credenciales (por ejemplo, tu clave de API)"
+            "personallyIdentifyingInfo" -> "datos que te identifican"
+            "locationInfo" -> "ubicación"
+            "searchTerms" -> "búsquedas"
+            "websiteActivity" -> "actividad dentro de las páginas"
+            "bookmarksInfo" -> "marcadores"
+            "healthInfo" -> "datos de salud"
+            "financialAndPaymentInfo" -> "datos financieros y de pago"
+            "personalCommunications" -> "comunicaciones personales"
+            "technicalAndInteraction" -> "datos técnicos y de uso"
+            else -> permission
+        }
+
     private fun showPermissionPrompt(
         extension: WebExtension,
         title: String,
@@ -1767,15 +1785,25 @@ object ExtensionManager {
                         .isNotEmpty()
                 ) {
                     append(
-                        "\n\nDatos solicitados: "
+                        "\n\nDatos que podrá enviar: "
                     )
 
                     append(
                         dataCollectionPermissions
                             .joinToString(
                                 ", "
-                            )
+                            ) { dataPermissionLabel(it) }
                     )
+
+                    // PhantomShield integrado: este aviso llega al guardar la
+                    // configuración de IA; explicar a quién van esos datos.
+                    if (extension.id == PHANTOMSHIELD_ID) {
+                        append(
+                            "\n\nSolo se envían al proveedor de IA que configuraste, " +
+                                "en los sitios y con el nivel de detalle que aceptaste. " +
+                                "Si cancelas, la IA no se activará; el bloqueo local sigue igual."
+                        )
+                    }
                 }
 
                 append(

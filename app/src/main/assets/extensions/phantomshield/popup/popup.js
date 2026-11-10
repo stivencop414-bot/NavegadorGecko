@@ -32,7 +32,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const id = ++refreshId;
     const [stats, stored] = await Promise.all([
       browser.runtime.sendMessage({ type: 'GET_STATS', tabId: currentTab ? currentTab.id : -1, host: domain }),
-      browser.storage.local.get({ phantom_last_update: 0, phantom_update_results: [], disabled_domains: [], aiConfig: {}, aiStats: {} })
+      browser.storage.local.get({ phantom_last_update: 0, phantom_update_results: [], disabled_domains: [], aiConfig: {}, aiStats: {}, aiStatus: null })
     ]);
     if (id !== refreshId) return;
     if (!stats || stats.ok !== true || !stats.settings) throw userError('No se pudo leer el estado de protección.');
@@ -73,12 +73,31 @@ document.addEventListener('DOMContentLoaded', async () => {
       : currentTab && currentTab.incognito ? 'La IA no se utiliza en pestañas privadas.'
       : !authorized ? 'Este sitio no está autorizado para IA. Puedes gestionarlo en ajustes.'
       : !globalOn || !siteOn ? 'Activa la protección de este sitio para analizarlo.'
-      : (config.scope === 'public' ? 'IA automática en sitios públicos' : 'IA en sitios elegidos') + '. Con caché y presupuesto compartido; analizar puede consumir cuota.';
+      : (config.scope === 'public' ? 'Revisa automáticamente lo que las reglas locales no reconocen' : 'Activa en los sitios que elegiste') +
+        (config.detail === 'rich' ? '.' : '. Activa «Análisis detallado» en Configurar IA para detectar más anuncios.');
+    field('ai-mode').textContent = !config.enabled ? 'Apagada' : config.scope === 'public' ? 'Automática' : 'Sitios elegidos';
+    // Resultado real de la última llamada: así se sabe si la IA funciona o por qué no.
+    const aiState = stored.aiStatus && typeof stored.aiStatus === 'object' ? stored.aiStatus : null;
+    const stateText = { ok: 'Conectada: la última llamada funcionó', auth: 'La API rechazó la clave', model: 'Modelo o dirección no encontrados',
+      request: 'La API rechazó la solicitud', rate: 'Límite del proveedor o sin saldo', server: 'Fallo temporal del proveedor',
+      timeout: 'El proveedor tardó demasiado', network: 'Sin conexión con el proveedor', format: 'Respuesta ilegible del modelo',
+      refusal: 'El modelo declinó responder' };
+    const showState = Boolean(config.enabled && aiState && stateText[aiState.state]);
+    field('ai-state').hidden = !showState;
+    field('ai-state').textContent = showState
+      ? (aiState.state === 'ok' ? '✓ ' : '✕ ') + stateText[aiState.state] + (aiState.http ? ' (HTTP ' + aiState.http + ')' : '') +
+        (aiState.state === 'ok' ? '' : '. Toca Configurar IA → Probar conexión.')
+      : '';
+    field('ai-state').className = 'ai-state' + (showState ? (aiState.state === 'ok' ? ' good' : ' bad') : '');
     const last = Number(stored.phantom_last_update) || 0;
     const results = Array.isArray(stored.phantom_update_results) ? stored.phantom_update_results : [];
-    field('last-update').textContent = results.some(result => !result || !result.ok)
+    const rules = stats.rules && typeof stats.rules === 'object' ? stats.rules : {};
+    const ruleTotal = (Number(rules.network) || 0) + (Number(rules.cosmetic) || 0);
+    // Una lista opcional caída no es una actualización incompleta.
+    field('last-update').textContent = (results.some(result => !result || (!result.ok && !result.optional))
       ? 'Listas: actualización parcial'
-      : last ? 'Listas: ' + new Date(last).toLocaleDateString('es', { day: 'numeric', month: 'short' }) : 'Listas incluidas';
+      : last ? 'Listas: ' + new Date(last).toLocaleDateString('es', { day: 'numeric', month: 'short' }) : 'Reglas incluidas') +
+      (ruleTotal ? ' · ' + ruleTotal.toLocaleString('es') + ' reglas' : '');
     loaded = true;
     controls();
   }
@@ -158,7 +177,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const results = await browser.runtime.sendMessage({ type: 'FORCE_UPDATE' });
     if (!Array.isArray(results)) throw userError(results && results.error || 'No se pudieron actualizar las listas.');
     const count = results.filter(result => result && result.ok).length;
-    showMessage(count + ' de ' + results.length + ' listas actualizadas.', count < results.length);
+    const required = results.filter(result => result && !result.optional);
+    showMessage(count + ' de ' + results.length + ' listas actualizadas.', required.some(result => !result.ok));
   }));
   field('reset-stats').addEventListener('click', () => { field('reset-confirm').hidden = false; field('cancel-reset').focus(); });
   field('cancel-reset').addEventListener('click', () => { field('reset-confirm').hidden = true; field('reset-stats').focus(); });
@@ -170,7 +190,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showMessage('Contadores reiniciados.');
   }));
   const changed = (values, area) => {
-    if (area === 'local' && ['adblockEnabled','privacyEnabled','disabled_domains','aiConfig','aiStats','blockedCount','phantom_last_update','phantom_update_results'].some(key => key in values)) {
+    if (area === 'local' && ['adblockEnabled','privacyEnabled','disabled_domains','aiConfig','aiStats','aiStatus','blockedCount','phantom_last_update','phantom_update_results'].some(key => key in values)) {
       refresh().catch(() => showMessage('No se pudo actualizar el estado de protección.', true));
     }
   };
