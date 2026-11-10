@@ -161,6 +161,15 @@ class StartPageView(
                     if (host.contains("wikipedia.org")) typeface = Typeface.create("serif", Typeface.BOLD)
                 }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             }
+            if (link.kind == "web" && iconRes == null && !renderedPrivate) {
+                val origin = BrowserPagePresentation.shortcut(link.url)?.origin
+                if (origin != null) SiteIconStore.load(activity, origin) { bitmap ->
+                    square.removeAllViews()
+                    square.addView(ImageView(activity).apply {
+                        setImageBitmap(bitmap); scaleType = ImageView.ScaleType.FIT_CENTER
+                    }, FrameLayout.LayoutParams(dp(28f), dp(28f), Gravity.CENTER))
+                }
+            }
             addView(square, params(dp(56f), dp(56f)))
             addView(text(link.label, 11f, if (link.kind == "shield") { if (p.isDark) 0xFF7EEAC6.toInt() else 0xFF0A7656.toInt() } else p.text).apply {
                 gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(dp(2f), dp(6f), dp(2f), 0)

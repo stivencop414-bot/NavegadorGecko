@@ -2,14 +2,22 @@
 (function() {
   'use strict';
   const defaults = Object.freeze({
-    enabled: false, consent: false, endpoint: '', model: '', apiKey: '',
+    enabled: false, consent: false, provider: 'custom', endpoint: '', model: '', apiKey: '',
     allowedHosts: [], scope: 'selected', includeSubdomains: false, excludedHosts: [],
     requestsPerMinute: 6, requestsPerHour: 60, timeoutMs: 5000, jsonMode: false
   });
 
+  const providers = Object.freeze({
+    openai: { label: 'OpenAI', endpoint: 'https://api.openai.com/v1', placeholder: 'gpt-4.1-mini' },
+    claude: { label: 'Claude (Anthropic)', endpoint: 'https://api.anthropic.com/v1', placeholder: 'claude-haiku-4-5' },
+    openrouter: { label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1', placeholder: 'openai/gpt-4.1-mini' },
+    custom: { label: 'Compatible / personalizado', endpoint: '', placeholder: 'Identificador del modelo' }
+  });
   function validate(input) {
     if (!input || typeof input !== 'object') throw new Error('Configuración IA inválida.');
     const config = Object.assign({}, defaults);
+    config.provider = input.provider === undefined ? 'custom' : input.provider;
+    if (!Object.hasOwn(providers, config.provider)) throw new Error('Proveedor IA inválido.');
     config.enabled = input.enabled === true;
     config.consent = input.consent === true;
     config.jsonMode = input.jsonMode === true;
@@ -22,7 +30,7 @@
         throw new Error('Presupuesto IA inválido: ' + key);
       }
     }
-    config.endpoint = String(input.endpoint || '').trim().replace(/\/+$/, '');
+    config.endpoint = String(input.endpoint || providers[config.provider].endpoint).trim().replace(/\/+$/, '');
     config.model = String(input.model || '').trim();
     config.apiKey = String(input.apiKey || '').trim();
     config.timeoutMs = input.timeoutMs === undefined ? defaults.timeoutMs : Number(input.timeoutMs);
@@ -80,5 +88,5 @@
   function requiredPermissions(config) {
     return ['websiteContent', 'browsingActivity'].concat(config.apiKey ? ['authenticationInfo'] : []);
   }
-  globalThis.PhantomAIConfig = { defaults: defaults, validate: validate, requiredPermissions: requiredPermissions, hostAllowed: hostAllowed, publicHost: publicHost };
+  globalThis.PhantomAIConfig = { defaults: defaults, validate: validate, requiredPermissions: requiredPermissions, hostAllowed: hostAllowed, publicHost: publicHost, providers: providers };
 })();

@@ -93,3 +93,9 @@ done
 
 `tools/verify_apk_signature.py` acepta la salida de apksigner 36 (`Signer #1 …`) y la de
 apksigner 37 (`V3.0 Signer: …`); exige un único firmante con la huella fijada.
+
+## Cambios preparados para 0.16.0 (código 34)
+
+El código de versión aumenta para permitir actualizar 0.15.3 con la misma firma
+persistente. Esta rama prepara el próximo lanzamiento; no publica ni reemplaza
+los APK de 0.15.3.

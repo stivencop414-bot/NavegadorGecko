@@ -32,7 +32,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const id = ++refreshId;
     const [stats, stored] = await Promise.all([
       browser.runtime.sendMessage({ type: 'GET_STATS', tabId: currentTab ? currentTab.id : -1, host: domain }),
-      browser.storage.local.get({ phantom_last_update: 0, phantom_update_results: [], disabled_domains: [], aiConfig: {} })
+      browser.storage.local.get({ phantom_last_update: 0, phantom_update_results: [], disabled_domains: [], aiConfig: {}, aiStats: {} })
     ]);
     if (id !== refreshId) return;
     if (!stats || stats.ok !== true || !stats.settings) throw userError('No se pudo leer el estado de protección.');
@@ -56,6 +56,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const badge = field('shield-status');
     badge.textContent = !globalOn ? 'Apagado' : !domain ? 'Listo' : siteOn ? 'Activo' : 'Pausado aquí';
     badge.className = 'status-badge' + (!globalOn ? ' off' : siteOn && domain ? ' active' : '');
+    const usage = stored.aiStats || {};
+    const metric = key => Number.isSafeInteger(usage[key]) && usage[key] >= 0 ? usage[key] : 0;
+    field('ai-tokens').textContent = metric('inputTokens') + metric('outputTokens') === 0 && metric('requests') && metric('requests') === metric('usageMissing') ? '—' : (metric('inputTokens') + metric('outputTokens')).toLocaleString('es');
+    field('ai-detected').textContent = metric('detected').toLocaleString('es');
+    field('ai-usage-note').textContent = metric('analyzed') + ' candidatos analizados · ' + metric('requests') + ' solicitudes. ' +
+      (metric('usageMissing') ? metric('usageMissing') + ' sin datos de tokens. ' : '') + 'Tokens reportados por la API; incluye decisiones de caché, no anuncios únicos.';
     const config = stored.aiConfig && typeof stored.aiConfig === 'object' ? stored.aiConfig : {};
     const authorized = globalThis.PhantomAIConfig.hostAllowed(config, host);
     scanAvailable = Boolean(domain && globalOn && siteOn && config.enabled === true && config.consent === true && authorized && !(currentTab && currentTab.incognito));
@@ -164,7 +170,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showMessage('Contadores reiniciados.');
   }));
   const changed = (values, area) => {
-    if (area === 'local' && ['adblockEnabled','privacyEnabled','disabled_domains','aiConfig','blockedCount','phantom_last_update','phantom_update_results'].some(key => key in values)) {
+    if (area === 'local' && ['adblockEnabled','privacyEnabled','disabled_domains','aiConfig','aiStats','blockedCount','phantom_last_update','phantom_update_results'].some(key => key in values)) {
       refresh().catch(() => showMessage('No se pudo actualizar el estado de protección.', true));
     }
   };

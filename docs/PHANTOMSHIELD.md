@@ -97,3 +97,26 @@ para XPI importados. Tampoco cambia una posible resolución de bloqueo/revisión
 - Pendiente en dispositivo GeckoView: primera instalación, reinicio, conservación de una
   excepción por sitio al actualizar, panel/opciones, permisos opcionales y YouTube/PiP con
   PhantomShield activado y desactivado. No se afirma que esas pruebas en Android se hayan ejecutado.
+
+### Proveedores y contadores en 8.4.0
+
+Las opciones incluyen presets OpenAI Chat Completions, Claude Messages y
+OpenRouter. La URL sigue editable dentro de una sección avanzada cerrada; la
+selección del protocolo cambia la ruta, autenticación y lectura de respuesta.
+Claude utiliza `x-api-key`, `anthropic-version` y bloques `content`; OpenAI y
+OpenRouter usan Bearer y `choices`. Cambiar de proveedor revoca el consentimiento
+del formulario, conserva la clave sin mostrarla y exige una clave nueva si
+cambia el endpoint. No se envía la clave anterior a otra dirección automáticamente.
+
+Los contadores persistentes son agregados: solicitudes intentadas, tokens de
+entrada/salida que reporta la API, respuestas sin uso, candidatos analizados y
+marcados (umbral >= 0.95, incluidas decisiones reutilizadas). No representan
+anuncios únicos ni coste. Las peticiones privadas siguen rechazadas antes de
+consultar al proveedor o incrementar contadores. Una API sin `usage` no genera
+estimaciones. Las pruebas de protocolo usan respuestas simuladas, sin claves
+ni consultas facturables a proveedores reales.
+
+El manifest usa `options_ui.open_in_tab=false` para delegar la apertura a la app.
+La app reutiliza una pestaña de opciones existente, espera a que termine el
+mensaje del popup para cerrarlo y no pierde el contexto de la página original.
+Esta ruta debe comprobarse también en un dispositivo GeckoView.

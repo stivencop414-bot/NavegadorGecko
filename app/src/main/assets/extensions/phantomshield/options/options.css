@@ -695,3 +695,8 @@ select { font:inherit; width:100%; min-height:48px; padding:12px; color:var(--te
 .trust-pills .violet { background:#3d6bf21c; border-color:#3d6bf24a; color:var(--action-text); }
 @media(prefers-color-scheme:light) { :root { --action-text:#3156c4; } }
 @media(max-width:340px) { .budget-grid { grid-template-columns:1fr; } }
+
+.ai-usage { display:flex; gap:16px; margin:12px 0; color:var(--text); flex-wrap:wrap; }
+.ai-usage strong,.usage-card strong { font-size:22px; font-family:"JetBrains Mono",monospace; }
+#provider-advanced { margin:14px 0; }
+#provider-advanced summary { cursor:pointer; color:var(--muted); padding:10px 0; font-size:12px; }

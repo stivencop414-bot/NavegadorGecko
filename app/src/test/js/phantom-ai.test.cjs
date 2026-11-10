@@ -4,12 +4,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const root = path.join(__dirname, '../../main/assets/extensions/phantomshield');
-function harness(overrides = {}, reply) {
-  let time = 100000, calls = [], storageListener;
+function harness(overrides = {}, reply, initialStats = {}) {
+  let time = 100000, calls = [], storageListener, stats = {...initialStats};
   let config = {enabled:true,consent:true,endpoint:'https://api.example/v1',model:'small',scope:'public',...overrides};
   class Clock extends Date { static now() { return time; } }
   const context = vm.createContext({URL,TextDecoder,AbortController,Date:Clock,setTimeout,clearTimeout,
-    browser:{storage:{local:{get:async()=>({aiConfig:config})},onChanged:{addListener(fn){storageListener=fn}}},
+    browser:{storage:{local:{get:async()=>({aiConfig:config,aiStats:stats}),set:async values=>{if(values.aiStats)stats=values.aiStats}},onChanged:{addListener(fn){storageListener=fn}}},
       permissions:{getAll:async()=>({data_collection:['websiteContent','browsingActivity','authenticationInfo']})}},
     fetch:async(url,options)=>{
       calls.push({url,options});
@@ -86,4 +86,35 @@ test('malformed provider decisions fail closed without exposing provider bodies'
   const h=harness({},()=>new Response(JSON.stringify({choices:[{message:{content:'secret-provider-body'}}]})));
   const result=await h.ai.classify('one.com',candidate(),false);
   assert.equal(result.ok,false);assert.doesNotMatch(result.error,/secret-provider/);
+});
+
+test('OpenAI usage is persisted; cached decisions add detections without extra tokens',async()=>{
+ const h=harness({},(_,options)=>new Response(JSON.stringify({usage:{prompt_tokens:120,completion_tokens:15},choices:[{message:{content:JSON.stringify({decisions:[{id:'c-1',isAd:true,confidence:.99}]})}}]})));
+ await h.ai.classify('one.com',candidate(),false);await h.ai.classify('one.com',candidate('c-2'),false);
+ const stats=await h.ai.usage();assert.equal(stats.requests,1);assert.equal(stats.inputTokens,120);assert.equal(stats.outputTokens,15);
+ assert.equal(stats.detected,2);assert.equal(stats.analyzed,2);assert.equal(stats.cacheHits,1);assert.equal(stats.usageMissing,0);
+ assert.equal(JSON.stringify(stats).includes('one.com'),false);
+});
+test('Claude uses Messages authentication and parses content blocks and token usage',async()=>{
+ const h=harness({provider:'claude',endpoint:'https://api.anthropic.com/v1',apiKey:'test-key'},(_,options)=>new Response(JSON.stringify({usage:{input_tokens:42,output_tokens:9,cache_read_input_tokens:8,cache_creation_input_tokens:5},content:[{type:'text',text:'{"decisions":[{"id":"c-1","isAd":true,"confidence":0.98}]}'}]})));
+ const result=await h.ai.classify('one.com',candidate(),false);assert.equal(result.ok,true);assert.equal(result.decisions[0].hide,true);
+ const call=h.calls[0];assert.equal(call.url,'https://api.anthropic.com/v1/messages');assert.equal(call.options.headers['x-api-key'],'test-key');
+ assert.equal(call.options.headers.Authorization,undefined);const body=JSON.parse(call.options.body);assert.equal(typeof body.system,'string');assert.equal(body.messages[0].role,'user');
+ const stats=await h.ai.usage();assert.equal(stats.inputTokens,55);assert.equal(stats.outputTokens,9);
+});
+test('missing usage is not invented and private pages leave all counters unchanged',async()=>{
+ const h=harness();await h.ai.classify('one.com',candidate(),true);assert.equal((await h.ai.usage()).requests,0);
+ await h.ai.classify('one.com',candidate(),false);const stats=await h.ai.usage();assert.equal(stats.usageMissing,1);assert.equal(stats.inputTokens,0);
+});
+test('provider presets allow endpoint overrides and OpenRouter uses Chat Completions',async()=>{
+ const h=harness({provider:'openrouter',endpoint:'https://openrouter.ai/api/v1'});
+ assert.equal(h.api.validate({provider:'claude'}).endpoint,'https://api.anthropic.com/v1');
+ assert.equal(h.api.validate({provider:'claude',endpoint:'https://proxy.example/anthropic'}).endpoint,'https://proxy.example/anthropic');
+ await h.ai.classify('one.com',candidate(),false);assert.equal(h.calls[0].url,'https://openrouter.ai/api/v1/chat/completions');
+});
+
+test('aggregate usage survives a new classifier and configuration changes',async()=>{
+ const h=harness({},undefined,{requests:4,inputTokens:100,outputTokens:30,detected:3});
+ h.change({model:'other'});const stats=await h.ai.usage();assert.equal(stats.requests,4);assert.equal(stats.inputTokens,100);assert.equal(stats.detected,3);
+ await h.ai.classify('one.com',candidate(),false);assert.equal((await h.ai.usage()).requests,5);
 });

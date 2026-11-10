@@ -30,12 +30,32 @@
 
   class AIClassifier {
     constructor() {
+      this.stats = { requests: 0, inputTokens: 0, outputTokens: 0, usageMissing: 0, analyzed: 0, detected: 0, cacheHits: 0 };
+      this.statsReady = browser.storage.local.get({ aiStats: {} }).then(stored => {
+        for (const key of Object.keys(this.stats)) {
+          const value = stored.aiStats && stored.aiStats[key];
+          if (Number.isSafeInteger(value) && value >= 0) this.stats[key] = value;
+        }
+      }).catch(function() {});
+      this.statsQueue = this.statsReady;
       this.cache = new Map();
       this.requests = [];
       this.cooldownUntil = 0;
       this.active = null;
       this.epoch = 0;
     }
+    record(delta) {
+      this.statsQueue = this.statsQueue.then(async () => {
+        for (const [key, value] of Object.entries(delta)) {
+          if (Object.hasOwn(this.stats, key) && Number.isSafeInteger(value) && value >= 0) {
+            this.stats[key] = Math.min(Number.MAX_SAFE_INTEGER, this.stats[key] + value);
+          }
+        }
+        await browser.storage.local.set({ aiStats: Object.assign({}, this.stats) });
+      }).catch(function() {});
+      return this.statsQueue;
+    }
+    async usage() { await this.statsQueue; return Object.assign({}, this.stats); }
     invalidate() {
       this.epoch++;
       this.cache.clear();
@@ -62,6 +82,8 @@
     async classify(host, candidates, incognito) {
       let timeout;
       let controller;
+      let requested = false;
+      let usageRecorded = false;
       const epoch = this.epoch;
       try {
         const config = await this.config();
@@ -98,9 +120,23 @@
             ]
           };
           if (config.jsonMode) body.response_format = { type: 'json_object' };
-          const endpoint = config.endpoint.endsWith('/chat/completions') ? config.endpoint : config.endpoint + '/chat/completions';
+          const claude = config.provider === 'claude';
+          const suffix = claude ? '/messages' : '/chat/completions';
+          const endpoint = config.endpoint.endsWith(suffix) ? config.endpoint : config.endpoint + suffix;
+          if (claude) {
+            body.system = SYSTEM_PROMPT;
+            body.messages = body.messages.slice(1);
+            delete body.response_format;
+          }
           const headers = { 'Content-Type': 'application/json' };
-          if (config.apiKey) headers.Authorization = 'Bearer ' + config.apiKey;
+          if (claude) {
+            headers['anthropic-version'] = '2023-06-01';
+            headers['anthropic-dangerous-direct-browser-access'] = 'true';
+            if (config.apiKey) headers['x-api-key'] = config.apiKey;
+          } else if (config.apiKey) headers.Authorization = 'Bearer ' + config.apiKey;
+          requested = true;
+          await this.record({ requests: 1 });
+          if (epoch !== this.epoch || controller.signal.aborted) throw new Error('Configuración modificada.');
           const response = await fetch(endpoint, {
             method: 'POST', headers: headers, body: JSON.stringify(body), signal: controller.signal,
             credentials: 'omit', cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer'
@@ -131,7 +167,21 @@
             text += decoder.decode();
           } finally { await reader.cancel().catch(function() {}); }
           const envelope = JSON.parse(text);
-          const content = envelope.choices && envelope.choices[0] && envelope.choices[0].message && envelope.choices[0].message.content;
+          const usage = envelope.usage || {};
+          let inputTokens = claude ? usage.input_tokens : usage.prompt_tokens;
+          const outputTokens = claude ? usage.output_tokens : usage.completion_tokens;
+          const validTokens = value => Number.isSafeInteger(value) && value >= 0;
+          if (claude && validTokens(inputTokens)) {
+            for (const key of ['cache_creation_input_tokens', 'cache_read_input_tokens']) {
+              if (usage[key] !== undefined) inputTokens = validTokens(usage[key]) && validTokens(inputTokens + usage[key]) ? inputTokens + usage[key] : undefined;
+            }
+          }
+          const delta = { usageMissing: validTokens(inputTokens) && validTokens(outputTokens) ? 0 : 1 };
+          if (validTokens(inputTokens)) delta.inputTokens = inputTokens;
+          if (validTokens(outputTokens)) delta.outputTokens = outputTokens;
+          await this.record(delta);
+          usageRecorded = true;
+          const content = claude ? (Array.isArray(envelope.content) ? envelope.content.filter(block => block.type === 'text').map(block => block.text).join('') : null) : envelope.choices && envelope.choices[0] && envelope.choices[0].message && envelope.choices[0].message.content;
           if (typeof content !== 'string') throw new Error('Formato de API inválido.');
           const parsed = JSON.parse(content.replace(/^\s*```(?:json)?\s*/, '').replace(/\s*```\s*$/, ''));
           const validIds = new Set(missing.map(candidate => candidate.id));
@@ -150,6 +200,8 @@
           }
           while (this.cache.size > 500) this.cache.delete(this.cache.keys().next().value);
         }
+        await this.record({ analyzed: batch.length, detected: batch.filter(candidate => this.cache.get(signature(candidate)).hide).length,
+          cacheHits: batch.length - missing.length });
         return {
           ok: true,
           decisions: batch.map(candidate => ({ id: candidate.id, hide: this.cache.get(signature(candidate)).hide }))
@@ -158,6 +210,7 @@
         // Never surface provider bodies: they can echo keys or private configuration.
         return { ok: false, error: 'La IA no respondió correctamente. El bloqueo local sigue activo.' };
       } finally {
+        if (requested && !usageRecorded) await this.record({ usageMissing: 1 });
         clearTimeout(timeout);
         if (controller && this.active === controller) this.active = null;
       }

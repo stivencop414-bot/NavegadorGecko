@@ -1079,6 +1079,8 @@ object ExtensionManager {
         )
     }
 
+    private val tabBudgets = mutableMapOf<String, TabCreationBudget>()
+
     private fun registerExtension(
         extension: WebExtension
     ) {
@@ -1125,6 +1127,9 @@ object ExtensionManager {
                         return null
                     }
 
+                    if (!tabBudgets.getOrPut(source.id) { TabCreationBudget() }.allow(android.os.SystemClock.elapsedRealtime())) {
+                        return null
+                    }
                     val session =
                         TabManager
                             .createSessionForExtension(
@@ -1150,11 +1155,9 @@ object ExtensionManager {
                     if (
                         !url.isNullOrBlank()
                     ) {
-                        extensionPopup?.dismiss()
-                        TabManager.createTab(
-                            url = url,
-                            activate = true
-                        )
+                        TabManager.openOrSelectTab(url)
+                        // Let runtime.openOptionsPage complete before closing its caller's session.
+                        Handler(Looper.getMainLooper()).post { extensionPopup?.dismiss() }
                         promptActivity.get()?.let { activity ->
                             activity.startActivity(Intent(activity, MainActivity::class.java).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -1228,6 +1231,8 @@ object ExtensionManager {
                 }
             )
     }
+
+    fun forgetSession(session: GeckoSession) { sessionActions.remove(session) }
 
     private fun rememberAction(
         extension: WebExtension,

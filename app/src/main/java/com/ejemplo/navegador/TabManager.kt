@@ -152,6 +152,12 @@ object TabManager {
         return tab
     }
 
+    fun openOrSelectTab(url: String) {
+        val privateMode = activeTab()?.isPrivate == true
+        val existing = tabs.firstOrNull { it.url == url && it.isPrivate == privateMode }
+        if (existing != null) switchTo(existing.id) else createTab(url, privateMode, true)
+    }
+
     fun createSessionForExtension(
         url: String,
         activate: Boolean
@@ -260,6 +266,7 @@ object TabManager {
         val removed = tabs[index]
         val wasActive = removed.id == activeId
         activationHistory.remove(id)
+        crashTimes.remove(id)
 
         removed.session?.let { session ->
             runCatching {
@@ -530,6 +537,12 @@ object TabManager {
     }
 
     private fun closeSession(session: GeckoSession) {
+        // Intentional closes must never call recovery or open another window.
+        session.contentDelegate = null
+        session.navigationDelegate = null
+        session.setTranslationsSessionDelegate(null)
+        TranslatorManager.forget(session)
+        ExtensionManager.forgetSession(session)
         runCatching {
             session.setActive(false)
             session.close()
@@ -649,6 +662,8 @@ object TabManager {
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private fun configureDelegates(tab: BrowserTab, session: GeckoSession) {
+        val newWindows = NewWindowPolicy()
+        TranslatorManager.bind(session)
         session.setPromptDelegate(PagePrompts)
         session.setPermissionDelegate(SitePermissions)
         session.setContentDelegate(
@@ -662,7 +677,11 @@ object TabManager {
                 }
 
                 override fun onFirstContentfulPaint(session: GeckoSession) {
-                    crashTimes.remove(tab.id)
+                    // Keep recent crashes across first paint so a crash/reload loop stays bounded.
+                    val recent = crashTimes[tab.id]
+                    val now = System.currentTimeMillis()
+                    while (recent?.isNotEmpty() == true && now - recent.first() > 30000L) recent.removeFirst()
+                    if (recent?.isEmpty() == true) crashTimes.remove(tab.id)
                 }
 
                 override fun onTitleChange(session: GeckoSession, title: String?) {
@@ -797,6 +816,13 @@ object TabManager {
                         return GeckoResult.fromValue(AllowOrDeny.DENY)
                     }
 
+                    if (tab.session !== session || tabs.none { it.id == tab.id }) return GeckoResult.deny()
+                    if (request.target == GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW) {
+                        return if (newWindows.authorize(request.uri, request.hasUserGesture, android.os.SystemClock.elapsedRealtime())) {
+                            GeckoResult.allow()
+                        } else GeckoResult.deny()
+                    }
+
                     val target =
                         normalizeMobileUrl(
                             request.uri,
@@ -826,7 +852,9 @@ object TabManager {
                     session: GeckoSession,
                     uri: String
                 ): GeckoResult<GeckoSession>? {
-                    if (!isSafeAppNavigationUrl(uri) && !uri.isBlank()) return null
+                    if (tab.session !== session || tabs.none { it.id == tab.id } || tab.id != activeId ||
+                        !newWindows.consume(uri, android.os.SystemClock.elapsedRealtime()) ||
+                        (!isSafeAppNavigationUrl(uri) && uri.isNotBlank())) return null
                     return GeckoResult.fromValue(openWindowFrom(tab, uri))
                 }
 
@@ -865,6 +893,8 @@ object TabManager {
                 }
 
                 override fun onPageStart(session: GeckoSession, url: String) {
+                    tab.navigationEpoch++
+                    TranslatorManager.forget(session)
                     PagePrompts.onPageStart(session)
                     BrowserMediaController.resetVideo(tab.id)
                     tab.url = url
@@ -909,7 +939,8 @@ object TabManager {
         failedSession: GeckoSession,
         reason: String
     ) {
-        if (tab.session !== failedSession) return
+        if (tab.session !== failedSession || tabs.none { it.id == tab.id }) return
+        closeSession(failedSession)
 
         val currentUrl = tab.url
 
@@ -953,13 +984,8 @@ object TabManager {
             return
         }
 
-        listener?.onMessage(
-            if (reason == "kill") {
-                "Android liberó el proceso web; recuperando esta misma página…"
-            } else {
-                "Gecko reinició el proceso web; recuperando esta misma página…"
-            }
-        )
+        // Successful automatic recovery is quiet; repeated failures still explain what to do.
+        android.util.Log.i("NexoGecko", "Recuperando proceso web: $reason")
 
         val delay =
             when (attempts) {
@@ -973,7 +999,7 @@ object TabManager {
         ).postDelayed(
             {
                 if (
-                    tab.id == activeId &&
+                    tab.id == activeId && tabs.any { it.id == tab.id } &&
                     tab.session == null
                 ) {
                     runCatching {

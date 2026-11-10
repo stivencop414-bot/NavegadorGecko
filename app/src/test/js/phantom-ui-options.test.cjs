@@ -75,3 +75,10 @@ test('automatic scope requires renewed consent and saves exclusions and shared b
   await h.fire('ai-form','submit');assert.equal(h.saved.scope,'public');
   assert.deepEqual(Array.from(h.saved.excludedHosts),['bank.com','work.com']);assert.equal(h.saved.requestsPerHour,20);
 });
+
+test('provider selection prefills URL and requires renewed consent without exposing saved key',async()=>{
+ const h=await harness({enabled:true,consent:true,endpoint:'https://api.example/v1',model:'small',apiKey:'secret'});
+ h.field('provider').value='claude';await h.fire('provider','change');
+ assert.equal(h.field('endpoint').value,'https://api.anthropic.com/v1');assert.equal(h.field('consent').checked,false);
+ assert.equal(h.field('api-key').value,'');assert.equal(h.field('provider-advanced').open,false);
+});
