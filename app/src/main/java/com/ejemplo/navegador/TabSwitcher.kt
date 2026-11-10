@@ -40,10 +40,8 @@ object TabSwitcher {
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         var showPrivate = TabManager.activeTab()?.isPrivate == true
+        // null = todas; "" = sin grupo; cualquier otro valor = nombre del grupo.
         var selectedGroup: String? = null
-        var groupValues = listOf<String?>(null)
-        var groupLabels = emptyList<String>()
-        var selectingGroup = false
 
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -109,12 +107,11 @@ object TabSwitcher {
             setMargins(dp(activity, 16f), dp(activity, 6f), dp(activity, 16f), dp(activity, 8f))
         })
 
-        val groupRow = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(activity,16f),0,dp(activity,16f),0) }
-        val groups = android.widget.Spinner(activity).apply { contentDescription = "Filtrar grupo de pestañas"; ThemeManager.styleSpinner(activity,this) }
-        groupRow.addView(groups,LinearLayout.LayoutParams(0,dp(activity,48f),1f))
-        val groupEdit = Button(activity).apply { text = "Grupos"; ThemeManager.styleButton(activity,this) }
-        groupRow.addView(groupEdit)
-        root.addView(groupRow)
+        // Grupos: píldoras con color y contador (toca para filtrar, mantén pulsado para editar).
+        val groupBar = FrameLayout(activity)
+        root.addView(groupBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 46f)).apply {
+            bottomMargin = dp(activity, 2f)
+        })
 
         // --- Cuadrícula
         val empty = TextView(activity).apply {
@@ -141,9 +138,12 @@ object TabSwitcher {
 
         val closeAll = Button(activity).apply {
             text = "Cerrar todas"; contentDescription = "Cerrar todas las pestañas del grupo visible"
+            textSize = 14f; minHeight = 0; minimumHeight = 0
             ThemeManager.styleButton(activity, this, danger = true)
         }
-        root.addView(closeAll)
+        root.addView(closeAll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 48f)).apply {
+            setMargins(dp(activity, 16f), dp(activity, 4f), dp(activity, 16f), dp(activity, 14f))
+        })
         lateinit var refresh: () -> Unit
         val adapter = object : BaseAdapter() {
             var items: List<BrowserTab> = emptyList()
@@ -160,19 +160,7 @@ object TabSwitcher {
                     if (lastNormal) dialog.dismiss() else refresh()
                 }).apply {
                     setOnLongClickListener {
-                        val tab = items[position]
-                        val names = TabManager.allTabs().filter { it.isPrivate == tab.isPrivate }.mapNotNull { it.groupName }.distinct().sorted()
-                        val labels = listOf("Sin grupo", "Nuevo grupo…") + names
-                        android.app.AlertDialog.Builder(activity).setTitle("Mover pestaña a grupo")
-                            .setItems(labels.toTypedArray()) { _, choice ->
-                                if (choice == 1) {
-                                    val input = android.widget.EditText(activity).apply { hint = "Nombre del grupo"; ThemeManager.styleEdit(activity,this) }
-                                    android.app.AlertDialog.Builder(activity).setTitle("Nuevo grupo").setView(input)
-                                        .setNegativeButton("Cancelar",null).setPositiveButton("Mover") { _, _ ->
-                                            TabManager.moveToGroup(tab.id,input.text.toString()); refresh()
-                                        }.show()
-                                } else { TabManager.moveToGroup(tab.id,if (choice == 0) null else names[choice-2]); refresh() }
-                            }.show()
+                        moveSheet(activity, items[position]) { refresh() }
                         true
                     }
                 }
@@ -181,21 +169,41 @@ object TabSwitcher {
 
         refresh = {
             val all = TabManager.allTabs()
-            val names = all.filter { it.isPrivate == showPrivate }.mapNotNull { it.groupName }.distinct().sorted()
+            val visibleMode = all.filter { it.isPrivate == showPrivate }
+            val names = visibleMode.mapNotNull { it.groupName }.distinct().sorted()
             if (selectedGroup != null && selectedGroup != "" && selectedGroup !in names) selectedGroup = null
-            val labels = listOf("Todas", "Sin grupo") + names
-            groupValues = listOf(null, "") + names
-            if (labels != groupLabels) {
-                selectingGroup = true; groupLabels = labels
-                groups.adapter = ThemeManager.spinnerAdapter(activity,labels)
-                groups.setSelection(groupValues.indexOf(selectedGroup).coerceAtLeast(0))
-                selectingGroup = false
+            if (selectedGroup == "" && (names.isEmpty() || visibleMode.none { it.groupName == null })) selectedGroup = null
+            val chips = mutableListOf<View>()
+            chips += NexoUi.chip(activity, "Todas · ${visibleMode.size}", selectedGroup == null) { selectedGroup = null; refresh() }
+            names.forEach { name ->
+                val count = visibleMode.count { it.groupName == name }
+                chips += NexoUi.chip(activity, "$name · $count", selectedGroup == name, TabGroupRules.color(name)) {
+                    selectedGroup = name; refresh()
+                }.apply {
+                    setOnLongClickListener { groupSheet(activity, name, showPrivate) { renamed -> selectedGroup = renamed; refresh() }; true }
+                }
             }
+            val ungrouped = visibleMode.count { it.groupName == null }
+            if (names.isNotEmpty() && ungrouped > 0) {
+                chips += NexoUi.chip(activity, "Sin grupo · $ungrouped", selectedGroup == "") { selectedGroup = ""; refresh() }
+            }
+            chips += NexoUi.chip(activity, "+  Grupo", false) {
+                NexoUi.askText(activity, "Nuevo grupo", "Nombre del grupo", action = "Crear") { value ->
+                    val name = TabGroupRules.name(value) ?: return@askText
+                    val tab = TabManager.activeTab()?.takeIf { it.isPrivate == showPrivate }
+                        ?: adapter.items.firstOrNull() ?: TabManager.createTab(BrowserPrefs.homePage(activity), showPrivate, false)
+                    TabManager.moveToGroup(tab.id, name)
+                    selectedGroup = name; refresh()
+                }
+            }
+            groupBar.removeAllViews()
+            groupBar.addView(NexoUi.chipRow(activity, chips, sidePaddingDp = 16f), FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL))
             adapter.items = all.filter { it.isPrivate == showPrivate && (selectedGroup == null || it.groupName.orEmpty() == selectedGroup) }
-            closeAll.text = if (selectedGroup == null) "Cerrar todas" else "Cerrar grupo"
+            closeAll.text = when (selectedGroup) { null -> "Cerrar todas"; "" -> "Cerrar pestañas sin grupo"; else -> "Cerrar grupo «$selectedGroup»" }
             closeAll.isEnabled = adapter.items.isNotEmpty()
             adapter.notifyDataSetChanged()
-            title.text = "${adapter.items.size} pestañas"
+            title.text = if (adapter.items.size == 1) "1 pestaña" else "${adapter.items.size} pestañas"
             empty.text = if (showPrivate) {
                 "No hay pestañas privadas.\nLas pestañas privadas no guardan historial ni cookies."
             } else "No hay pestañas abiertas."
@@ -211,39 +219,8 @@ object TabSwitcher {
                     ids.forEach { TabManager.closeTab(it) }; dialog.dismiss()
                 }.show()
         }
-        groups.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
-                if (!selectingGroup && position in groupValues.indices && selectedGroup != groupValues[position]) {
-                    selectedGroup = groupValues[position]; refresh()
-                }
-            }
-        }
-        groupEdit.setOnClickListener {
-            val options = if (selectedGroup.isNullOrEmpty()) arrayOf("Nuevo grupo") else arrayOf("Nuevo grupo", "Renombrar grupo", "Quitar grupo y conservar pestañas")
-            android.app.AlertDialog.Builder(activity).setTitle("Grupos de pestañas").setItems(options) { _, choice ->
-                if (choice == 2) {
-                    selectedGroup?.let { TabManager.renameGroup(it,null,showPrivate) }; selectedGroup = null; refresh()
-                } else {
-                    val input = android.widget.EditText(activity).apply { hint = "Nombre del grupo"; ThemeManager.styleEdit(activity,this); if(choice==1)setText(selectedGroup) }
-                    android.app.AlertDialog.Builder(activity).setTitle(options[choice]).setView(input).setNegativeButton("Cancelar",null)
-                        .setPositiveButton("Guardar") { _, _ ->
-                            val name = TabGroupRules.name(input.text.toString())
-                            if(name != null) {
-                                if(choice==1) selectedGroup?.let { TabManager.renameGroup(it,name,showPrivate) }
-                                else {
-                                    val tab = TabManager.activeTab()?.takeIf { it.isPrivate == showPrivate }
-                                        ?: adapter.items.firstOrNull() ?: TabManager.createTab(BrowserPrefs.homePage(activity),showPrivate,false)
-                                    TabManager.moveToGroup(tab.id,name)
-                                }
-                                selectedGroup=name; refresh()
-                            }
-                        }.show()
-                }
-            }.show()
-        }
-        normalSeg.setOnClickListener { showPrivate = false; refresh() }
-        privateSeg.setOnClickListener { showPrivate = true; refresh() }
+        normalSeg.setOnClickListener { if (showPrivate) { showPrivate = false; selectedGroup = null; refresh() } }
+        privateSeg.setOnClickListener { if (!showPrivate) { showPrivate = true; selectedGroup = null; refresh() } }
         refresh()
 
         dialog.setContentView(root)
@@ -255,6 +232,64 @@ object TabSwitcher {
             setWindowAnimations(android.R.style.Animation_Activity)
         }
         dialog.show()
+    }
+
+    /** Hoja para mover una pestaña de grupo (mantener pulsada su tarjeta). */
+    private fun moveSheet(activity: Activity, tab: BrowserTab, done: () -> Unit) {
+        val names = TabManager.allTabs().filter { it.isPrivate == tab.isPrivate }.mapNotNull { it.groupName }.distinct().sorted()
+        lateinit var sheet: Dialog
+        val body = NexoUi.column(activity)
+        val chips = mutableListOf<View>()
+        chips += NexoUi.chip(activity, "Sin grupo", tab.groupName == null) { TabManager.moveToGroup(tab.id, null); sheet.dismiss(); done() }
+        names.forEach { name ->
+            chips += NexoUi.chip(activity, name, tab.groupName == name, TabGroupRules.color(name)) {
+                TabManager.moveToGroup(tab.id, name); sheet.dismiss(); done()
+            }
+        }
+        body.addView(NexoUi.section(activity, "Mover a"))
+        body.addView(NexoUi.chipRow(activity, chips))
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_nav_add, "Nuevo grupo con esta pestaña") {
+            sheet.dismiss()
+            NexoUi.askText(activity, "Nuevo grupo", "Nombre del grupo", action = "Crear y mover") { value ->
+                TabManager.moveToGroup(tab.id, value); done()
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(activity, 10f)
+        })
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_close, "Cerrar pestaña", danger = true) {
+            sheet.dismiss(); TabManager.closeTab(tab.id); done()
+        })
+        sheet = NexoSheets.show(activity, NexoSheets.column(activity,
+            NexoSheets.header(activity, tab.title.ifBlank { "Nueva pestaña" }, tab.groupName?.let { "Grupo: $it" } ?: "Sin grupo"), body))
+    }
+
+    /** Hoja de un grupo: renombrar, desagrupar o cerrar sus pestañas. */
+    private fun groupSheet(activity: Activity, name: String, privateMode: Boolean, done: (String?) -> Unit) {
+        val count = TabManager.allTabs().count { it.isPrivate == privateMode && it.groupName == name }
+        val actions = listOf(
+            SheetAction(R.drawable.ic_menu_copy, "Renombrar grupo") {
+                NexoUi.askText(activity, "Renombrar grupo", "Nombre del grupo", name) { value ->
+                    val clean = TabGroupRules.name(value) ?: return@askText
+                    TabManager.renameGroup(name, clean, privateMode); done(clean)
+                }
+            },
+            SheetAction(R.drawable.ic_tab_tools, "Desagrupar y conservar pestañas") {
+                TabManager.renameGroup(name, null, privateMode); done(null)
+            },
+            SheetAction(R.drawable.ic_menu_close, "Cerrar las $count pestañas", danger = true) {
+                android.app.AlertDialog.Builder(activity).setTitle("¿Cerrar el grupo «$name»?")
+                    .setMessage("Se cerrarán $count pestañas.")
+                    .setNegativeButton("Cancelar", null).setPositiveButton("Cerrar") { _, _ ->
+                        TabManager.allTabs().filter { it.isPrivate == privateMode && it.groupName == name }.map { it.id }
+                            .forEach { TabManager.closeTab(it) }
+                        done(null)
+                    }.show()
+            }
+        )
+        lateinit var sheet: Dialog
+        sheet = NexoSheets.show(activity, NexoSheets.column(activity,
+            NexoSheets.header(activity, name, if (count == 1) "1 pestaña" else "$count pestañas"),
+            NexoSheets.list(activity, actions) { sheet.dismiss() }))
     }
 
     private fun segmentButton(activity: Activity, label: String): TextView =
@@ -291,7 +326,7 @@ object TabSwitcher {
                 activity,
                 Color.TRANSPARENT,
                 20f,
-                if (active) p.accent else p.outline,
+                if (active) p.accent else tab.groupName?.let { androidx.core.graphics.ColorUtils.setAlphaComponent(TabGroupRules.color(it), 150) } ?: p.outline,
                 if (active) 2.5f else 1f
             )
             clipToOutline = true
@@ -307,6 +342,14 @@ object TabSwitcher {
         header.addView(TextView(activity).apply {
             text = (if(tab.burnerId != null) "🔥 " else "") + tab.title.ifBlank { "Nueva pestaña" }
             textSize = 13f
+            tab.groupName?.let { group ->
+                setCompoundDrawablesRelativeWithIntrinsicBounds(android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(TabGroupRules.color(group)); setSize(dp(activity, 8f), dp(activity, 8f))
+                }, null, null, null)
+                compoundDrawablePadding = dp(activity, 6f)
+                contentDescription = "${tab.title} · grupo $group"
+            }
             setTextColor(p.text)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             maxLines = 1

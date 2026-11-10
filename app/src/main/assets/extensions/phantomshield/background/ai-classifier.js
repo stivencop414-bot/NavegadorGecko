@@ -16,6 +16,9 @@
     'dialogs, login or newsletter forms, comments, video players and user controls. ' +
     'A known ad-network host in "links" or "frame", a "Sponsored/Patrocinado/Publicidad" label, or a standard ' +
     'ad size together with third-party links is strong evidence. Size or a generic class name alone is not.\n' +
+    'Without text or links (basic mode) judge the signal combination: "ad-class" with "ad-size", "external-links" ' +
+    'or "fixed-position" is usually an ad slot; "sponsored-label" or "advertisement-label" on a card is a ' +
+    'promoted item; a lone "ad-class" on a large container is unsure.\n' +
     'Reply with JSON only, no prose and no code fences: ' +
     '{"decisions":[{"id":"<candidate id>","isAd":true,"confidence":0.0}]} with one entry per candidate and ' +
     'confidence between 0 and 1. Use isAd false when unsure.';
@@ -69,6 +72,19 @@
   function cleanHost(value) {
     const host = String(value || '').trim().toLowerCase();
     return host.length <= 100 && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(host) && host.includes('.') ? host : '';
+  }
+
+  /**
+   * Combinaciones que no necesitan modelo: atributos de AdSense, enlaces
+   * marcados rel=sponsored o marcos de terceros con tamaño estándar de anuncio.
+   * Se resuelven al instante y sin gastar tokens.
+   */
+  function definitiveAd(candidate) {
+    const has = function(signal) { return candidate.signals.includes(signal); };
+    return has('ad-attribute') || has('sponsored-link') ||
+      (has('third-party-frame') && has('ad-size')) ||
+      (has('advertisement-label') && (has('ad-class') || has('ad-size') || has('third-party-frame'))) ||
+      (has('ad-class') && has('ad-size') && (has('external-links') || has('third-party-frame')));
   }
 
   function sanitize(candidates, rich) {
@@ -173,7 +189,7 @@
 
   class AIClassifier {
     constructor() {
-      this.stats = { requests: 0, inputTokens: 0, outputTokens: 0, usageMissing: 0, analyzed: 0, detected: 0, cacheHits: 0 };
+      this.stats = { requests: 0, inputTokens: 0, outputTokens: 0, usageMissing: 0, analyzed: 0, detected: 0, cacheHits: 0, local: 0 };
       this.statsReady = browser.storage.local.get({ aiStats: {} }).then(stored => {
         for (const key of Object.keys(this.stats)) {
           const value = stored.aiStats && stored.aiStats[key];
@@ -375,7 +391,8 @@
         for (const [key, cached] of this.cache) {
           if (now - cached.time > 10 * 60 * 1000) this.cache.delete(key);
         }
-        const missing = Array.from(new Map(batch.filter(candidate => !this.cache.has(signature(candidate)))
+        const local = new Set(batch.filter(definitiveAd).map(candidate => candidate.id));
+        const missing = Array.from(new Map(batch.filter(candidate => !local.has(candidate.id) && !this.cache.has(signature(candidate)))
           .map(candidate => [signature(candidate), candidate])).values());
         if (missing.length) {
           if (this.active) return { ok: false, code: 'busy', error: MESSAGES.busy };
@@ -390,8 +407,10 @@
           while (this.cache.size > 500) this.cache.delete(this.cache.keys().next().value);
           this.report('ok');
         }
-        const decisions = batch.map(candidate => ({id:candidate.id, hide:this.cache.get(signature(candidate)).hide}));
-        await this.record({ analyzed:batch.length, detected:decisions.filter(decision => decision.hide).length, cacheHits:batch.length-missing.length });
+        const decisions = batch.map(candidate => ({ id: candidate.id,
+          hide: local.has(candidate.id) || this.cache.get(signature(candidate)).hide }));
+        await this.record({ analyzed: batch.length, detected: decisions.filter(decision => decision.hide).length,
+          cacheHits: batch.length - missing.length - local.size, local: local.size });
         if(epoch !== this.epoch) return {ok:false,code:'changed',error:MESSAGES.changed};
         return {ok:true,decisions};
       } catch (error) {

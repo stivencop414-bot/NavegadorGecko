@@ -91,6 +91,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         (aiState.state === 'ok' ? '' : '. Toca Configurar IA → Probar conexión.')
       : '';
     field('ai-state').className = 'ai-state' + (showState ? (aiState.state === 'ok' ? ' good' : ' bad') : '');
+    // Lo que la IA hizo en ESTA página: prueba visible de que trabaja.
+    const page = stats.tabAi && typeof stats.tabAi === 'object' ? stats.tabAi : null;
+    const pageNumber = key => page && Number.isSafeInteger(page[key]) && page[key] >= 0 ? page[key] : 0;
+    const needsKey = config.enabled && !config.apiKey && config.provider !== 'custom';
+    let pageText = '';
+    if (needsKey) pageText = 'Falta la clave API: la IA no puede analizar. Añádela en Configurar IA.';
+    else if (scanAvailable && page && pageNumber('analyzed')) {
+      pageText = 'En esta página: revisó ' + pageNumber('analyzed') + (pageNumber('analyzed') === 1 ? ' elemento' : ' elementos') +
+        ' y ocultó ' + pageNumber('hidden') + '.';
+    } else if (scanAvailable && page && page.code === 'idle') {
+      pageText = 'En esta página: nada dudoso; las reglas locales ya cubren lo visible.';
+    } else if (scanAvailable && page && ['busy', 'budget', 'cooldown'].includes(page.code)) {
+      pageText = 'En esta página: en espera por el límite de solicitudes; se reintentará.';
+    } else if (scanAvailable) {
+      pageText = 'En esta página: revisando lo que las reglas no reconocen…';
+    }
+    field('ai-page').hidden = !pageText;
+    field('ai-page').textContent = pageText;
+    field('ai-page').className = 'ai-page' + (needsKey ? ' bad' : page && pageNumber('hidden') ? ' good' : '');
     const last = Number(stored.phantom_last_update) || 0;
     const results = Array.isArray(stored.phantom_update_results) ? stored.phantom_update_results : [];
     const rules = stats.rules && typeof stats.rules === 'object' ? stats.rules : {};

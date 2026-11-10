@@ -218,7 +218,12 @@ class MainActivity :
         tabButton.setOnClickListener { showTabsDialog() }
         findViewById<ImageButton>(R.id.tabToolsButton).apply {
             setOnClickListener { TabTools.show(this@MainActivity) }
-            setOnLongClickListener { BurnerMailbox.open(this@MainActivity); true }
+            // Pulsación larga: el buzón de la identidad actual. Nunca crea una identidad nueva por accidente.
+            setOnLongClickListener {
+                val burner = TabManager.activeTab()?.burnerId
+                if (burner != null) BurnerMailbox.show(this@MainActivity, burner) else TabTools.show(this@MainActivity)
+                true
+            }
         }
         findViewById<Button>(R.id.menuButton).setOnClickListener { showMenu(it) }
         miniPlayerButton.setOnClickListener { startMiniPlayer() }
@@ -644,8 +649,7 @@ class MainActivity :
         navBar.background = null
         ThemeManager.styleEdit(this, omnibox)
         ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),TabManager.activeTab()?.let { it.burnerId != null || it.networkProfile != null } == true)
-        ThemeManager.styleButton(this, miniPlayerButton, primary = true)
-        miniPlayerButton.elevation = 6f * resources.displayMetrics.density
+        styleMiniPlayerChip()
         ThemeManager.styleTabCounter(this, tabButton)
         ThemeManager.styleFlatButton(this, findViewById(R.id.menuButton))
         ThemeManager.styleFlatButton(this, clearOmniboxButton)
@@ -1039,10 +1043,70 @@ class MainActivity :
         return BrowserPrefs.smartPip(this) && hasMiniVideo(tab)
     }
 
+    /** Página (pestaña + dirección) donde se ocultó el botón Mini con una pulsación larga. */
+    private var miniChipHiddenFor: String? = null
+
     private fun updateMiniPlayerChip() {
-        miniPlayerButton.visibility =
-            if (!immersive && isMiniVideoAvailable()) View.VISIBLE
-            else View.GONE
+        val tab = TabManager.activeTab()
+        val key = tab?.let { it.id + "|" + it.url }
+        setMiniChipVisible(!immersive && !isInPictureInPictureMode && isMiniVideoAvailable() && key != miniChipHiddenFor)
+    }
+
+    /**
+     * Píldora translúcida sobre el video (se lee igual en tema claro u
+     * oscuro) con aparición suave en lugar de un botón que salta.
+     */
+    private fun styleMiniPlayerChip() {
+        val density = resources.displayMetrics.density
+        miniPlayerButton.background = ThemeManager.ripple(
+            this,
+            android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xE6111827.toInt())
+                cornerRadius = 24f * density
+                setStroke(density.toInt().coerceAtLeast(1), 0x33FFFFFF)
+            },
+            24f,
+            0x40FFFFFF
+        )
+        miniPlayerButton.backgroundTintList = null
+        miniPlayerButton.setTextColor(android.graphics.Color.WHITE)
+        miniPlayerButton.compoundDrawableTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
+        miniPlayerButton.isAllCaps = false
+        miniPlayerButton.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        miniPlayerButton.stateListAnimator = null
+        miniPlayerButton.elevation = 8f * density
+        miniPlayerButton.contentDescription = "Abrir el video en una ventana flotante. Mantén pulsado para ocultar este botón."
+        miniPlayerButton.setOnLongClickListener {
+            miniChipHiddenFor = TabManager.activeTab()?.let { it.id + "|" + it.url }
+            setMiniChipVisible(false)
+            Toast.makeText(this, "Botón Mini oculto en esta página.", Toast.LENGTH_SHORT).show()
+            true
+        }
+    }
+
+    private fun setMiniChipVisible(show: Boolean) {
+        val visible = miniPlayerButton.visibility == View.VISIBLE
+        // Se llama a menudo (cambios de medios): no reiniciar una animación ya en curso.
+        val target = miniPlayerButton.getTag(R.id.miniPlayerButton) as? Boolean
+        if (target == show && (!show || visible)) return
+        miniPlayerButton.setTag(R.id.miniPlayerButton, show)
+        miniPlayerButton.animate().cancel()
+        if (show) {
+            if (!visible) {
+                miniPlayerButton.alpha = 0f
+                miniPlayerButton.scaleX = 0.85f
+                miniPlayerButton.scaleY = 0.85f
+                miniPlayerButton.visibility = View.VISIBLE
+            }
+            miniPlayerButton.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(180L).start()
+        } else if (visible) {
+            miniPlayerButton.animate().alpha(0f).scaleX(0.85f).scaleY(0.85f).setDuration(140L).withEndAction {
+                miniPlayerButton.visibility = View.GONE
+                miniPlayerButton.alpha = 1f
+                miniPlayerButton.scaleX = 1f
+                miniPlayerButton.scaleY = 1f
+            }.start()
+        }
     }
 
     private fun startMiniPlayer(
@@ -1088,6 +1152,8 @@ class MainActivity :
             isolateCss = !nativeCrop
         )
 
+        miniPlayerButton.animate().cancel()
+        miniPlayerButton.setTag(R.id.miniPlayerButton, false)
         miniPlayerButton.visibility = View.GONE
 
         val enterPip = Runnable {
@@ -1190,6 +1256,15 @@ class MainActivity :
         }
 
         builder.setActions(pipActions(tabId))
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            // Título y sitio del video en el menú de la ventana flotante.
+            TabManager.activeTab()?.takeIf { it.id == tabId }?.let { tab ->
+                val site = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull()?.removePrefix("www.")
+                tab.title.takeIf { it.isNotBlank() }?.let { builder.setTitle(it.take(80)) }
+                site?.takeIf { it.isNotBlank() }?.let { builder.setSubtitle(it) }
+            }
+        }
 
         if (Build.VERSION.SDK_INT >= 31) {
             /*

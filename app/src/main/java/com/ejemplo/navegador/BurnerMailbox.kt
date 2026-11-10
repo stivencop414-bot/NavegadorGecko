@@ -9,10 +9,9 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import java.util.concurrent.Executors
 
@@ -69,58 +68,101 @@ object BurnerMailbox {
     fun show(activity: Activity, id: String) {
         if (!active.contains(id) || activity.isFinishing || activity.isDestroyed) return
         val p = ThemeManager.palette(activity)
-        val dialog = Dialog(activity, ThemeManager.themeRes(activity))
-        val root = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(24,24,24,24); setBackgroundColor(p.background) }
-        val heading = TextView(activity).apply { text = "Buzón Burner"; textSize = 22f; setTextColor(p.text) }
-        val status = TextView(activity).apply { setTextColor(p.muted); setPadding(0,20,0,20) }
+        lateinit var dialog: Dialog
+        val body = NexoUi.column(activity)
+
+        // Tarjeta de la dirección: monoespaciada, con botón Copiar.
+        val addressCard = NexoUi.card(activity)
+        val address = TextView(activity).apply {
+            textSize = 15f; setTextColor(p.text); setTextIsSelectable(true)
+            typeface = activity.resources.getFont(R.font.jetbrains_mono)
+        }
+        val status = TextView(activity).apply { textSize = 12.5f; setTextColor(p.muted); setPadding(0, NexoUi.dp(activity, 6f), 0, 0) }
+        val copy = NexoUi.chip(activity, "Copiar", false) {
+            val account = accounts[id] ?: return@chip
+            (activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                .setPrimaryClip(ClipData.newPlainText("Correo Burner", account.address))
+            Toastish.show(activity, "Dirección copiada.")
+        }
+        addressCard.addView(LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            addView(address, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(copy, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, NexoUi.dp(activity, 38f)).apply {
+                marginStart = NexoUi.dp(activity, 10f)
+            })
+        })
+        addressCard.addView(status)
+        body.addView(addressCard)
+
+        val refresh = NexoUi.button(activity, "Actualizar buzón") {}
+        body.addView(refresh, NexoUi.buttonParams(activity, 12f))
+        body.addView(NexoUi.section(activity, "Mensajes"))
         val items = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(heading); root.addView(status)
-        val refresh = Button(activity).apply { text = "Actualizar buzón"; ThemeManager.styleButton(activity, this, primary = true) }
-        root.addView(refresh)
-        root.addView(ScrollView(activity).apply { addView(items) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1f))
-        root.addView(Button(activity).apply { text = "Cerrar panel"; ThemeManager.styleButton(activity,this); setOnClickListener { dialog.dismiss() } })
+        body.addView(items)
+        body.addView(NexoUi.note(activity, "El buzón vive solo en memoria y no se incluye en copias ni restauraciones. " +
+            "Al destruir la identidad se solicita borrar la cuenta en mail.tm."))
+
+        fun openMessage(account: MailTmClient.Account, message: MailTmClient.Message, row: View) {
+            row.isEnabled = false
+            io.execute {
+                val text = runCatching { client.text(account, message.id) }.getOrDefault("No se pudo cargar el mensaje.")
+                main.post {
+                    row.isEnabled = true
+                    if (!dialog.isShowing || !active.contains(id)) return@post
+                    val content = NexoUi.column(activity).apply {
+                        addView(TextView(activity).apply {
+                            this.text = text; textSize = 14.5f; setTextColor(p.text); setTextIsSelectable(true)
+                            setLineSpacing(0f, 1.2f); setPadding(NexoUi.dp(activity, 4f), 0, NexoUi.dp(activity, 4f), NexoUi.dp(activity, 8f))
+                            android.text.util.Linkify.addLinks(this, android.text.util.Linkify.WEB_URLS)
+                        })
+                    }
+                    val messageDialog = NexoSheets.show(activity, NexoSheets.column(activity,
+                        NexoSheets.header(activity, message.subject.ifBlank { "Sin asunto" }.take(100), message.from), content))
+                    track(id, messageDialog)
+                }
+            }
+        }
+
         fun render() {
             val account = accounts[id]
-            status.text = account?.address ?: errors[id] ?: "Creando correo temporal…"
             if (account == null) {
+                address.text = if (pending.contains(id)) "Creando correo temporal…" else "Sin buzón"
+                status.text = errors[id] ?: "Preparando la cuenta en mail.tm."
+                copy.visibility = View.GONE
                 refresh.text = if (pending.contains(id)) "Creando…" else "Reintentar creación"
                 refresh.isEnabled = !pending.contains(id)
                 return
             }
-            status.setOnClickListener { (activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Correo Burner", account.address)) }
-            refresh.isEnabled = false; status.text = account.address + "\nCargando mensajes…"
+            address.text = account.address
+            copy.visibility = View.VISIBLE
+            refresh.text = "Actualizar buzón"
+            refresh.isEnabled = false; status.text = "Cargando mensajes…"
             io.execute {
                 val messages = runCatching { client.list(account) }
                 main.post {
                     if (!dialog.isShowing || !active.contains(id)) return@post
                     refresh.isEnabled = true; items.removeAllViews()
-                    status.text = account.address + "\nToca la dirección para copiar. " + if (messages.isSuccess) "${messages.getOrThrow().size} mensajes." else "No se pudo actualizar. Espera y vuelve a intentarlo."
-                    messages.getOrDefault(emptyList()).forEach { message ->
-                        items.addView(Button(activity).apply {
-                            text = message.subject.ifBlank { "Sin asunto" } + "\n" + message.from
-                            ThemeManager.styleButton(activity,this)
-                            setOnClickListener {
-                                isEnabled = false
-                                io.execute {
-                                    val body = runCatching { client.text(account,message.id) }.getOrDefault("No se pudo cargar el mensaje.")
-                                    main.post {
-                                        isEnabled = true
-                                        if (dialog.isShowing && active.contains(id)) {
-                                            val messageDialog=AlertDialog.Builder(activity).setTitle(message.subject.take(100)).setMessage(body).setPositiveButton("Cerrar",null).create()
-                                            track(id,messageDialog);messageDialog.show()
-                                        }
-                                    }
-                                }
-                            }
-                        })
+                    val list = messages.getOrDefault(emptyList())
+                    status.text = when {
+                        messages.isFailure -> "No se pudo actualizar. Espera y vuelve a intentarlo."
+                        list.isEmpty() -> "Aún no hay mensajes. Usa esta dirección y pulsa Actualizar."
+                        list.size == 1 -> "1 mensaje"
+                        else -> "${list.size} mensajes"
+                    }
+                    list.forEach { message ->
+                        lateinit var row: View
+                        row = NexoUi.actionRow(activity, R.drawable.ic_menu_file, message.subject.ifBlank { "Sin asunto" }, message.from) {
+                            openMessage(account, message, row)
+                        }
+                        items.addView(row)
                     }
                 }
             }
         }
         refresh.setOnClickListener { if (accounts[id] == null) createAccount(id) { if (dialog.isShowing) render() } else render() }
-        track(id,dialog)
-        dialog.setContentView(root); dialog.show()
-        dialog.window?.apply { setGravity(Gravity.END); setLayout((activity.resources.displayMetrics.widthPixels*0.94).toInt(),ViewGroup.LayoutParams.MATCH_PARENT) }
+        dialog = NexoSheets.show(activity, NexoSheets.column(activity,
+            NexoSheets.header(activity, "Buzón Burner", "Correo temporal de esta identidad"), body))
+        track(id, dialog)
         render()
     }
 }
