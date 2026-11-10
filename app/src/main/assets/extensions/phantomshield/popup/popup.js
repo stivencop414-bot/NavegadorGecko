@@ -18,8 +18,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   function controls() {
     field('adblock-toggle').disabled = !loaded || busy;
     field('privacy-toggle').disabled = !loaded || busy;
+    field('anti-block-toggle').disabled = !loaded || busy;
     field('site-toggle').disabled = !loaded || busy || !domain || !field('adblock-toggle').checked;
     field('scan-ai').disabled = !loaded || busy || !scanAvailable;
+    field('exclude-ai').disabled = !loaded || busy;
+    field('disable-ai').disabled = !loaded || busy;
     field('update-lists').disabled = !loaded || busy;
     field('reset-stats').disabled = !loaded || busy;
   }
@@ -40,6 +43,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const siteOn = !stats.siteDisabled;
     field('adblock-toggle').checked = globalOn;
     field('privacy-toggle').checked = stats.settings.privacyEnabled === true;
+    field('anti-block-toggle').checked = stats.settings.antiBlockEnabled === true;
     field('site-toggle').checked = globalOn && siteOn;
     field('site-control').hidden = !domain;
     field('current-domain').textContent = domain || 'Página segura de Nexo';
@@ -66,9 +70,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const authorized = globalThis.PhantomAIConfig.hostAllowed(config, host);
     scanAvailable = Boolean(domain && globalOn && siteOn && config.enabled === true && config.consent === true && authorized && !(currentTab && currentTab.incognito));
     field('exclude-ai').hidden = !config.enabled || !authorized || !domain;
-    field('exclude-ai').disabled = busy;
     field('disable-ai').hidden = !config.enabled;
-    field('disable-ai').disabled = busy;
     field('ai-hint').textContent = !config.enabled ? 'IA apagada. Tu protección local funciona sin modelos ni claves.'
       : currentTab && currentTab.incognito ? 'La IA no se utiliza en pestañas privadas.'
       : !authorized ? 'Este sitio no está autorizado para IA. Puedes gestionarlo en ajustes.'
@@ -168,6 +170,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       showMessage(enabled ? 'Bloqueo local activado.' : 'Bloqueo local desactivado.');
     });
   });
+  field('anti-block-toggle').addEventListener('change', () => {
+    const enabled=field('anti-block-toggle').checked;
+    mutate(async()=>{await browser.storage.local.set({antiBlockEnabled:enabled});showMessage('Parcheador '+(enabled?'activado':'desactivado')+'. Recarga para aplicarlo.');});
+  });
   field('privacy-toggle').addEventListener('change', () => {
     const enabled = field('privacy-toggle').checked;
     mutate(async () => { await browser.storage.local.set({ privacyEnabled: enabled }); showMessage('El cambio de Canvas se aplica al recargar la página.'); });
@@ -190,7 +196,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showMessage('Contadores reiniciados.');
   }));
   const changed = (values, area) => {
-    if (area === 'local' && ['adblockEnabled','privacyEnabled','disabled_domains','aiConfig','aiStats','aiStatus','blockedCount','phantom_last_update','phantom_update_results'].some(key => key in values)) {
+    if (area === 'local' && ['adblockEnabled','privacyEnabled','antiBlockEnabled','disabled_domains','aiConfig','aiStats','aiStatus','blockedCount','phantom_last_update','phantom_update_results'].some(key => key in values)) {
       refresh().catch(() => showMessage('No se pudo actualizar el estado de protección.', true));
     }
   };

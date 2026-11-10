@@ -69,7 +69,20 @@ object TranslatorManager {
             callback(false, "Abre una página web para traducir."); return
         }
         if (session.sessionTranslation == null) { callback(false, "El motor de traducción no está disponible en esta sesión."); return }
-        if (pending.contains(session) || preparing.contains(session)) { callback(false, "La traducción sigue en curso."); return }
+        if (preparing.contains(session)) { callback(false, "Consultando los idiomas disponibles…"); return }
+        if (pending.contains(session)) {
+            val epoch=tab.navigationEpoch
+            AlertDialog.Builder(activity).setTitle("Traducción en curso")
+                .setMessage("Puedes volver al original sin abrir otra pestaña.")
+                .setNegativeButton("Seguir traduciendo",null).setPositiveButton("Cancelar y ver original") { _, _ ->
+                    if(TabManager.activeSession() === session && tab.navigationEpoch == epoch) {
+                        session.sessionTranslation!!.restoreOriginalPage().accept(
+                            { forget(session);callback(true,"Página original restaurada.") },
+                            { callback(false,"No se pudo restaurar el original. Inténtalo de nuevo.") })
+                    }
+                }.show()
+            return
+        }
         if (states[session]?.hasVisibleChange == true) {
             session.sessionTranslation!!.restoreOriginalPage().accept(
                 { callback(true, "Página original restaurada.") },
@@ -104,6 +117,30 @@ object TranslatorManager {
                 }
                 val source = spinner("Idioma de la página", from)
                 val target = spinner("Traducir a", to)
+                val sizeInfo=TextView(activity).apply { text="Consultando descarga de idiomas…";ThemeManager.styleText(activity,this,true);box.addView(this) }
+                val allowDownload=android.widget.CheckBox(activity).apply { text="Permitir descarga si falta un idioma";isChecked=true;box.addView(this) }
+                var sizeRevision=0
+                fun updateSize() {
+                    val revision=++sizeRevision
+                    val fromCode=from[source.selectedItemPosition].code.orEmpty()
+                    val toCode=to[target.selectedItemPosition].code.orEmpty()
+                    if(fromCode==toCode){sizeInfo.text="Elige idiomas distintos.";return}
+                    sizeInfo.text="Consultando descarga de idiomas…"
+                    TranslationsController.RuntimeTranslation.checkPairDownloadSize(fromCode,toCode).accept({ bytes ->
+                        activity.runOnUiThread {
+                            if(current() && revision==sizeRevision) sizeInfo.text=when {
+                                bytes == null || bytes < 0 -> "Tamaño de descarga no disponible."
+                                bytes == 0L -> "Idiomas guardados: no hace falta descargarlos."
+                                else -> "Descarga necesaria: ~${(bytes+1048575L)/1048576L} MB."
+                            }
+                        }
+                    }, { activity.runOnUiThread { if(current() && revision==sizeRevision)sizeInfo.text="No se pudo consultar el tamaño; Gecko comprobará los idiomas." } })
+                }
+                val languageChanged=object:android.widget.AdapterView.OnItemSelectedListener {
+                    override fun onNothingSelected(parent:android.widget.AdapterView<*>?)=Unit
+                    override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:android.view.View?,position:Int,id:Long){updateSize()}
+                }
+                source.onItemSelectedListener=languageChanged;target.onItemSelectedListener=languageChanged
                 val detected = states[session]?.detectedLanguages?.docLangTag
                 source.setSelection(PageTranslation.sourceIndex(detected, from.map { it.code.orEmpty() }))
                 target.setSelection(to.indexOfFirst { it.code == BrowserPrefs.translatorTarget(context) }.coerceAtLeast(0))
@@ -112,14 +149,15 @@ object TranslatorManager {
                     .setView(box).setNegativeButton("Cancelar", null)
                     .setPositiveButton("Traducir") { _, _ ->
                         if (!current()) { callback(false, "La página cambió. Solicita la traducción de nuevo."); return@setPositiveButton }
-                        val fromCode = from[source.selectedItemPosition].code!!
-                        val toCode = to[target.selectedItemPosition].code!!
+                        val fromCode = from[source.selectedItemPosition].code
+                        val toCode = to[target.selectedItemPosition].code
                         if (fromCode == toCode) { callback(false, "Elige dos idiomas distintos."); return@setPositiveButton }
                         pending.add(session)
-                        val options = TranslationsController.SessionTranslation.TranslationOptions.Builder().downloadModel(true).build()
+                        BrowserPrefs.setTranslatorTarget(context,toCode)
+                        val options = TranslationsController.SessionTranslation.TranslationOptions.Builder().downloadModel(allowDownload.isChecked).build()
                         session.sessionTranslation!!.translate(fromCode, toCode, options).accept(
                             { if (current()) callback(true, "Traduciendo en esta página… Vuelve a pulsar Traducir para ver el original.") },
-                            { pending.remove(session); if (current()) callback(false, "No se pudo iniciar la traducción. Comprueba la conexión y los idiomas.") })
+                            { pending.remove(session); if (current()) callback(false, "No se pudo iniciar. Revisa los idiomas y permite la descarga si aún no están guardados.") })
                     }.show()
             }, { preparing.remove(session); if (current()) callback(false, "No se pudo consultar el servicio de idiomas de Gecko.") })
         }, { preparing.remove(session); if (current()) callback(false, "No se pudo comprobar el motor de traducción.") })

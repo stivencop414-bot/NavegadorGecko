@@ -248,12 +248,12 @@ function youtubePage(enabled = true, host = 'm.youtube.com') {
   const player = { classList: { values: new Set(), contains(name) { return this.values.has(name); } }, querySelector: () => video };
   const video = { muted: false, playbackRate: 1, duration: 30, currentTime: 2, paused: false, play: () => Promise.resolve() };
   const skip = { clicks: 0, click() { this.clicks++; } };
-  let skipVisible = false;
+  let skipVisible = false, adVisible = true;
   const document = new EventTarget();
   Object.assign(document, { readyState: 'complete', visibilityState: 'visible',
     documentElement: { getAttribute: name => attributes[name] ?? null },
     getElementById: id => id === 'movie_player' ? player : null,
-    querySelector: selector => selector.includes('skip') ? (skipVisible ? skip : null) : null });
+    querySelector: selector => selector.includes('skip') ? (skipVisible ? skip : null) : selector.includes('ad-preview') && adVisible ? {} : null });
   const window = new EventTarget();
   window.open = () => null;
   class FakeResponse { constructor(data) { this.data = data; } json() { return Promise.resolve(JSON.parse(JSON.stringify(this.data))); } }
@@ -276,6 +276,7 @@ function youtubePage(enabled = true, host = 'm.youtube.com') {
   vm.runInContext(read('content/page-hooks.js'), context);
   return { context, window, video, player, skip, FakeResponse, FakeXHR,
     showSkip: () => { skipVisible = true; },
+    hideAdUI: () => { adVisible=false; },
     run: () => { while (timers.length) timers.shift()(); },
     mutate: () => document.dispatchEvent(new Event('timeupdate')),
     toggle: value => { attributes['data-phantomshield-adblock'] = String(value); document.dispatchEvent(new Event('phantomshield:settings')); } };
@@ -340,7 +341,7 @@ test('an ad that still starts is muted, skipped to its end and playback is resto
   assert.ok(h.video.currentTime > 29, 'jumped to the end of the ad');
   h.showSkip(); h.video.currentTime = 1; h.mutate(); h.run();
   assert.ok(h.skip.clicks >= 1);
-  h.player.classList.values.delete('ad-showing'); h.video.playbackRate = 16;
+  h.player.classList.values.delete('ad-showing');
   h.mutate(); h.run();
   assert.equal(h.video.muted, false); assert.equal(h.video.playbackRate, 1);
 });
@@ -352,4 +353,15 @@ test('a page that reports the injected CSS is not applied gets the selectors inl
   assert.equal(h.inserted.length, 0);
   const lookup = await h.message({ type: 'COSMETIC_LOOKUP', classes: ['adsbygoogle'], ids: [], inline: true });
   assert.deepEqual(Array.from(lookup.selectors), ['.adsbygoogle']);
+});
+
+test('stale YouTube ad classes do not seek a replacement content video or alter speed',()=>{
+ const h=youtubePage();h.player.classList.values.add('ad-showing');h.mutate();h.run();
+ h.video.currentSrc='https://video/content';h.video.duration=600;h.video.currentTime=5;h.video.playbackRate=1.5;
+ h.mutate();h.run();h.mutate();h.run();assert.equal(h.video.currentTime,5);assert.equal(h.video.muted,false);assert.equal(h.video.playbackRate,1.5);
+});
+test('YouTube ad handling preserves a deliberate pause and does not jump a live stream',()=>{
+ const h=youtubePage();let plays=0;h.video.play=()=>{plays++;return Promise.resolve()};h.video.paused=true;
+ h.player.classList.values.add('ad-showing');h.mutate();h.run();assert.equal(h.video.currentTime,2);assert.equal(plays,0);
+ h.video.duration=Infinity;h.video.paused=false;h.mutate();h.run();assert.equal(h.video.currentTime,2);assert.equal(plays,0);
 });

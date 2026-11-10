@@ -60,7 +60,8 @@ class SettingsActivity : Activity() {
         "DNS del sistema" to BrowserPrefs.DNS_SYSTEM,
         "Cloudflare DNS over HTTPS" to BrowserPrefs.DNS_CLOUDFLARE,
         "Google DNS over HTTPS" to BrowserPrefs.DNS_GOOGLE,
-        "Quad9 DNS over HTTPS" to BrowserPrefs.DNS_QUAD9
+        "Quad9 DNS over HTTPS" to BrowserPrefs.DNS_QUAD9,
+        "DoH personalizado (barra de direcciones)" to BrowserPrefs.DNS_CUSTOM
     )
     private val cookieOptions = listOf(
         "Equilibrado · aislar terceros" to BrowserPrefs.COOKIES_BALANCED,
@@ -69,7 +70,8 @@ class SettingsActivity : Activity() {
         "Bloquear todas" to BrowserPrefs.COOKIES_NONE
     )
     private val liveOptions = listOf(2, 3, 4, 5, 6, 8)
-    private val translatorLanguages = listOf(
+    private val translatorLanguages by lazy {
+        val common = listOf(
         "Español" to "es",
         "Inglés" to "en",
         "Portugués" to "pt",
@@ -79,6 +81,11 @@ class SettingsActivity : Activity() {
         "Japonés" to "ja",
         "Coreano" to "ko"
     )
+        val selected=BrowserPrefs.translatorTarget(this)
+        if(common.none { it.second==selected } && selected.matches(Regex("[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*"))) {
+            common + (java.util.Locale.forLanguageTag(selected).getDisplayName(java.util.Locale.getDefault()) to selected)
+        } else common
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeManager.applyWindow(this)
@@ -181,6 +188,9 @@ class SettingsActivity : Activity() {
     }
 
     private fun save() {
+        if(dnsOptions[dns.selectedItemPosition].second == BrowserPrefs.DNS_CUSTOM && !DnsProfile.valid(BrowserPrefs.dnsCustom(this))) {
+            android.widget.Toast.makeText(this,"Configura la URL DoH en Herramientas de pestaña → DNS.",android.widget.Toast.LENGTH_LONG).show();return
+        }
         BrowserPrefs.setTheme(this, themes[theme.selectedItemPosition].second)
         BrowserPrefs.setAccent(this, accents[accent.selectedItemPosition].second)
         BrowserPrefs.setSearchEngine(this, engines[search.selectedItemPosition].second)

@@ -61,3 +61,13 @@ test('exclude current site from AI preserves other sites and local filtering',as
   assert.deepEqual(Array.from(h.state.aiConfig.excludedHosts),['www.example.com']);
   assert.equal(h.field('scan-ai').disabled,true);assert.equal(h.state.adblockEnabled,true);
 });
+
+test('quick AI controls recover after scanning and changing the patcher setting',async()=>{
+  const h=await harness({aiConfig:{enabled:true,consent:true,scope:'public'}});
+  await h.fire('scan-ai');assert.equal(h.scans,1);
+  assert.equal(h.field('disable-ai').disabled,false);assert.equal(h.field('exclude-ai').disabled,false);
+  h.field('anti-block-toggle').checked=true;await h.fire('anti-block-toggle','change');
+  assert.equal(h.state.antiBlockEnabled,true);assert.equal(h.field('disable-ai').disabled,false);
+  assert.equal(h.field('exclude-ai').disabled,false);await h.fire('disable-ai');
+  assert.equal(h.state.aiConfig.enabled,false);assert.equal(h.state.adblockEnabled,true);
+});

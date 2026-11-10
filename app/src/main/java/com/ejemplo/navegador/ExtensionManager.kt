@@ -106,7 +106,7 @@ object ExtensionManager {
             { extensions ->
                 extensions.orEmpty()
                     .filter {
-                        it.id != BRIDGE_ID &&
+                        it.id != BRIDGE_ID && it.id != TabRouting.ID &&
                             it.id != TranslatorManager.TRANSLATOR_ID
                     }
                     .forEach { registerExtension(it) }
@@ -315,7 +315,7 @@ object ExtensionManager {
                 {
                     onSuccess(
                         it.orEmpty().filter { extension ->
-                            extension.id != BRIDGE_ID &&
+                            extension.id != BRIDGE_ID && extension.id != TabRouting.ID &&
                                 extension.id != TranslatorManager.TRANSLATOR_ID
                         }
                     )
@@ -1099,6 +1099,7 @@ object ExtensionManager {
             return
         }
 
+        if(extension.id == TabRouting.ID) return
         known[extension.id] = extension
 
         extension.setActionDelegate(
@@ -1557,6 +1558,7 @@ object ExtensionManager {
             }
 
             override fun onDisabled(extension: WebExtension) {
+                if(extension.id == TabRouting.ID) return
                 known[extension.id] = extension
             }
 

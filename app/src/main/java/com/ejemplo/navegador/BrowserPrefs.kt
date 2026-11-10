@@ -24,6 +24,7 @@ object BrowserPrefs {
     const val ENGINE_BRAVE = "brave"
     const val ENGINE_STARTPAGE = "startpage"
 
+    const val DNS_CUSTOM = "custom"
     const val DNS_SYSTEM = "system"
     const val DNS_CLOUDFLARE = "cloudflare"
     const val DNS_GOOGLE = "google"
@@ -92,6 +93,10 @@ object BrowserPrefs {
     fun httpsOnly(c: Context) = p(c).getBoolean("https_only", false)
     fun setHttpsOnly(c: Context, v: Boolean) = p(c).edit().putBoolean("https_only", v).apply()
 
+    fun dnsCustom(c: Context) = p(c).getString("dns_custom", "").orEmpty()
+    fun setDnsCustom(c: Context, value: String) = p(c).edit().putString("dns_custom",value).apply()
+    fun dnsStrict(c: Context) = p(c).getBoolean("dns_strict",false)
+    fun setDnsStrict(c: Context, value: Boolean) = p(c).edit().putBoolean("dns_strict",value).apply()
     fun dnsProvider(c: Context) = p(c).getString("dns_provider", DNS_SYSTEM) ?: DNS_SYSTEM
     fun setDnsProvider(c: Context, v: String) = p(c).edit().putString("dns_provider", v).apply()
 

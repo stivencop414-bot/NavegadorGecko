@@ -340,6 +340,8 @@
   function setPipIsolation(active, resume, isolateCss) {
     const wasActive = pipActive;
     pipActive = active === true;
+    if(document.documentElement && document.documentElement.setAttribute) document.documentElement.setAttribute("data-nexo-pip-active",String(pipActive));
+    if(typeof Event === "function")document.dispatchEvent(new Event("nexo:pip-state"));
     if (pipActive) pipIsolateCss = isolateCss !== false;
 
     if (!pipActive) {

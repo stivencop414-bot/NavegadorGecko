@@ -40,6 +40,10 @@ object TabSwitcher {
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         var showPrivate = TabManager.activeTab()?.isPrivate == true
+        var selectedGroup: String? = null
+        var groupValues = listOf<String?>(null)
+        var groupLabels = emptyList<String>()
+        var selectingGroup = false
 
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -81,6 +85,7 @@ object TabSwitcher {
             setOnClickListener {
                 dialog.dismiss()
                 onNewTab(showPrivate)
+                TabManager.activeTab()?.let { TabManager.moveToGroup(it.id, selectedGroup) }
             }
         }
         top.addView(back)
@@ -103,6 +108,13 @@ object TabSwitcher {
         ).apply {
             setMargins(dp(activity, 16f), dp(activity, 6f), dp(activity, 16f), dp(activity, 8f))
         })
+
+        val groupRow = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(activity,16f),0,dp(activity,16f),0) }
+        val groups = android.widget.Spinner(activity).apply { contentDescription = "Filtrar grupo de pestañas"; ThemeManager.styleSpinner(activity,this) }
+        groupRow.addView(groups,LinearLayout.LayoutParams(0,dp(activity,48f),1f))
+        val groupEdit = Button(activity).apply { text = "Grupos"; ThemeManager.styleButton(activity,this) }
+        groupRow.addView(groupEdit)
+        root.addView(groupRow)
 
         // --- Cuadrícula
         val empty = TextView(activity).apply {
@@ -146,15 +158,44 @@ object TabSwitcher {
                     val lastNormal = !showPrivate && items.size == 1
                     TabManager.closeTab(it.id)
                     if (lastNormal) dialog.dismiss() else refresh()
-                })
+                }).apply {
+                    setOnLongClickListener {
+                        val tab = items[position]
+                        val names = TabManager.allTabs().filter { it.isPrivate == tab.isPrivate }.mapNotNull { it.groupName }.distinct().sorted()
+                        val labels = listOf("Sin grupo", "Nuevo grupo…") + names
+                        android.app.AlertDialog.Builder(activity).setTitle("Mover pestaña a grupo")
+                            .setItems(labels.toTypedArray()) { _, choice ->
+                                if (choice == 1) {
+                                    val input = android.widget.EditText(activity).apply { hint = "Nombre del grupo"; ThemeManager.styleEdit(activity,this) }
+                                    android.app.AlertDialog.Builder(activity).setTitle("Nuevo grupo").setView(input)
+                                        .setNegativeButton("Cancelar",null).setPositiveButton("Mover") { _, _ ->
+                                            TabManager.moveToGroup(tab.id,input.text.toString()); refresh()
+                                        }.show()
+                                } else { TabManager.moveToGroup(tab.id,if (choice == 0) null else names[choice-2]); refresh() }
+                            }.show()
+                        true
+                    }
+                }
         }
         grid.adapter = adapter
 
         refresh = {
             val all = TabManager.allTabs()
-            adapter.items = all.filter { it.isPrivate == showPrivate }
+            val names = all.filter { it.isPrivate == showPrivate }.mapNotNull { it.groupName }.distinct().sorted()
+            if (selectedGroup != null && selectedGroup != "" && selectedGroup !in names) selectedGroup = null
+            val labels = listOf("Todas", "Sin grupo") + names
+            groupValues = listOf(null, "") + names
+            if (labels != groupLabels) {
+                selectingGroup = true; groupLabels = labels
+                groups.adapter = ThemeManager.spinnerAdapter(activity,labels)
+                groups.setSelection(groupValues.indexOf(selectedGroup).coerceAtLeast(0))
+                selectingGroup = false
+            }
+            adapter.items = all.filter { it.isPrivate == showPrivate && (selectedGroup == null || it.groupName.orEmpty() == selectedGroup) }
+            closeAll.text = if (selectedGroup == null) "Cerrar todas" else "Cerrar grupo"
+            closeAll.isEnabled = adapter.items.isNotEmpty()
             adapter.notifyDataSetChanged()
-            title.text = "${all.count { !it.isPrivate }} pestañas"
+            title.text = "${adapter.items.size} pestañas"
             empty.text = if (showPrivate) {
                 "No hay pestañas privadas.\nLas pestañas privadas no guardan historial ni cookies."
             } else "No hay pestañas abiertas."
@@ -164,11 +205,42 @@ object TabSwitcher {
             privateSeg.text = "Privadas (${all.count { it.isPrivate }})"
         }
         closeAll.setOnClickListener {
-            val ids = TabManager.allTabs().filter { it.isPrivate == showPrivate }.map { it.id }
+            val ids = adapter.items.map { it.id }
             android.app.AlertDialog.Builder(activity).setTitle("¿Cerrar ${ids.size} pestañas?")
                 .setNegativeButton("Cancelar", null).setPositiveButton("Cerrar") { _, _ ->
                     ids.forEach { TabManager.closeTab(it) }; dialog.dismiss()
                 }.show()
+        }
+        groups.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (!selectingGroup && position in groupValues.indices && selectedGroup != groupValues[position]) {
+                    selectedGroup = groupValues[position]; refresh()
+                }
+            }
+        }
+        groupEdit.setOnClickListener {
+            val options = if (selectedGroup.isNullOrEmpty()) arrayOf("Nuevo grupo") else arrayOf("Nuevo grupo", "Renombrar grupo", "Quitar grupo y conservar pestañas")
+            android.app.AlertDialog.Builder(activity).setTitle("Grupos de pestañas").setItems(options) { _, choice ->
+                if (choice == 2) {
+                    selectedGroup?.let { TabManager.renameGroup(it,null,showPrivate) }; selectedGroup = null; refresh()
+                } else {
+                    val input = android.widget.EditText(activity).apply { hint = "Nombre del grupo"; ThemeManager.styleEdit(activity,this); if(choice==1)setText(selectedGroup) }
+                    android.app.AlertDialog.Builder(activity).setTitle(options[choice]).setView(input).setNegativeButton("Cancelar",null)
+                        .setPositiveButton("Guardar") { _, _ ->
+                            val name = TabGroupRules.name(input.text.toString())
+                            if(name != null) {
+                                if(choice==1) selectedGroup?.let { TabManager.renameGroup(it,name,showPrivate) }
+                                else {
+                                    val tab = TabManager.activeTab()?.takeIf { it.isPrivate == showPrivate }
+                                        ?: adapter.items.firstOrNull() ?: TabManager.createTab(BrowserPrefs.homePage(activity),showPrivate,false)
+                                    TabManager.moveToGroup(tab.id,name)
+                                }
+                                selectedGroup=name; refresh()
+                            }
+                        }.show()
+                }
+            }.show()
         }
         normalSeg.setOnClickListener { showPrivate = false; refresh() }
         privateSeg.setOnClickListener { showPrivate = true; refresh() }
@@ -233,7 +305,7 @@ object TabSwitcher {
             setPadding(dp(activity, 12f), dp(activity, 4f), dp(activity, 2f), dp(activity, 2f))
         }
         header.addView(TextView(activity).apply {
-            text = tab.title.ifBlank { "Nueva pestaña" }
+            text = (if(tab.burnerId != null) "🔥 " else "") + tab.title.ifBlank { "Nueva pestaña" }
             textSize = 13f
             setTextColor(p.text)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)

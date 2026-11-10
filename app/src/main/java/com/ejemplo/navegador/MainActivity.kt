@@ -216,6 +216,10 @@ class MainActivity :
         findViewById<ImageButton>(R.id.homeButton).setOnClickListener { viewModel.goHome() }
         findViewById<ImageButton>(R.id.newTabButton).setOnClickListener { viewModel.newTab(false) }
         tabButton.setOnClickListener { showTabsDialog() }
+        findViewById<ImageButton>(R.id.tabToolsButton).apply {
+            setOnClickListener { TabTools.show(this@MainActivity) }
+            setOnLongClickListener { BurnerMailbox.open(this@MainActivity); true }
+        }
         findViewById<Button>(R.id.menuButton).setOnClickListener { showMenu(it) }
         miniPlayerButton.setOnClickListener { startMiniPlayer() }
 
@@ -603,6 +607,9 @@ class MainActivity :
         // Descargar con Gecko (cookies de la sesión, modo privado) en lugar de
         // DownloadManager, que no tiene acceso a la sesión del navegador.
         val tab = TabManager.activeTab()
+        if(tab?.networkProfile?.type?.let { it != "direct" } == true) {
+            Toast.makeText(this,"Esta descarga requiere una conexión independiente. Ábrela directamente en la pestaña para conservar su ruta.",Toast.LENGTH_LONG).show();return
+        }
         Toast.makeText(this, "Descarga iniciada", Toast.LENGTH_SHORT).show()
         DownloadStore.download(
             this,
@@ -636,6 +643,7 @@ class MainActivity :
         topBar.background = null
         navBar.background = null
         ThemeManager.styleEdit(this, omnibox)
+        ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),TabManager.activeTab()?.let { it.burnerId != null || it.networkProfile != null } == true)
         ThemeManager.styleButton(this, miniPlayerButton, primary = true)
         miniPlayerButton.elevation = 6f * resources.displayMetrics.density
         ThemeManager.styleTabCounter(this, tabButton)
@@ -917,6 +925,8 @@ class MainActivity :
     }
 
     private fun renderTab(tab: BrowserTab) {
+        privateBanner.text = if(tab.burnerId != null) "Burner · identidad efímera" else "Navegación privada"
+        ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),tab.burnerId != null || tab.networkProfile != null)
         if (!omnibox.hasFocus()) renderOmnibox(tab)
         updateStartPage(tab)
         backButton.isEnabled = TabManager.canGoBackOrPrevious()

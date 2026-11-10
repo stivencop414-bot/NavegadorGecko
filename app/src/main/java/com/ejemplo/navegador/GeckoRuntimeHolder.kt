@@ -66,13 +66,21 @@ object GeckoRuntimeHolder {
 
         settings.setPreferredColorScheme(colorScheme(context))
 
+        val dnsMode = if(BrowserPrefs.dnsStrict(context)) GeckoRuntimeSettings.TRR_MODE_ONLY else GeckoRuntimeSettings.TRR_MODE_FIRST
         when (BrowserPrefs.dnsProvider(context)) {
+            BrowserPrefs.DNS_CUSTOM -> {
+                val uri = BrowserPrefs.dnsCustom(context)
+                // Corrupt stored settings must not silently switch to the system resolver.
+                val valid = DnsProfile.valid(uri)
+                settings.setTrustedRecursiveResolverUri(if(valid) uri else "https://127.0.0.1:9/dns-query")
+                settings.setTrustedRecursiveResolverMode(if(valid) dnsMode else GeckoRuntimeSettings.TRR_MODE_ONLY)
+            }
             BrowserPrefs.DNS_CLOUDFLARE -> {
                 settings.setTrustedRecursiveResolverUri(
                     "https://cloudflare-dns.com/dns-query"
                 )
                 settings.setTrustedRecursiveResolverMode(
-                    GeckoRuntimeSettings.TRR_MODE_FIRST
+                    dnsMode
                 )
             }
             BrowserPrefs.DNS_GOOGLE -> {
@@ -80,7 +88,7 @@ object GeckoRuntimeHolder {
                     "https://dns.google/dns-query"
                 )
                 settings.setTrustedRecursiveResolverMode(
-                    GeckoRuntimeSettings.TRR_MODE_FIRST
+                    dnsMode
                 )
             }
             BrowserPrefs.DNS_QUAD9 -> {
@@ -88,7 +96,7 @@ object GeckoRuntimeHolder {
                     "https://dns.quad9.net/dns-query"
                 )
                 settings.setTrustedRecursiveResolverMode(
-                    GeckoRuntimeSettings.TRR_MODE_FIRST
+                    dnsMode
                 )
             }
             else -> settings.setTrustedRecursiveResolverMode(

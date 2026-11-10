@@ -146,6 +146,14 @@
             android:layout_height="0dp"
             android:visibility="gone" />
 
+        <ImageButton
+            android:id="@+id/tabToolsButton"
+            android:layout_width="40dp"
+            android:layout_height="48dp"
+            android:contentDescription="Red, grupos e identidad Burner de esta pestaña"
+            android:src="@drawable/ic_tab_tools"
+            android:scaleType="center" />
+
         <EditText
             android:id="@+id/omnibox"
             android:layout_width="0dp"
