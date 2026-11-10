@@ -38,6 +38,7 @@ object TabManager {
         AppContext.initialize(context)
         ExtensionManager.initialize(context)
         TranslatorManager.initialize(context)
+        TabRouting.initialize()
 
         if (!initialized) {
             initialized = true
@@ -128,7 +129,10 @@ object TabManager {
     fun createTab(
         url: String,
         isPrivate: Boolean = false,
-        activate: Boolean = true
+        activate: Boolean = true,
+        groupName: String? = null,
+        burnerId: String? = null,
+        networkProfile: TabNetworkProfile? = null
     ): BrowserTab {
         val initialUrl =
             if (isSafeAppNavigationUrl(url)) {
@@ -141,7 +145,10 @@ object TabManager {
         val tab = BrowserTab(
             url = initialUrl,
             title = if (isPrivate) "Pestaña privada" else "Nueva pestaña",
-            isPrivate = isPrivate
+            isPrivate = isPrivate || burnerId != null,
+            groupName = TabGroupRules.name(groupName),
+            burnerId = burnerId,
+            networkProfile = networkProfile
         )
 
         tabs += tab
@@ -150,6 +157,25 @@ object TabManager {
 
         if (activate) switchTo(tab.id)
         return tab
+    }
+
+    fun applyNetwork(id: String, profile: TabNetworkProfile?) {
+        val tab = tabs.firstOrNull { it.id == id } ?: return
+        tab.networkProfile = profile?.validated(); tab.networkState = "Preparando ruta"
+        tab.session?.let { closeSession(it) }; tab.session = null
+        BrowserMediaController.removeTab(tab.id)
+        if(tab.id == activeId) switchTo(tab.id,loadUrl=true,rememberPrevious=false)
+        persist()
+    }
+
+    fun moveToGroup(id: String, name: String?) {
+        tabs.firstOrNull { it.id == id }?.let {
+            it.groupName = TabGroupRules.name(name); listener?.onTabChanged(it); persist()
+        }
+    }
+
+    fun renameGroup(old: String, name: String?, privateMode: Boolean) {
+        tabs.filter { it.isPrivate == privateMode && it.groupName == old }.forEach { moveToGroup(it.id, name) }
     }
 
     fun openOrSelectTab(url: String) {
@@ -166,6 +192,10 @@ object TabManager {
             id = UUID.randomUUID().toString(),
             url = if (UrlSafety.isExtensionTabUrl(url)) url else "about:blank",
             title = "Extensión",
+            groupName = activeTab()?.groupName,
+            burnerId = activeTab()?.burnerId,
+            burnerSeed = activeTab()?.burnerSeed ?: java.security.SecureRandom().nextInt(),
+            networkProfile = activeTab()?.networkProfile,
             isPrivate = activeTab()?.isPrivate ?: false
         )
 
@@ -280,6 +310,12 @@ object TabManager {
         removed.session = null
         BrowserMediaController.removeTab(removed.id)
         tabs.remove(removed)
+        removed.burnerId?.let { id ->
+            if (tabs.none { it.burnerId == id }) {
+                GeckoRuntimeHolder.get(requireContext()).storageController.clearDataForSessionContext(id)
+                BurnerMailbox.close(id)
+            }
+        }
         if (!removed.isPrivate) TabPreviewStore.remove(requireContext(), removed.id)
 
         if (tabs.isEmpty()) {
@@ -319,17 +355,17 @@ object TabManager {
         tab.url = target
         tab.lastUsed = System.currentTimeMillis()
 
-        GeckoRuntimeHolder.speculativeConnect(
-            requireContext(),
-            target
-        )
+        if(tab.networkProfile == null && tab.burnerId == null) GeckoRuntimeHolder.speculativeConnect(requireContext(),target)
         ensureSession(tab).loadUri(target)
         listener?.onTabChanged(tab)
         persist()
     }
 
     fun reload() {
-        activeSession()?.reload()
+        val tab = activeTab() ?: return
+        if(tab.session?.let { TabRouting.synthetic(it) } == true) {
+            applyNetwork(tab.id,tab.networkProfile)
+        } else tab.session?.reload()
     }
 
     fun notifyMessage(message: String) {
@@ -540,8 +576,11 @@ object TabManager {
         // Intentional closes must never call recovery or open another window.
         session.contentDelegate = null
         session.navigationDelegate = null
+        session.setProgressDelegate(null)
+        session.setMediaSessionDelegate(null)
         session.setTranslationsSessionDelegate(null)
         TranslatorManager.forget(session)
+        TabRouting.forget(session)
         ExtensionManager.forgetSession(session)
         runCatching {
             session.setActive(false)
@@ -567,6 +606,7 @@ object TabManager {
         val context = requireContext()
         val settings = GeckoSessionSettings.Builder()
             .usePrivateMode(tab.isPrivate)
+            .contextId(tab.burnerId)
             .suspendMediaWhenInactive(!BrowserPrefs.backgroundMedia(context))
             .useTrackingProtection(BrowserPrefs.trackingProtection(context))
             .userAgentMode(
@@ -598,6 +638,7 @@ object TabManager {
 
         val context = requireContext()
         val session = newSession(tab)
+        if(!loadUrl && (tab.networkProfile != null || tab.burnerId != null)) TabRouting.reserve(session)
         session.open(GeckoRuntimeHolder.get(context))
         bindOpenedSession(session)
 
@@ -612,14 +653,13 @@ object TabManager {
                     null
                 }
 
-            if (restored != null) {
-                session.restoreState(restored)
-            } else {
-                GeckoRuntimeHolder.speculativeConnect(
-                    context,
-                    tab.url
-                )
-                session.loadUri(tab.url)
+            val target = tab.url
+            TabRouting.prepare(tab,session,restored != null) {
+                if(restored != null && tab.url == target) session.restoreState(restored) else session.loadUri(tab.url)
+            }
+        } else if(tab.networkProfile != null || tab.burnerId != null) {
+            mainHandler.post {
+                if(tab.session === session) TabRouting.prepare(tab,session) { session.loadUri(tab.url) }
             }
         }
         return session
@@ -635,6 +675,10 @@ object TabManager {
             url = uri.takeIf { isSafeAppNavigationUrl(it) } ?: "about:blank",
             title = if (opener.isPrivate) "Pestaña privada" else "Nueva pestaña",
             isPrivate = opener.isPrivate,
+            groupName = opener.groupName,
+            burnerId = opener.burnerId,
+            burnerSeed = opener.burnerSeed,
+            networkProfile = opener.networkProfile,
             desktopMode = opener.desktopMode,
             isLoading = true
         )
@@ -645,7 +689,14 @@ object TabManager {
         val session = newSession(tab)
         listener?.onTabCountChanged(tabs.size)
         switchTo(tab.id, loadUrl = false)
-        whenOpen(session) { bindOpenedSession(it) }
+        if(tab.networkProfile != null || tab.burnerId != null) TabRouting.reserve(session)
+        whenOpen(session) {
+            bindOpenedSession(it)
+            if(tab.networkProfile != null || tab.burnerId != null) {
+                val target = uri.ifBlank { "about:blank" }
+                TabRouting.prepare(tab,session) { session.loadUri(target) }
+            }
+        }
         return session
     }
 
@@ -685,6 +736,7 @@ object TabManager {
                 }
 
                 override fun onTitleChange(session: GeckoSession, title: String?) {
+                    if (TabRouting.synthetic(session)) return
                     if (!title.isNullOrBlank()) {
                         tab.title = title
                         BrowserMediaController.updateTabTitle(tab.id, title)
@@ -708,6 +760,10 @@ object TabManager {
                 ) {
                     if (ExtensionManager.isRemoteExtensionPackage(response.uri)) {
                         runCatching { response.body?.close() }
+                        if(tab.networkProfile?.type?.let { it != "direct" } == true) {
+                            listener?.onMessage("La instalación requiere una conexión independiente. Desactiva la ruta para instalarla.")
+                            return
+                        }
                         listener?.onMessage("Preparando instalación de extensión…")
                         ExtensionManager.installUrl(
                             requireContext(),
@@ -794,6 +850,8 @@ object TabManager {
                     session: GeckoSession,
                     request: GeckoSession.NavigationDelegate.LoadRequest
                 ): GeckoResult<AllowOrDeny>? {
+                    if (tab.session !== session || tabs.none { it.id == tab.id }) return GeckoResult.deny()
+                    if (TabRouting.preparing(session)) return if(TabRouting.bootstrap(session,request.uri)) GeckoResult.allow() else GeckoResult.deny()
                     // tel:, mailto:, intent://, market:… los abre otra app.
                     if (UrlSafety.isExternalAppUrl(request.uri)) {
                         ExternalApps.open(
@@ -805,6 +863,10 @@ object TabManager {
                         return GeckoResult.fromValue(AllowOrDeny.DENY)
                     }
 
+                    if (ExtensionManager.isRemoteExtensionPackage(request.uri) && tab.networkProfile?.type?.let { it != "direct" } == true) {
+                        listener?.onMessage("La instalación de extensiones usa una conexión independiente. Desactiva la ruta para instalarla.")
+                        return GeckoResult.deny()
+                    }
                     if (ExtensionManager.isRemoteExtensionPackage(request.uri)) {
                         listener?.onMessage("Abriendo instalador de extensión…")
                         ExtensionManager.installUrl(
@@ -862,6 +924,7 @@ object TabManager {
                     session: GeckoSession,
                     canGoBack: Boolean
                 ) {
+                    if(TabRouting.synthetic(session)) return
                     tab.canGoBack = canGoBack
                     listener?.onTabChanged(tab)
                 }
@@ -870,6 +933,7 @@ object TabManager {
                     session: GeckoSession,
                     canGoForward: Boolean
                 ) {
+                    if(TabRouting.synthetic(session)) return
                     tab.canGoForward = canGoForward
                     listener?.onTabChanged(tab)
                 }
@@ -883,7 +947,7 @@ object TabManager {
                     sessionState: GeckoSession.SessionState
                 ) {
                     if (
-                        !tab.isPrivate &&
+                        !TabRouting.synthetic(session) && !tab.isPrivate &&
                         !BrowserMediaController.isPlaying(tab.id)
                     ) {
                         tab.sessionState =
@@ -893,6 +957,8 @@ object TabManager {
                 }
 
                 override fun onPageStart(session: GeckoSession, url: String) {
+                    if (TabRouting.bootstrap(session,url) || TabRouting.preparing(session)) return
+                    TabRouting.targetStarted(session)
                     tab.navigationEpoch++
                     TranslatorManager.forget(session)
                     PagePrompts.onPageStart(session)
@@ -909,6 +975,7 @@ object TabManager {
                     session: GeckoSession,
                     progress: Int
                 ) {
+                    if(TabRouting.synthetic(session)) return
                     listener?.onProgress(
                         tab,
                         progress.coerceIn(0, 100),
@@ -917,6 +984,8 @@ object TabManager {
                 }
 
                 override fun onPageStop(session: GeckoSession, success: Boolean) {
+                    if(TabRouting.synthetic(session)) return
+                    if(success) TabRouting.targetFinished(session)
                     tab.isLoading = false
                     persist()
                     listener?.onProgress(tab, 100, false)
@@ -1072,6 +1141,8 @@ object TabManager {
                             },
                             title = o.optString("title", "Pestaña"),
                             isPrivate = false,
+                            groupName = TabGroupRules.name(o.optString("groupName")),
+                            networkProfile = if(o.has("network") && !o.isNull("network")) TabNetworkProfile.fromJson(o.optJSONObject("network")) ?: TabNetworkProfile(type="invalid") else null,
                             desktopMode = o.optBoolean("desktopMode", false),
                             lastUsed = o.optLong(
                                 "lastUsed",
@@ -1125,7 +1196,9 @@ object TabManager {
         val desktopMode: Boolean,
         val lastUsed: Long,
         val loading: Boolean,
-        val sessionState: String
+        val sessionState: String,
+        val groupName: String?,
+        val network: JSONObject?
     )
 
     /** Escritura inmediata: al ir a segundo plano o cerrar sesiones. */
@@ -1137,7 +1210,7 @@ object TabManager {
         val snapshot = tabs.filterNot { it.isPrivate }.map { tab ->
             TabSnapshot(
                 tab.id, tab.url, tab.title, tab.desktopMode,
-                tab.lastUsed, tab.isLoading, tab.sessionState ?: ""
+                tab.lastUsed, tab.isLoading, tab.sessionState ?: "", tab.groupName, tab.networkProfile?.json()
             )
         }
 
@@ -1153,6 +1226,8 @@ object TabManager {
                         put("lastUsed", tab.lastUsed)
                         put("loading", tab.loading)
                         put("sessionState", tab.sessionState)
+                        put("groupName", tab.groupName ?: "")
+                        put("network", tab.network)
                     }
                 )
             }

@@ -5,14 +5,18 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 ## Incluye
 - Omnibox: URL o búsqueda por palabras.
 - Google, DuckDuckGo, Bing, Brave Search y Startpage.
-- Multipestañas, sesiones LRU y pestañas privadas.
+- Multipestañas, sesiones LRU y pestañas privadas. Grupos con nombre, filtros y cierre del grupo visible.
+- Herramientas en la barra de direcciones: proxy SOCKS5/HTTP por pestaña, Orbot externo,
+  retardo de solicitudes y geolocalización simulada. DNS DoH configurable para todo el navegador.
+- Burner: contenedor privado aislado, correo temporal de mail.tm con buzón lateral y
+  limpieza al cerrar la última pestaña de la identidad. Variación experimental de Canvas/WebGL.
 - Modo escritorio: User-Agent + viewport.
 - Temas Midnight, OLED y claro.
 - Siete colores de acento, con cobalto por defecto.
 - Historial, descargas y compartir.
 - Limpieza de datos.
 - Administrador de extensiones.
-- PhantomShield 8.5.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
+- PhantomShield 8.6.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
   eliminación de anuncios de YouTube, contadores reales y controles por sitio. IA opcional
   (tu propia API) para los anuncios que las reglas no reconocen.
 - IA opcional en sitios elegidos o automática, con exclusiones, presupuestos y apagado rápido.
@@ -32,6 +36,8 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Importación de XPI firmado e instalación por URL.
 - Traducción dentro de la página con Gecko, sin recargar ni abrir otra pestaña, con descarga de idiomas confirmada por el usuario.
 - Mini reproductor (Picture-in-Picture) y reproducción en segundo plano.
+- Parcheador anti-bloqueo opcional, apagado inicialmente: modifica solo dos bibliotecas
+  conocidas cuando sus bytes coinciden con un hash verificado.
 
 ## Extensiones propias
 Los XPI instalados dinámicamente se validan por GeckoView y requieren firma de Mozilla.
@@ -59,6 +65,10 @@ Una extensión privada/sin firma puede integrarse dentro de
   notificación multimedia no muestra el título en la pantalla de bloqueo.
 - **Descargas**: todas pasan por Gecko (cookies de la sesión, modo privado), se guardan en la
   carpeta privada de la app con nombres saneados, y se borran si quedan incompletas.
+- **Rutas y Burner**: el componente interno `nexo_network` configura la pestaña antes de
+  cargar su destino y está habilitado en privado para aplicar esas rutas. No instala una VPN
+  ni incluye Tor. Buzón, IA y listas tienen conexiones propias; las simulaciones no cambian
+  la IP. El borrado remoto de mail.tm depende de la conexión y de que siga vivo el proceso.
 
 Los favicons de accesos personalizados se consultan sin cookies en el propio sitio
 (`/favicon.ico`), sin seguir redirecciones, y se guardan en una caché limitada.
@@ -99,4 +109,5 @@ Usa siempre la misma clave: un APK firmado con otra clave no se puede instalar e
 
 La integración se documenta en [PhantomShield](docs/PHANTOMSHIELD.md).
 El nuevo traductor se documenta en [traducción en la página](docs/TRADUCCION-EN-LINEA.md).
+Los alcances y límites están en [grupos, rutas y Burner](docs/PESTANAS-RED-BURNER.md).
 Para conservar los datos al actualizar, consulta [actualizaciones y firma](docs/ACTUALIZACIONES-Y-FIRMA.md).

@@ -12,7 +12,8 @@
 
   const DEFAULT_SETTINGS = Object.freeze({
     adblockEnabled: true,
-    privacyEnabled: false
+    privacyEnabled: false,
+    antiBlockEnabled: false
   });
 
   const settings = Object.assign({}, DEFAULT_SETTINGS);
@@ -300,6 +301,8 @@
 
       const url = details.url;
       const documentUrl = details.documentUrl || details.originUrl || details.initiator || null;
+      if(globalThis.PhantomAntiBlockPatcher && globalThis.PhantomAntiBlockPatcher.intercept(details,
+          () => settings.antiBlockEnabled && isEnabledForHost(topHost), () => {})) return {};
 
       if (details.type === 'main_frame' || details.type === 'sub_frame') {
         const strippedUrl = stripTrackingParams(url);

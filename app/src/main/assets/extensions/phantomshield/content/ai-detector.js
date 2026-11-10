@@ -86,9 +86,13 @@
     }
   }
 
+  function pipActive() {
+    const root=document.documentElement;
+    return Boolean(root && root.getAttribute && root.getAttribute('data-nexo-pip-active')==='true');
+  }
   function describe(element) {
-    if (element.closest('form, nav, header, [role="dialog"], [contenteditable="true"], #phantomshield-ad-bait') ||
-        element.querySelector('input, textarea, select, [contenteditable="true"]') ||
+    if (element.closest('form, nav, header, [role="dialog"], [contenteditable="true"], #phantomshield-ad-bait, #nexo-pip-mask, .nexo-pip-video, .nexo-pip-ancestor') ||
+        element.querySelector('input, textarea, select, video, audio, canvas, [contenteditable="true"]') ||
         element.contains(document.activeElement) || hidden.has(element)) return null;
     const rect = element.getBoundingClientRect();
     if (rect.width < 20 || rect.height < 10 || rect.width * rect.height > innerWidth * innerHeight * 0.7 ||
@@ -156,6 +160,7 @@
   }
 
   async function scan() {
+    if(pipActive()) { stopObserver();return {ok:false,error:'El análisis IA se pausa durante el mini reproductor.'}; }
     if (!enabled) return { ok: false, error: 'Activa IA y autoriza este sitio en los ajustes.' };
     if (document.visibilityState === 'hidden') {
       stopObserver();
@@ -199,7 +204,7 @@
     });
     try {
       const result = await browser.runtime.sendMessage({ type: 'AI_CLASSIFY', candidates: candidates });
-      if (!enabled || epoch !== revision || document.visibilityState === 'hidden') return { ok: false, error: 'El estado de protección cambió.' };
+      if (!enabled || epoch !== revision || document.visibilityState === 'hidden' || pipActive()) return { ok: false, error: 'El estado de protección cambió.' };
       if (!result || !result.ok) return result || { ok: false, error: 'IA no disponible.' };
       let count = 0;
       for (const candidate of candidates) {
@@ -230,7 +235,7 @@
   }
 
   function schedule() {
-    if (document.visibilityState === 'hidden') { stopObserver(); return; }
+    if (document.visibilityState === 'hidden' || pipActive()) { stopObserver(); return; }
     if (!enabled || busy || batches >= MAX_BATCHES) return;
     if (timer !== null) return;
     timer = setTimeout(function() { timer = null; scan(); }, 1200);
@@ -266,10 +271,11 @@
   }
 
   function updateVisibility() {
-    if (document.visibilityState === 'hidden') stopObserver();
+    if (document.visibilityState === 'hidden' || pipActive()) { if(pipActive())epoch++;stopObserver(); }
     else if (enabled && batches < MAX_BATCHES) { enqueue(document.body); startObserver(); schedule(); }
   }
   document.addEventListener('visibilitychange', updateVisibility);
+  document.addEventListener('nexo:pip-state',updateVisibility);
   // Native media protection can consume visibilitychange before content listeners.
   window.addEventListener('focus', updateVisibility);
   window.addEventListener('pageshow', updateVisibility);

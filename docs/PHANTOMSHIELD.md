@@ -172,3 +172,38 @@ Verificado con tests Node (motor, fondo, YouTube, IA) y con los scripts reales e
 (detección de candidatos, ocultación, poda de YouTube por las cuatro vías). Pendiente en un
 teléfono con GeckoView: `tabs.insertCSS`, el mundo MAIN en m.youtube.com con anuncios reales
 y una llamada real al proveedor de IA.
+
+### Protección de multimedia y parcheador en 8.6.0
+
+El respaldo del reproductor de YouTube exige clase de anuncio y señales de su
+interfaz antes de intervenir. Solo salta anuncios cortos de duración finita que
+ya se están reproduciendo; no pulsa reproducir ni modifica la velocidad elegida.
+Un cambio de fuente o duración con señales antiguas bloquea nuevos saltos hasta
+que desaparezca el estado de anuncio. El silencio temporal se restaura si sigue
+siendo el valor escrito por la extensión. Los botones de omitir deben estar
+visibles y habilitados, y cada botón se pulsa como máximo una vez por segundo.
+
+En PiP oculto solo se atienden eventos multimedia acotados, sin recorrer el DOM
+por cada mutación. La IA pausa sus escaneos durante PiP y descarta respuestas
+pendientes al entrar; tampoco propone ocultar contenedores con video, audio o
+Canvas. El presupuesto IA se comprueba antes de cada intento, incluido el
+reintento tras HTTP 400 y la prueba de conexión. Cambiar la configuración durante
+una consulta no aplica decisiones de la configuración anterior.
+Los botones de exclusión y apagado rápido vuelven a estar disponibles después de
+analizar o cambiar otro ajuste; el panel ya no los deja bloqueados al terminar.
+
+El panel añade un **parcheador anti-bloqueo experimental**, apagado por defecto.
+Intercepta scripts HTTPS con los nombres `blockadblock.min.js` y
+`fuckadblock.min.js`, sin parámetros, y solo reescribe los bytes exactos de las
+versiones MIT 3.2.1 cuyos SHA-256 están fijados en el código y en los fixtures de
+prueba. La modificación evita la rama de detección conservando su API de callbacks.
+No es un desofuscador universal ni ejecuta código creado por IA. Cualquier hash
+desconocido se entrega intacto. El límite es 128 KiB por respuesta y ocho filtros
+simultáneos; al superar el tamaño se transmite el original. Desactivarlo o excluir
+el sitio mientras llega la respuesta también conserva el original. No se desactiva
+SRI: una página que exige integridad del script podría rechazar los bytes cambiados.
+
+Las pruebas ejecutan los detectores originales y parcheados, verifican resultados
+y rechazo de bytes desconocidos. Las comprobaciones de PiP con medios simulados
+no sustituyen reproducir contenido real en un teléfono GeckoView. Las rutas,
+grupos y Burner se explican en [pestañas y red](PESTANAS-RED-BURNER.md).

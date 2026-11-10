@@ -320,6 +320,7 @@
       const validIds = new Set(payload.candidates.map(candidate => candidate.id));
       try {
         for (let attempt = 0; attempt < 2; attempt++) {
+          if(!this.budgetAllows(config,host,Date.now())) throw new AIError('budget');
           let recorded = false;
           this.requests.push({ host: host, time: Date.now() });
           await this.record({ requests: 1 });
@@ -389,12 +390,10 @@
           while (this.cache.size > 500) this.cache.delete(this.cache.keys().next().value);
           this.report('ok');
         }
-        await this.record({ analyzed: batch.length, detected: batch.filter(candidate => this.cache.get(signature(candidate)).hide).length,
-          cacheHits: batch.length - missing.length });
-        return {
-          ok: true,
-          decisions: batch.map(candidate => ({ id: candidate.id, hide: this.cache.get(signature(candidate)).hide }))
-        };
+        const decisions = batch.map(candidate => ({id:candidate.id, hide:this.cache.get(signature(candidate)).hide}));
+        await this.record({ analyzed:batch.length, detected:decisions.filter(decision => decision.hide).length, cacheHits:batch.length-missing.length });
+        if(epoch !== this.epoch) return {ok:false,code:'changed',error:MESSAGES.changed};
+        return {ok:true,decisions};
       } catch (error) {
         // Never surface provider bodies: they can echo keys or private configuration.
         const code = error instanceof AIError ? error.code : 'format';

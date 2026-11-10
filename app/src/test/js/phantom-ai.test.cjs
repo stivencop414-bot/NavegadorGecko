@@ -197,3 +197,8 @@ test('connection test works before enabling, uses invented samples and reports t
  assert.equal(failed.ok,false);assert.equal(failed.code,'auth');assert.equal(failed.http,401);assert.match(failed.error,/clave/);
  assert.equal((await bad.ai.probe({provider:'claude',model:''})).ok,false);assert.equal(bad.calls.length,1);
 });
+
+test('HTTP 400 fallback cannot spend past the hourly or minute budget',async()=>{
+ const h=harness({requestsPerMinute:1,requestsPerHour:1},()=>new Response('',{status:400}));
+ const result=await h.ai.classify('one.com',candidate(),false);assert.equal(result.code,'budget');assert.equal(h.calls.length,1);assert.equal((await h.ai.usage()).requests,1);
+});
