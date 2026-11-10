@@ -10,6 +10,7 @@ object BrowserPrefs {
     const val THEME_OLED = "oled"
     const val THEME_LIGHT = "light"
 
+    const val ACCENT_COBALT = "cobalt"
     const val ACCENT_VIOLET = "violet"
     const val ACCENT_CYAN = "cyan"
     const val ACCENT_LIME = "lime"
@@ -48,7 +49,7 @@ object BrowserPrefs {
     fun theme(c: Context) = p(c).getString("theme", THEME_SYSTEM) ?: THEME_SYSTEM
     fun setTheme(c: Context, v: String) = p(c).edit().putString("theme", v).apply()
 
-    fun accent(c: Context) = p(c).getString("accent", ACCENT_VIOLET) ?: ACCENT_VIOLET
+    fun accent(c: Context) = p(c).getString("accent", ACCENT_COBALT) ?: ACCENT_COBALT
     fun setAccent(c: Context, v: String) = p(c).edit().putString("accent", v).apply()
 
     fun searchEngine(c: Context) = p(c).getString("search", ENGINE_GOOGLE) ?: ENGINE_GOOGLE

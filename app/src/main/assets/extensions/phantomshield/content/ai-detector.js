@@ -168,7 +168,9 @@
     if (!enabled || observer || batches >= 3 || !document.body || document.visibilityState === 'hidden') return;
     observer = new MutationObserver(function(records) {
       for (const record of records) {
-        const roots = record.type === 'characterData' ? [record.target.parentElement] : record.addedNodes;
+        const target = record.target instanceof Element ? record.target : record.target.parentElement;
+        if (target) enqueue(target.closest(selector) || target);
+        const roots = record.type === 'characterData' || record.type === 'attributes' ? [] : record.addedNodes;
         if (roots.length > 40) {
           // A large insertion is one subtree of work, not hundreds of queued roots.
           enqueue(record.target);
@@ -180,7 +182,8 @@
       }
       schedule();
     });
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true,
+      attributeFilter: ['class', 'id', 'aria-label', 'data-ad-slot', 'data-ad-client', 'rel'] });
   }
 
   function updateVisibility() {

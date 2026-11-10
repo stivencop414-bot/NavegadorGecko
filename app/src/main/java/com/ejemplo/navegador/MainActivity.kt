@@ -629,8 +629,12 @@ class MainActivity :
     private fun applyTheme() {
         val p = ThemeManager.palette(this)
         root.setBackgroundColor(p.background)
-        topBar.background = ThemeManager.barBackground(this, lineOnTop = false)
-        navBar.background = ThemeManager.barBackground(this, lineOnTop = true)
+        findViewById<View>(R.id.browserDock).apply {
+            background = ThemeManager.rounded(this@MainActivity, p.surface, 28f, p.outline)
+            elevation = 8f * resources.displayMetrics.density
+        }
+        topBar.background = null
+        navBar.background = null
         ThemeManager.styleEdit(this, omnibox)
         ThemeManager.styleButton(this, miniPlayerButton, primary = true)
         miniPlayerButton.elevation = 6f * resources.displayMetrics.density
@@ -773,6 +777,7 @@ class MainActivity :
         val hideChrome = pip || fullScreenActive
         val tab = TabManager.activeTab()
 
+        findViewById<View>(R.id.browserDock).visibility = if (hideChrome) View.GONE else View.VISIBLE
         topBar.visibility = if (hideChrome) View.GONE else View.VISIBLE
         navBar.visibility = if (hideChrome) View.GONE else View.VISIBLE
         privateBanner.visibility =

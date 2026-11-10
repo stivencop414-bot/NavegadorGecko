@@ -37,6 +37,31 @@ Los observadores de YouTube y los escaneos de IA se suspenden en pestañas ocult
 no están habilitados. Los lotes IA son acotados y se libera su observador al agotar el cupo.
 No se modifican por ello las reglas de bloqueo ni se habilita IA automáticamente.
 
+### Diseño e IA en 8.3.3
+
+El HTML de referencia se adapta a vistas Android: paleta azul medianoche, acento cobalto
+(disponible junto a los colores anteriores), inicio alineado a la izquierda y dock inferior
+redondeado. Panel y opciones comparten superficies y colores; verde indica protección.
+Se conservan las fuentes locales para no descargar tipografías durante la navegación.
+
+En Privacidad e IA elige **Automático en todos los sitios públicos** para evitar registrar
+cada dominio, o conserva **Solo sitios elegidos**, con subdominios opcionales. Cambiar el
+alcance requiere renovar el consentimiento. Las exclusiones se aplican también a sus
+subdominios; el panel ofrece excluir el sitio actual y apagar la IA globalmente.
+Las configuraciones existentes conservan el modo de dominios exactos. IA sigue apagada
+por defecto y en navegación privada. El filtro de nombres locales es conservador y no
+resuelve DNS: para sitios sensibles usa exclusiones o el modo de sitios elegidos.
+
+El modelo revisa candidatos de anuncios con señales normalizadas; no recibe toda la
+página ni cada solicitud de red. Las reglas locales siguen actuando inmediatamente.
+Se comparten caché y presupuesto entre pestañas: por defecto 6 peticiones/minuto y 60/hora,
+configurables hasta 12/minuto y 120/hora, con 3 por sitio/minuto y 3 lotes por página.
+Los presupuestos duran mientras se ejecuta el background, no sustituyen límites de gasto
+del proveedor. Ante 429/5xx se aplica una pausa global y Retry-After acotado.
+Cambiar ajustes cancela solicitudes en curso y no reinicia presupuesto ni pausa.
+Los cambios de clases, atributos publicitarios y etiquetas en contenedores existentes
+vuelven a entrar en la cola acotada de análisis, sin recorrer toda la página por mutación.
+
 ## Uso y actualización
 
 `ExtensionManager` usa `ensureBuiltIn` con la URI
@@ -55,7 +80,7 @@ buscar una actualización en AMO. No se borra su almacenamiento al iniciar.
 Los bloqueos locales funcionan sin una API de IA. La IA, la variación de Canvas y el acceso
 a navegación privada mantienen las elecciones y permisos de la extensión; no se introduce
 ninguna clave API ni se aceptan permisos opcionales automáticamente. La IA viene desactivada
-y requiere consentimiento, configuración y autorización por sitio. El paquete incluye su
+y requiere consentimiento, configuración y alcance autorizado. El paquete incluye su
 propia página de privacidad y README.
 
 Las listas de filtros se descargan desde `easylist.to` y `raw.githubusercontent.com`.

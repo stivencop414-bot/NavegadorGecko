@@ -77,6 +77,7 @@ object ThemeManager {
 
     private fun accentColor(activity: Activity): Int =
         when (BrowserPrefs.accent(activity)) {
+            BrowserPrefs.ACCENT_COBALT -> Color.rgb(61, 107, 242)
             BrowserPrefs.ACCENT_CYAN -> Color.rgb(6, 182, 212)
             BrowserPrefs.ACCENT_LIME -> Color.rgb(34, 197, 94)
             BrowserPrefs.ACCENT_ORANGE -> Color.rgb(249, 115, 22)
@@ -91,41 +92,41 @@ object ThemeManager {
 
         return when (resolvedTheme(activity)) {
             BrowserPrefs.THEME_LIGHT -> BrowserPalette(
-                background = Color.rgb(246, 247, 251),
+                background = Color.rgb(242, 244, 249),
                 surface = Color.WHITE,
-                elevated = Color.rgb(237, 239, 245),
-                text = Color.rgb(15, 23, 42),
-                muted = Color.rgb(100, 116, 139),
+                elevated = Color.rgb(232, 236, 245),
+                text = Color.rgb(15, 22, 38),
+                muted = Color.rgb(91, 102, 128),
                 accent = accent,
                 onAccent = onAccent,
-                outline = Color.rgb(226, 230, 238),
+                outline = Color.rgb(216, 222, 234),
                 accentSoft = ColorUtils.setAlphaComponent(accent, 28),
                 isDark = false
             )
             BrowserPrefs.THEME_OLED -> BrowserPalette(
                 background = Color.BLACK,
-                surface = Color.rgb(16, 16, 20),
-                elevated = Color.rgb(30, 31, 38),
-                text = Color.rgb(248, 250, 252),
-                muted = Color.rgb(156, 163, 175),
+                surface = Color.rgb(12, 14, 20),
+                elevated = Color.rgb(22, 26, 36),
+                text = Color.rgb(237, 241, 250),
+                muted = Color.rgb(146, 153, 168),
                 accent = accent,
                 onAccent = onAccent,
-                outline = Color.rgb(38, 40, 48),
+                outline = Color.rgb(35, 40, 54),
                 accentSoft = ColorUtils.setAlphaComponent(accent, 52),
-                danger = Color.rgb(248, 113, 113),
+                danger = Color.rgb(255, 112, 136),
                 isDark = true
             )
             else -> BrowserPalette(
-                background = Color.rgb(9, 10, 15),
-                surface = Color.rgb(18, 20, 29),
-                elevated = Color.rgb(25, 28, 40),
-                text = Color.rgb(243, 244, 246),
-                muted = Color.rgb(156, 163, 175),
+                background = Color.rgb(12, 18, 34),
+                surface = Color.rgb(19, 27, 48),
+                elevated = Color.rgb(27, 37, 64),
+                text = Color.rgb(237, 241, 250),
+                muted = Color.rgb(150, 162, 190),
                 accent = accent,
                 onAccent = onAccent,
-                outline = Color.rgb(35, 38, 51),
+                outline = Color.rgb(39, 50, 79),
                 accentSoft = ColorUtils.setAlphaComponent(accent, 52),
-                danger = Color.rgb(248, 113, 113),
+                danger = Color.rgb(255, 112, 136),
                 isDark = true
             )
         }
@@ -134,6 +135,7 @@ object ThemeManager {
     fun themeRes(activity: Activity): Int {
         val dark = isDark(activity)
         return when (BrowserPrefs.accent(activity)) {
+            BrowserPrefs.ACCENT_COBALT -> if (dark) R.style.Theme_Nexo_Dark_Cobalt else R.style.Theme_Nexo_Light_Cobalt
             BrowserPrefs.ACCENT_CYAN -> if (dark) R.style.Theme_Nexo_Dark_Cyan else R.style.Theme_Nexo_Light_Cyan
             BrowserPrefs.ACCENT_LIME -> if (dark) R.style.Theme_Nexo_Dark_Lime else R.style.Theme_Nexo_Light_Lime
             BrowserPrefs.ACCENT_ORANGE -> if (dark) R.style.Theme_Nexo_Dark_Orange else R.style.Theme_Nexo_Light_Orange

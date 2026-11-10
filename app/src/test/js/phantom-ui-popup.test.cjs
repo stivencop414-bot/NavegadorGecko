@@ -15,7 +15,9 @@ async function harness(initial={},tab={id:10,url:'https://www.example.com/page',
   const browser={runtime:{getManifest:()=>({version:'8.3.2'}),openOptionsPage:async()=>{},sendMessage:async m=>m.type==='GET_STATS'?({ok:true,blockedCount:1234,tabBlocked:7,siteDisabled:state.disabled_domains.some(x=>m.host===x||m.host.endsWith('.'+x)),settings:state}):({ok:true})},
     tabs:{query:async()=>[tab],reload:async()=>{},sendMessage:async()=>{scans++;return {ok:true,analyzed:2,hidden:1}}},
     storage:{onChanged:{addListener(fn){storageListeners.push(fn)}},local:{get:async defaults=>({...defaults,...state}),set:async values=>{if(fail)throw Error('storage failed');state={...state,...values};writes++;const changes=Object.fromEntries(Object.keys(values).map(key=>[key,{}]));storageListeners.forEach(fn=>fn(changes,'local'))}}}};
-  vm.runInNewContext(source,{URL,browser,document:{getElementById:id=>elements.get(id),addEventListener:(name,fn)=>documentEvents[name]=fn},window:{addEventListener(){}}});
+  const context=vm.createContext({URL,browser,document:{getElementById:id=>elements.get(id),addEventListener:(name,fn)=>documentEvents[name]=fn},window:{addEventListener(){}}});
+  vm.runInContext(fs.readFileSync(path.join(root,'../data/ai-config.js'),'utf8'),context);
+  vm.runInContext(source,context);
   await documentEvents.DOMContentLoaded();
   return {field:id=>elements.get(id),get state(){return state},get scans(){return scans},get writes(){return writes},fail(){fail=true},async fire(id,name='click'){await elements.get(id).listeners[name]();await new Promise(setImmediate)}};
 }
@@ -44,4 +46,18 @@ test('AI scanning is disabled in private tabs and for paused protection',async()
 });
 test('failed setting change restores actual state instead of showing false success',async()=>{
   const h=await harness();h.fail();h.field('adblock-toggle').checked=false;await h.fire('adblock-toggle','change');assert.equal(h.state.adblockEnabled,true);assert.equal(h.field('adblock-toggle').checked,true);assert.match(h.field('message').textContent,/No se pudo guardar/);
+});
+
+test('automatic scope enables scans without adding the site; quick off preserves local protection',async()=>{
+  const h=await harness({aiConfig:{enabled:true,consent:true,scope:'public',allowedHosts:[]}});
+  assert.equal(h.field('scan-ai').disabled,false);assert.equal(h.field('disable-ai').hidden,false);
+  await h.fire('disable-ai');assert.equal(h.state.aiConfig.enabled,false);assert.equal(h.state.aiConfig.consent,false);
+  assert.equal(h.state.adblockEnabled,true);assert.equal(h.field('scan-ai').disabled,true);
+});
+
+test('exclude current site from AI preserves other sites and local filtering',async()=>{
+  const h=await harness({aiConfig:{enabled:true,consent:true,scope:'public',endpoint:'https://api.example/v1',model:'small'}});
+  await h.fire('exclude-ai');assert.equal(h.state.aiConfig.enabled,true);
+  assert.deepEqual(Array.from(h.state.aiConfig.excludedHosts),['www.example.com']);
+  assert.equal(h.field('scan-ai').disabled,true);assert.equal(h.state.adblockEnabled,true);
 });

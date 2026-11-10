@@ -18,6 +18,15 @@
     field('ai-off-note').hidden = enabled;
     if (!enabled) field('delete-confirm').hidden = true;
   }
+  function scopeState() {
+    field('selected-sites').hidden = field('scope').value === 'public';
+  }
+  for (const id of ['scope', 'include-subdomains']) {
+    field(id).addEventListener('change', function() {
+      field('consent').checked = false;
+      scopeState();
+    });
+  }
   function keyState() {
     field('api-key').value = '';
     field('api-key').type = 'password';
@@ -100,6 +109,12 @@
       field('endpoint').value = saved.endpoint;
       field('model').value = saved.model;
       field('hosts').value = saved.allowedHosts.join('\n');
+      field('scope').value = saved.scope;
+      field('include-subdomains').checked = saved.includeSubdomains;
+      field('excluded-hosts').value = saved.excludedHosts.join('\n');
+      field('requests-minute').value = saved.requestsPerMinute;
+      field('requests-hour').value = saved.requestsPerHour;
+      scopeState();
       field('timeout').value = saved.timeoutMs;
       renderDomains();
       timeoutPresets();
@@ -162,6 +177,11 @@
         endpoint: field('endpoint').value, model: field('model').value,
         apiKey: newKey || saved.apiKey,
         allowedHosts: field('hosts').value.split(/\s+/).filter(Boolean),
+        scope: field('scope').value,
+        includeSubdomains: field('include-subdomains').checked,
+        excludedHosts: field('excluded-hosts').value.split(/\s+/).filter(Boolean),
+        requestsPerMinute: Number(field('requests-minute').value),
+        requestsPerHour: Number(field('requests-hour').value),
         timeoutMs: Number(field('timeout').value), jsonMode: field('json-mode').checked
       }) : Object.assign({}, saved, { enabled: false, consent: false });
       if (enabled && saved.apiKey && config.endpoint !== saved.endpoint && !newKey) {
@@ -175,7 +195,7 @@
       await browser.storage.local.set({ aiConfig: config });
       saved = config;
       keyState(); disclosure();
-      status(enabled ? 'Configuración guardada. La IA solo se aplicará en los sitios autorizados.' : 'Guardado: solo bloqueo local, sin llamadas a IA.');
+      status(enabled ? 'Configuración guardada. IA ' + (config.scope === 'public' ? 'automática en sitios públicos' : 'en sitios elegidos') + ', con exclusiones y presupuesto.' : 'Guardado: solo bloqueo local, sin llamadas a IA.');
     } catch (error) { status(error.message || 'No se pudo guardar la configuración.', true); }
     finally { busy = false; controls(); }
   });

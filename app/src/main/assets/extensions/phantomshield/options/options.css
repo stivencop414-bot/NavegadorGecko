@@ -14,16 +14,16 @@
 }
 :root {
   color-scheme:dark light;
-  --canvas:#090a0f;
-  --input:#06070b;
-  --surface:#12141d;
-  --raised:#191c28;
-  --text:#f3f4f6;
-  --muted:#9ca3af;
-  --line:rgba(255,255,255,.08);
-  --green:#10b981;
-  --green-text:#6ee7b7;
-  --on-green:#06070b;
+  --canvas:#0c1222;
+  --input:#0c1222;
+  --surface:#131b30;
+  --raised:#1b2540;
+  --text:#edf1fa;
+  --muted:#96a2be;
+  --line:#27324f;
+  --green:#2fd6a0;
+  --green-text:#7eeac6;
+  --on-green:#0c1222;
   --danger:#f87171;
   font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
   background:var(--canvas);
@@ -31,15 +31,15 @@
 }
 @media(prefers-color-scheme:light) {
   :root {
-    --canvas:#f4f7f8;
-    --input:#f7fafb;
+    --canvas:#f2f4f9;
+    --input:#f2f4f9;
     --surface:#fff;
-    --raised:#eaf0f1;
-    --text:#14252b;
-    --muted:#53656b;
-    --line:rgba(15,35,40,.12);
-    --green:#047857;
-    --green-text:#047857;
+    --raised:#e8ecf5;
+    --text:#0f1626;
+    --muted:#5b6680;
+    --line:#d8deea;
+    --green:#0a7656;
+    --green-text:#0a7656;
     --on-green:#fff;
     --danger:#b42340;
   }
@@ -625,7 +625,7 @@ button:disabled {
   height:20px;
   left:2px;
   bottom:2px;
-  background:#9ca3af;
+  background:#96a2be;
   border-radius:50%;
   box-shadow:0 2px 4px rgba(0,0,0,.4);
   transition:transform .15s;
@@ -683,3 +683,15 @@ input:disabled+.slider {
     backdrop-filter:none;
   }
 }
+
+/* Nexo prototype: midnight surfaces, cobalt actions, green protection states. */
+:root { --action:#3d6bf2; --action-text:#a9c0ff; }
+select { font:inherit; width:100%; min-height:48px; padding:12px; color:var(--text); background:var(--raised); border:1px solid var(--line); border-radius:14px; }
+.check-row { display:flex; align-items:center; gap:10px; min-height:44px; }
+.check-row input { width:20px; height:20px; accent-color:var(--action); }
+.budget-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+#save { background:var(--action); color:#fff; }
+#scope:focus-visible { outline:2px solid var(--action-text); outline-offset:3px; }
+.trust-pills .violet { background:#3d6bf21c; border-color:#3d6bf24a; color:var(--action-text); }
+@media(prefers-color-scheme:light) { :root { --action-text:#3156c4; } }
+@media(max-width:340px) { .budget-grid { grid-template-columns:1fr; } }
