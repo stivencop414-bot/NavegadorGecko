@@ -34,7 +34,7 @@
         <label for="new-domain">Sitios autorizados para IA</label><div class="domains-input"><div id="domain-chips" class="domain-chips"></div><div class="add-domain-row"><input type="text" id="new-domain" placeholder="Añadir dominio (ej. diario.com)…" autocomplete="off" autocapitalize="none" spellcheck="false"><button type="button" id="add-domain">+ Añadir</button></div></div><textarea id="hosts" hidden aria-label="Dominios autorizados" spellcheck="false"></textarea><p class="hint">Los subdominios solo se incluyen si activas la opción anterior.</p></div>
         <label for="detail">Qué analiza la IA</label>
         <select id="detail"><option value="rich">Análisis detallado (recomendado)</option><option value="basic">Solo señales básicas</option></select>
-        <p class="hint" id="detail-hint">El análisis detallado añade, por cada posible anuncio, un fragmento corto de su texto visible (máx. 160 caracteres), los dominios a los que enlaza y nombres de clase. Detecta muchos más anuncios; las señales básicas casi nunca bastan para decidir.</p>
+        <p class="hint" id="detail-hint">El análisis detallado añade, por cada posible anuncio, un fragmento corto de su texto visible (máx. 160 caracteres), los dominios a los que enlaza y nombres de clase. Aporta contexto para distinguir anuncios de contenido editorial; con señales básicas puede haber más resultados inciertos.</p>
         <label for="excluded-hosts">Excluir de IA</label><textarea id="excluded-hosts" rows="3" placeholder="banco.com&#10;trabajo.com" spellcheck="false" autocapitalize="none"></textarea>
         <p class="hint">Un dominio por línea. También excluye sus subdominios; el bloqueo local continúa.</p>
         <div class="budget-grid"><div><label for="requests-minute">Peticiones por minuto</label><input type="number" id="requests-minute" min="1" max="12" value="6"></div><div><label for="requests-hour">Peticiones por hora</label><input type="number" id="requests-hour" min="1" max="120" value="60"></div></div>
@@ -44,6 +44,18 @@
       </section>
       <section class="form-card consent-card"><div class="consent-row"><div><h3>Consentimiento de envío de señales</h3><p>Acepto el alcance elegido (incluidos todos los sitios públicos si selecciono automático) y enviar al proveedor configurado el dominio y señales de posibles anuncios: tipo de elemento, etiquetas publicitarias normalizadas y tamaño aproximado. <span id="consent-detail">Con análisis detallado también: un fragmento corto del texto visible del posible anuncio, los dominios de sus enlaces y nombres de clase.</span></p></div><label class="switch"><input type="checkbox" id="consent" aria-label="Acepto enviar al proveedor configurado el dominio y señales de posibles anuncios"><span class="slider"></span></label></div><div class="guarantees"><h4>Nunca se envía</h4><div><span>✕ Sin la página completa ni HTML</span><span>✕ Sin cookies ni formularios</span><span>✕ Sin URLs completas</span><span>✓ Máx. 12 candidatos × 4 lotes</span></div></div></section>
     </fieldset>
+    <section class="form-card memory-card" aria-labelledby="memory-title">
+      <div class="card-heading"><h2 id="memory-title">Memoria de anuncios</h2><span class="code-tag cyan">En este dispositivo</span></div>
+      <label class="check-row"><input type="checkbox" id="remember-decisions"> Recordar decisiones de IA para futuras visitas</label>
+      <p class="hint">Guarda para activar. Recuerda coincidencias precisas con confianza ≥95% y varias señales. Hasta 1000 huellas, 50 por dominio y 30 días; nunca texto, HTML ni navegación privada. La memoria solo se aplica con IA y protección activas en un sitio autorizado.</p>
+      <div class="memory-toolbar"><input type="search" id="memory-search" placeholder="Buscar dominio aprendido…" aria-label="Buscar dominio aprendido"><button type="button" id="memory-refresh" class="secondary">Actualizar</button></div>
+      <p id="memory-summary" class="hint" role="status">Consultando memoria…</p>
+      <div id="memory-domains" class="memory-domains"></div>
+      <p class="hint">Olvidar restaura lo ocultado por el detector en las páginas abiertas de ese dominio. En futuras visitas puede aprender de nuevo. «Excluir de IA» impide nuevos análisis y puede revertirse en la lista de exclusiones.</p>
+      <button type="button" id="memory-clear" class="secondary">Borrar toda la memoria</button>
+      <div id="memory-confirm" class="confirmation" hidden><p>¿Borrar todas las huellas aprendidas? Tus ajustes y contadores se conservan.</p><button type="button" id="memory-confirm-clear" class="danger-button">Borrar memoria</button><button type="button" id="memory-cancel" class="secondary">Cancelar</button></div>
+      <p id="memory-status" role="status" aria-live="polite"></p>
+    </section>
     <div class="action-bar"><button type="submit" id="save" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg><span>Guardar configuración</span></button><button type="button" id="local-only" class="secondary" disabled>Rechazar IA y usar solo bloqueo local</button><p id="status" role="status" aria-live="polite"></p></div>
   </form>
-</main><script src="../data/ai-config.js"></script><script src="options.js"></script></body></html>
+</main><script src="../data/ai-config.js"></script><script src="options.js"></script><script src="memory.js"></script></body></html>

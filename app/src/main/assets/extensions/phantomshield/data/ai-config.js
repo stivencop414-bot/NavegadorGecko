@@ -7,7 +7,7 @@
     requestsPerMinute: 6, requestsPerHour: 60, timeoutMs: 12000, jsonMode: false,
     // 'basic': solo tipo, señales y tamaño. 'rich': añade un fragmento corto del
     // texto visible del candidato, dominios de sus enlaces y nombres de clase.
-    detail: 'basic'
+    detail: 'basic', rememberDecisions: false
   });
 
   const providers = Object.freeze({
@@ -27,6 +27,7 @@
     config.enabled = input.enabled === true;
     config.consent = input.consent === true;
     config.jsonMode = input.jsonMode === true;
+    config.rememberDecisions = input.rememberDecisions === true;
     config.scope = input.scope === undefined ? 'selected' : input.scope;
     if (!['selected', 'public'].includes(config.scope)) throw new Error('Alcance IA inválido.');
     config.includeSubdomains = input.includeSubdomains === true;

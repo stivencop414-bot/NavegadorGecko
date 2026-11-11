@@ -29,7 +29,7 @@
   function aiTabState(tabId) {
     let state = tabAi.get(tabId);
     if (!state) {
-      state = { active: false, scans: 0, analyzed: 0, hidden: 0, code: '', at: 0 };
+      state = { active: false, scans: 0, analyzed: 0, hidden: 0, local: 0, model: 0, memory: 0, cache: 0, code: '', at: 0 };
       tabAi.set(tabId, state);
     }
     return state;
@@ -418,15 +418,17 @@
             !/^https?:\/\//.test(sender.url || '') || host !== hostOf(tab.url) || !isEnabledForHost(host)) {
           return { ok: false, error: 'Página no autorizada para IA.' };
         }
+        const before=aiTabState(tab.id);
         const result = await globalThis.PhantomAI.classify(host, message.candidates, tab.incognito);
+        if(tabAi.get(tab.id)!==before)return {ok:false,code:'changed',error:'La página cambió.'};
         if (!isEnabledForHost(host)) return { ok: false, error: 'Protección desactivada.' };
         const ai = aiTabState(tab.id);
         ai.active = true;
         ai.at = Date.now();
         if (result && result.ok) {
           ai.scans++;
-          ai.analyzed += Array.isArray(message.candidates) ? Math.min(message.candidates.length, 12) : 0;
-          ai.code = 'ok';
+          ai.analyzed += result.decisions.filter(d=>!d.deferred).length;
+          ai.code = result.warning ? result.warning.code : 'ok';
         } else {
           ai.code = (result && result.code) || 'error';
         }
@@ -437,18 +439,27 @@
     if (message.type === 'AI_PAGE') {
       // El detector informa de lo que realmente ocultó y de pasadas sin candidatos.
       const tab = sender && sender.tab;
-      if (!tab || sender.id !== browser.runtime.id || sender.frameId !== 0) return Promise.resolve({ ok: false });
+      if (!tab || sender.id !== browser.runtime.id || sender.frameId !== 0 || tab.incognito || !/^https?:/.test(sender.url||'') || hostOf(sender.url)!==hostOf(tab.url)) return Promise.resolve({ ok: false });
       const ai = aiTabState(tab.id);
       ai.active = true;
       ai.at = Date.now();
+      if(message.restored===true) {
+        tabBlocked.set(tab.id,Math.max(0,(tabBlocked.get(tab.id)||0)-ai.hidden));
+        ai.hidden=0;ai.local=0;ai.model=0;ai.memory=0;ai.cache=0;queueBadgeUpdate(tab.id);
+      }
+      ai.memoryError=message.memoryError===true;
+      if(message.sources)for(const key of ['local','model','memory','cache']) {
+        const value=message.sources[key];if(Number.isInteger(value) && value>=0 && value<=12)ai[key]+=value;
+      }
       if (Number.isSafeInteger(message.hidden) && message.hidden > 0) {
         const count = Math.min(message.hidden, 12);
         ai.hidden += count;
         // Lo que oculta la IA también cuenta en el escudo de la barra.
         for (let i = 0; i < count; i++) countTabBlock(tab.id);
       }
-      if (message.idle === true && !ai.code) ai.code = 'idle';
+      if (message.idle === true && (!ai.code || ai.code === 'ready')) ai.code = 'idle';
       if (typeof message.code === 'string' && /^[a-z]{2,16}$/.test(message.code)) ai.code = message.code;
+      try{Promise.resolve(browser.runtime.sendMessage({type:'AI_ACTIVITY_UPDATED',tabId:tab.id})).catch(()=>{});}catch(_){}
       return Promise.resolve({ ok: true });
     }
 
@@ -488,6 +499,33 @@
         const injected = message.inline === true ? false : await injectCosmetic(sender, selectors);
         return { ok: true, enabled: true, generic: generic, injected: injected, selectors: injected ? [] : selectors };
       });
+    }
+
+    if (['AI_MEMORY_LIST','AI_MEMORY_FORGET','AI_MEMORY_CLEAR','AI_MEMORY_EXCLUDE'].includes(message.type)) {
+      const ownPages=['options/options.html','popup/popup.html'].map(path=>browser.runtime.getURL(path));
+      if(!sender || sender.id!==browser.runtime.id || !ownPages.includes(sender.url) || (sender.tab && sender.tab.incognito))
+        return Promise.resolve({ok:false,error:'Abre la memoria desde los ajustes normales de PhantomShield.'});
+      return (async()=>{
+        try {
+          await ready;
+          const memory=globalThis.PhantomAIMemory;
+          if(message.type!=='AI_MEMORY_LIST') {
+            const host=message.type==='AI_MEMORY_CLEAR'?null:message.host;
+            if(host!==null && !PhantomAIConfig.publicHost(host))return {ok:false,error:'Dominio inválido.'};
+            globalThis.PhantomAI.invalidate();
+            if(message.type==='AI_MEMORY_EXCLUDE') {
+              const config=await globalThis.PhantomAI.config();
+              config.excludedHosts=[...new Set([...config.excludedHosts,host])];
+              await browser.storage.local.set({aiConfig:PhantomAIConfig.validate(config)});
+            }
+            await memory.forget(host);
+            await browser.storage.local.set({aiMemoryRevision:{nonce:Date.now()+Math.random(),host}});
+            // The event targets open documents; the forgotten host is not retained as a cursor.
+            await browser.storage.local.set({aiMemoryRevision:null});
+          }
+          return {ok:true,...await memory.summary()};
+        }catch(_){return {ok:false,error:'No se pudo acceder a la memoria. Inténtalo de nuevo.'};}
+      })();
     }
 
     if (message.type === 'AI_TEST') {

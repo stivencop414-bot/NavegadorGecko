@@ -81,10 +81,9 @@
    */
   function definitiveAd(candidate) {
     const has = function(signal) { return candidate.signals.includes(signal); };
-    return has('ad-attribute') || has('sponsored-link') ||
-      (has('third-party-frame') && has('ad-size')) ||
-      (has('advertisement-label') && (has('ad-class') || has('ad-size') || has('third-party-frame'))) ||
-      (has('ad-class') && has('ad-size') && (has('external-links') || has('third-party-frame')));
+    return has('ad-attribute') ||
+      (has('sponsored-link') && (has('sponsored-label') || has('advertisement-label'))) ||
+      (has('advertisement-label') && (has('ad-class') || has('ad-size') || has('third-party-frame')));
   }
 
   function sanitize(candidates, rich) {
@@ -134,6 +133,7 @@
     }
     if (!parsed || !Array.isArray(parsed.decisions)) throw new AIError('format');
     const decisions = new Map();
+    decisions.confidence = new Map();
     // Entradas desconocidas o mal formadas se ignoran: equivalen a "no ocultar".
     for (const decision of parsed.decisions.slice(0, 64)) {
       if (!decision || !validIds.has(decision.id) || decisions.has(decision.id) ||
@@ -141,7 +141,9 @@
       const confidence = Number(decision.confidence);
       if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) continue;
       decisions.set(decision.id, decision.isAd && confidence >= HIDE_CONFIDENCE);
+      decisions.confidence.set(decision.id, confidence);
     }
+    if(validIds.size && !decisions.size) throw new AIError('format');
     return decisions;
   }
 
@@ -189,7 +191,7 @@
 
   class AIClassifier {
     constructor() {
-      this.stats = { requests: 0, inputTokens: 0, outputTokens: 0, usageMissing: 0, analyzed: 0, detected: 0, cacheHits: 0, local: 0 };
+      this.stats = { requests: 0, inputTokens: 0, outputTokens: 0, usageMissing: 0, analyzed: 0, detected: 0, cacheHits: 0, local: 0, memoryHits: 0, remote: 0 };
       this.statsReady = browser.storage.local.get({ aiStats: {} }).then(stored => {
         for (const key of Object.keys(this.stats)) {
           const value = stored.aiStats && stored.aiStats[key];
@@ -383,36 +385,67 @@
         }
         const batch = sanitize(candidates, config.detail === 'rich');
         if (!batch.length) return { ok: true, decisions: [] };
-        const signature = function(candidate) {
-          return host + ':' + JSON.stringify([candidate.tag, candidate.signals, candidate.width, candidate.height,
-            candidate.text || '', candidate.links || [], candidate.frame || '', candidate.cls || []]);
-        };
-        const now = Date.now();
-        for (const [key, cached] of this.cache) {
-          if (now - cached.time > 10 * 60 * 1000) this.cache.delete(key);
+        // Local identity disambiguates cards in basic mode; it never enters the API payload.
+        const identities = new Map(candidates.map(c=>[c.id,typeof c.localKey==='string'?c.localKey.slice(0,1024):'']));
+        const signature = candidate => host + ':' + JSON.stringify([candidate.tag,candidate.signals,candidate.width,candidate.height,
+          candidate.text||'',candidate.links||[],candidate.frame||'',candidate.cls||[],identities.get(candidate.id)]);
+        const memory=globalThis.PhantomAIMemory;
+        const keys=new Map(); let memoryError=false;
+        if(config.rememberDecisions && memory) {
+          try {
+            for(const c of batch) if(identities.get(c.id) && c.signals.length>=2)
+              keys.set(c.id,await memory.key(signature(c)));
+          } catch(_) { memoryError=true; }
         }
-        const local = new Set(batch.filter(definitiveAd).map(candidate => candidate.id));
-        const missing = Array.from(new Map(batch.filter(candidate => !local.has(candidate.id) && !this.cache.has(signature(candidate)))
-          .map(candidate => [signature(candidate), candidate])).values());
-        if (missing.length) {
-          if (this.active) return { ok: false, code: 'busy', error: MESSAGES.busy };
-          if (!this.budgetAllows(config, host, now)) return { ok: false, code: 'budget', error: MESSAGES.budget };
-          contacted = true;
-          const decisions = await this.request(config, host, { host: host, candidates: missing }, epoch);
-          if (epoch !== this.epoch) return { ok: false, code: 'changed', error: MESSAGES.changed };
-          for (const candidate of missing) {
-            // Missing decisions preserve content; never execute model output.
-            this.cache.set(signature(candidate), { hide: decisions.get(candidate.id) === true, time: Date.now() });
+        let remembered=new Set();
+        try { if(keys.size)remembered=await memory.find(host,[...keys.values()]); } catch(_){memoryError=true;}
+        if(epoch!==this.epoch)throw new AIError('changed');
+        const now=Date.now();
+        for(const [key,cached] of this.cache)if(now-cached.time>600000)this.cache.delete(key);
+        const decisions=new Map(), missing=new Map();
+        for(const c of batch) {
+          if(definitiveAd(c))decisions.set(c.id,{id:c.id,hide:true,source:'local'});
+          else if(remembered.has(keys.get(c.id)))decisions.set(c.id,{id:c.id,hide:true,source:'memory'});
+          else if(this.cache.has(signature(c)))decisions.set(c.id,{id:c.id,hide:this.cache.get(signature(c)).hide,source:'cache'});
+          else missing.set(signature(c),c);
+        }
+        let warning=null;
+        if(missing.size) {
+          try {
+            if(this.active)throw new AIError('busy');
+            if(!this.budgetAllows(config,host,now))throw new AIError('budget');
+            contacted=true;
+            const remote=await this.request(config,host,{host,candidates:[...missing.values()]},epoch);
+            if(epoch!==this.epoch)throw new AIError('changed');
+            const learned=[];
+            for(const [sig,c] of missing) if(remote.has(c.id)) {
+              this.cache.set(sig,{hide:remote.get(c.id)===true,time:Date.now()});
+              if(remote.get(c.id) && remote.confidence.get(c.id)>=0.95 && keys.has(c.id)) learned.push(keys.get(c.id));
+            }
+            if(learned.length)try{await memory.remember(host,learned,()=>epoch===this.epoch)}catch(_){memoryError=true;}
+            for(const c of batch)if(!decisions.has(c.id) && this.cache.has(signature(c)))
+              decisions.set(c.id,{id:c.id,hide:this.cache.get(signature(c)).hide,source:'model'});
+            while(this.cache.size>500)this.cache.delete(this.cache.keys().next().value);
+            this.report('ok');
+          } catch(error) {
+            const code=error instanceof AIError?error.code:'format';
+            if(code==='changed')throw error;
+            warning={code,error:MESSAGES[code]||MESSAGES.format};
+            if(contacted)this.report(code,error.status);
           }
-          while (this.cache.size > 500) this.cache.delete(this.cache.keys().next().value);
-          this.report('ok');
         }
-        const decisions = batch.map(candidate => ({ id: candidate.id,
-          hide: local.has(candidate.id) || this.cache.get(signature(candidate)).hide }));
-        await this.record({ analyzed: batch.length, detected: decisions.filter(decision => decision.hide).length,
-          cacheHits: batch.length - missing.length - local.size, local: local.size });
-        if(epoch !== this.epoch) return {ok:false,code:'changed',error:MESSAGES.changed};
-        return {ok:true,decisions};
+        if(epoch!==this.epoch)throw new AIError('changed');
+        const resolved=[...decisions.values()];
+        const hits=resolved.filter(d=>d.source==='memory');
+        try { if(hits.length)await memory.touch(host,hits.map(d=>keys.get(d.id)),()=>epoch===this.epoch); }catch(_){memoryError=true;}
+        if(epoch!==this.epoch)throw new AIError('changed');
+        if(!resolved.length && warning)return {ok:false,...warning};
+        await this.record({analyzed:resolved.length,detected:resolved.filter(d=>d.hide).length,
+          local:resolved.filter(d=>d.source==='local').length,cacheHits:resolved.filter(d=>d.source==='cache').length,
+          memoryHits:hits.length,remote:resolved.filter(d=>d.source==='model').length});
+        if(epoch!==this.epoch)throw new AIError('changed');
+        return {ok:true,decisions:batch.map(c=>decisions.get(c.id)||{id:c.id,hide:false,deferred:true}),
+          warning,memoryError};
       } catch (error) {
         // Never surface provider bodies: they can echo keys or private configuration.
         const code = error instanceof AIError ? error.code : 'format';
