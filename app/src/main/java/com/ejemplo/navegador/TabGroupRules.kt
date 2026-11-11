@@ -11,7 +11,7 @@ object TabGroupRules {
         0xFF0EA5E9.toInt(), // celeste
         0xFFEF4444.toInt(), // rojo
         0xFF8B5CF6.toInt(), // violeta
-        0xFF14B8A6.toInt()  // turquesa
+        0xFFF97316.toInt()  // naranja
     )
 
     fun name(value: String?): String? = value?.filterNot { it.isISOControl() }?.trim()

@@ -15,9 +15,14 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Temas Midnight, OLED y claro.
 - Siete colores de acento, con cobalto por defecto.
 - Historial con búsqueda en vivo (título, dominio o dirección, sin distinguir tildes), descargas y compartir.
+- Deslizar hacia abajo para recargar (solo cuando la página está arriba y el gesto no lo usa la propia web).
+- Recuperación automática del video al volver a la app: si el reproductor quedó congelado, se repara sin recargar.
+- Ajustes de navegador: tamaño del texto, zoom en todas las páginas, versión de escritorio por defecto,
+  reproducción automática, JavaScript, protección estricta, aviso de sitios peligrosos, bloqueo de huellas
+  digitales, limpieza de parámetros de rastreo, borrar datos al salir y depuración remota.
 - Limpieza de datos.
 - Administrador de extensiones.
-- PhantomShield 8.8.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
+- PhantomShield 8.9.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
   eliminación de anuncios de YouTube, contadores reales y controles por sitio. IA opcional
   (tu propia API) para los anuncios que las reglas no reconocen; las señales inequívocas se
   resuelven en el dispositivo sin gastar tokens y el panel muestra lo revisado/ocultado en cada página.
@@ -89,6 +94,13 @@ node --test app/src/test/js/*.test.cjs  # regresiones de extensiones y mini repr
 gradle :app:testDebugUnitTest   # tests unitarios (reglas de URL, buscador, nombres de archivo)
 gradle :app:assembleDebug
 gradle :app:lintRelease
+```
+
+Capturas de la interfaz nativa (Robolectric, opcional y fuera de la CI):
+
+```bash
+gradle :app:testDebugUnitTest --tests 'com.ejemplo.navegador.ScreenshotTest' \
+  -PnexoScreenshots -PnexoShotsDir=/ruta/capturas
 ```
 
 Las librerías nativas van comprimidas en el APK (como Firefox para Android): el APK

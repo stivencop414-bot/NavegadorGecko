@@ -13,8 +13,8 @@ android {
         applicationId = "com.ejemplo.navegador"
         minSdk = 26
         targetSdk = 34
-        versionCode = 38
-        versionName = "0.20.0"
+        versionCode = 39
+        versionName = "0.21.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -55,6 +55,18 @@ android {
         viewBinding = false
         buildConfig = false
     }
+    // Capturas locales de la interfaz nativa (./gradlew ... -PnexoScreenshots).
+    if (project.hasProperty("nexoScreenshots")) {
+        testOptions.unitTests.isIncludeAndroidResources = true
+        testOptions.unitTests.all { test ->
+            project.findProperty("nexoShotsDir")?.let { test.systemProperty("nexo.shots", it.toString()) }
+            project.findProperty("robolectricDir")?.let {
+                test.systemProperty("robolectric.offline", "true")
+                test.systemProperty("robolectric.dependency.dir", it.toString())
+            }
+        }
+        sourceSets.getByName("test").kotlin.srcDir("src/screenshotTest/java")
+    }
 }
 androidComponents {
     // AGP 9 does not create this release test component by default. The release
@@ -78,4 +90,7 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.1.0")
 
     testImplementation("junit:junit:4.13.2")
+    if (project.hasProperty("nexoScreenshots")) {
+        testImplementation("org.robolectric:robolectric:4.16")
+    }
 }

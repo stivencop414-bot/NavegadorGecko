@@ -103,6 +103,35 @@ object BrowserPrefs {
     fun cookieMode(c: Context) = p(c).getString("cookie_mode", COOKIES_BALANCED) ?: COOKIES_BALANCED
     fun setCookieMode(c: Context, v: String) = p(c).edit().putString("cookie_mode", v).apply()
 
+    const val AUTOPLAY_ALLOW = "allow"
+    const val AUTOPLAY_BLOCK_AUDIBLE = "block_audible"
+    const val AUTOPLAY_BLOCK_ALL = "block_all"
+
+    fun textScale(c: Context) = p(c).getInt("text_scale", 100).coerceIn(80, 200)
+    fun setTextScale(c: Context, v: Int) = p(c).edit().putInt("text_scale", v.coerceIn(80, 200)).apply()
+    fun forceZoom(c: Context) = p(c).getBoolean("force_zoom", false)
+    fun setForceZoom(c: Context, v: Boolean) = p(c).edit().putBoolean("force_zoom", v).apply()
+    fun desktopDefault(c: Context) = p(c).getBoolean("desktop_default", false)
+    fun setDesktopDefault(c: Context, v: Boolean) = p(c).edit().putBoolean("desktop_default", v).apply()
+    fun autoplay(c: Context) = p(c).getString("autoplay", AUTOPLAY_ALLOW) ?: AUTOPLAY_ALLOW
+    fun setAutoplay(c: Context, v: String) = p(c).edit().putString("autoplay", v).apply()
+    fun javascript(c: Context) = p(c).getBoolean("javascript", true)
+    fun setJavascript(c: Context, v: Boolean) = p(c).edit().putBoolean("javascript", v).apply()
+    fun strictTracking(c: Context) = p(c).getBoolean("strict_tracking", false)
+    fun setStrictTracking(c: Context, v: Boolean) = p(c).edit().putBoolean("strict_tracking", v).apply()
+    fun safeBrowsing(c: Context) = p(c).getBoolean("safe_browsing", true)
+    fun setSafeBrowsing(c: Context, v: Boolean) = p(c).edit().putBoolean("safe_browsing", v).apply()
+    fun fingerprinting(c: Context) = p(c).getBoolean("fingerprinting", true)
+    fun setFingerprinting(c: Context, v: Boolean) = p(c).edit().putBoolean("fingerprinting", v).apply()
+    fun queryStripping(c: Context) = p(c).getBoolean("query_stripping", true)
+    fun setQueryStripping(c: Context, v: Boolean) = p(c).edit().putBoolean("query_stripping", v).apply()
+    fun clearOnExit(c: Context) = p(c).getBoolean("clear_on_exit", false)
+    fun setClearOnExit(c: Context, v: Boolean) = p(c).edit().putBoolean("clear_on_exit", v).apply()
+    fun remoteDebugging(c: Context) = p(c).getBoolean("remote_debugging", false)
+    fun setRemoteDebugging(c: Context, v: Boolean) = p(c).edit().putBoolean("remote_debugging", v).apply()
+
+    fun pullToRefresh(c: Context) = p(c).getBoolean("pull_to_refresh", true)
+    fun setPullToRefresh(c: Context, v: Boolean) = p(c).edit().putBoolean("pull_to_refresh", v).apply()
     fun smartPip(c: Context) = p(c).getBoolean("smart_pip", true)
     fun setSmartPip(c: Context, v: Boolean) = p(c).edit().putBoolean("smart_pip", v).apply()
 

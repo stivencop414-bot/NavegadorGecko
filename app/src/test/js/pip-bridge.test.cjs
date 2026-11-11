@@ -70,6 +70,7 @@ function harness() {
     enterNative: resume => onMessage({ type: 'pip_mode', active: true, resume, isolate: false }),
     leave: () => onMessage({ type: 'pip_mode', active: false }),
     command: command => onMessage({ type: 'pip_command', command }),
+    lifecycle: state => onMessage({ type: 'lifecycle', state }),
     changed: () => document.dispatchEvent(new Event('loadedmetadata')) };
 }
 
@@ -185,4 +186,31 @@ test('visibilitychange is hidden while media keeps playing in the background', (
 test('the bridge does not observe every DOM mutation of the page', () => {
   const h = harness(); h.tick(5000);
   assert.equal(h.observed(), 0);
+});
+
+test('returning to the app repairs a frozen playing video without reloading', () => {
+  const h = harness(), v = h.video(); let seeks = 0, time = 50;
+  Object.defineProperty(v, 'currentTime', { get: () => time, set: value => { seeks++; time = value; } });
+  h.lifecycle('background'); h.lifecycle('foreground');
+  h.tick(500); h.tick(1400);
+  assert.ok(seeks >= 1, 'a frozen decoder is rebuilt with a seek');
+  h.tick(1400);
+  assert.ok(v.plays >= 1, 'a second stall restarts playback');
+});
+test('a video that keeps advancing after returning is left alone', () => {
+  const h = harness(), v = h.video(); let seeks = 0, time = 50;
+  Object.defineProperty(v, 'currentTime', { get: () => time, set: value => { seeks++; time = value; } });
+  h.lifecycle('background'); h.lifecycle('foreground');
+  h.tick(500); time += 1; h.tick(1400);
+  assert.equal(seeks, 0); assert.equal(v.plays, 0);
+});
+test('a video paused by the system while leaving resumes when background media is allowed', () => {
+  const h = harness(), v = h.video();
+  h.lifecycle('background'); v.paused = true; h.lifecycle('foreground'); h.tick(500);
+  assert.equal(v.paused, false); assert.equal(v.plays, 1);
+});
+test('a video the user had paused before leaving stays paused', () => {
+  const h = harness(), v = h.video(); v.paused = true; h.tick(5000);
+  h.lifecycle('background'); h.lifecycle('foreground'); h.tick(3000);
+  assert.equal(v.paused, true); assert.equal(v.plays, 0);
 });

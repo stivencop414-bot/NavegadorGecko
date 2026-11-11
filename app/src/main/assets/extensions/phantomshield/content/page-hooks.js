@@ -311,9 +311,11 @@
   let quarantinedVideo = null;
   const skippedButtons = new WeakMap();
   function pipVisible() { return readBooleanAttribute('data-nexo-pip-active', false); }
+  let currentPlayer = null;
   function handleYouTubePlayer() {
     if (!isYouTube) return;
     const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    currentPlayer = player;
     const video = (player && player.querySelector('video')) || document.querySelector('video.html5-main-video');
     const skipButton = document.querySelector(SKIP_SELECTOR);
     const adUI = document.querySelector('.ytp-ad-preview-text, .ytp-ad-player-overlay, .ytp-ad-player-overlay-layout');
@@ -348,7 +350,16 @@
   function installYouTubePlayerGuard() {
     if (!isYouTube) return;
     let observer = null;
+    let observedPlayer = null;
     let timer = null;
+    // Solo el reproductor: observar todo el documento costaba fluidez en cada cambio de clase.
+    const observePlayer = function(player) {
+      if (observer) observer.disconnect();
+      observer = new MutationObserver(schedule);
+      observedPlayer = player || null;
+      if (player) observer.observe(player, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+      else observer.observe(document.documentElement, { childList: true, subtree: true });
+    };
     const schedule = function() {
       if (!state.adblockEnabled) return;
       if (document.visibilityState === 'hidden') {
@@ -364,7 +375,10 @@
       timer = setTimeout(function() {
         timer = null;
         if (document.visibilityState === 'hidden') updateYouTubeMonitoring();
-        else if (state.adblockEnabled) handleYouTubePlayer();
+        else if (state.adblockEnabled) {
+          handleYouTubePlayer();
+          if (observer && currentPlayer && currentPlayer !== observedPlayer) observePlayer(currentPlayer);
+        }
       }, 250);
     };
     updateYouTubeMonitoring = function() {
@@ -381,10 +395,7 @@
         return;
       }
       if (!observer) {
-        observer = new MutationObserver(schedule);
-        observer.observe(document.documentElement, {
-          childList: true, subtree: true, attributes: true, attributeFilter: ['class']
-        });
+        observePlayer(document.querySelector('#movie_player, .html5-video-player'));
         document.addEventListener('timeupdate', schedule, true);
       }
       schedule();

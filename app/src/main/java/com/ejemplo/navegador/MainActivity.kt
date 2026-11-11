@@ -57,7 +57,7 @@ class MainActivity :
     private lateinit var privateBanner: TextView
     private lateinit var miniPlayerButton: Button
     private lateinit var root: View
-    private lateinit var browserFrame: android.widget.FrameLayout
+    private lateinit var browserFrame: PullRefreshLayout
     private lateinit var startPage: StartPageView
     private var startPageKey = ""
 
@@ -88,6 +88,7 @@ class MainActivity :
     // Un sitio puso un elemento (normalmente el video) en pantalla completa.
     private var fullScreenActive = false
     private var pendingPipEntry: Runnable? = null
+    private var wasBackgrounded = false
 
     // Selector de archivos y permisos pedidos por páginas web.
     private var filePickerCallback: ((List<Uri>) -> Unit)? = null
@@ -195,6 +196,12 @@ class MainActivity :
         browserFrame.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             if (pipCrop != null && isInPictureInPictureMode) applyPipCrop()
         }
+        browserFrame.enabledForPage = {
+            BrowserPrefs.pullToRefresh(this) && !isInPictureInPictureMode && !fullScreenActive &&
+                startPage.visibility != View.VISIBLE && findBar.visibility != View.VISIBLE &&
+                TabManager.activeTab()?.let { !BrowserPrefs.isNexoHome(it.url) } == true
+        }
+        browserFrame.onRefresh = { TabManager.reload() }
         omnibox = findViewById(R.id.omnibox)
         progress = findViewById(R.id.pageProgress)
         tabButton = findViewById(R.id.tabButton)
@@ -647,6 +654,7 @@ class MainActivity :
         }
         topBar.background = null
         navBar.background = null
+        browserFrame.applyPalette(p.surface, p.accent, p.outline)
         ThemeManager.styleEdit(this, omnibox)
         ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),TabManager.activeTab()?.let { it.burnerId != null || it.networkProfile != null } == true)
         styleMiniPlayerChip()
@@ -835,7 +843,10 @@ class MainActivity :
         if (tab.id != TabManager.activeTab()?.id) return
         progress.progress = progressValue
         progress.visibility = if (loading && !immersive) View.VISIBLE else View.GONE
-        if (!loading) scheduleIdlePreview(tab)
+        if (!loading) {
+            browserFrame.finishRefresh()
+            scheduleIdlePreview(tab)
+        }
     }
 
     override fun onTabCountChanged(count: Int) {
@@ -946,7 +957,13 @@ class MainActivity :
         activityStopped = false
         val tab = TabManager.activeTab()
         if (tab != null && tab.session == null) TabManager.switchTo(tab.id)
-        else TabManager.resumeActive()
+        else {
+            TabManager.resumeActive()
+            // La superficie de video se recrea al volver: el puente repara el reproductor si quedó congelado.
+            val session = tab?.session
+            if (session != null && wasBackgrounded) geckoView.postDelayed({ ExtensionManager.sendLifecycle(session, true) }, 250L)
+        }
+        wasBackgrounded = false
     }
 
     override fun onResume() {
@@ -989,6 +1006,8 @@ class MainActivity :
         if (!isInPictureInPictureMode) {
             val tab = TabManager.activeTab()
 
+            ExtensionManager.sendLifecycle(tab?.session, false)
+            wasBackgrounded = true
             TabManager.prepareForBackground()
 
             /*
@@ -1392,6 +1411,8 @@ class MainActivity :
             activityStopped -> {
                 // El usuario cerró la ventana mini (la X o arrastrándola).
                 pipPlaybackWasActive = false
+                ExtensionManager.sendLifecycle(tab?.session, false)
+                wasBackgrounded = true
                 if (tab != null && BrowserPrefs.backgroundMedia(this) &&
                     BrowserMediaController.isPlaybackActive(tab.id)
                 ) {
@@ -1413,6 +1434,9 @@ class MainActivity :
                 // Volvió a pantalla completa desde la ventana mini.
                 pipPlaybackWasActive = false
                 TabManager.resumeActive()
+                tab?.session?.let { session ->
+                    geckoView.postDelayed({ ExtensionManager.sendLifecycle(session, true) }, 350L)
+                }
             }
         }
 
@@ -1517,6 +1541,9 @@ class MainActivity :
             attachedSession = null
         }
         // No cerrar las GeckoSession al recrear o destruir solo la Activity.
+        if (isFinishing && !isChangingConfigurations && BrowserPrefs.clearOnExit(this)) {
+            BrowsingData.clear(this)
+        }
         super.onDestroy()
     }
 

@@ -88,13 +88,13 @@
         android:textStyle="bold"
         android:visibility="gone" />
 
-    <FrameLayout
+    <com.ejemplo.navegador.PullRefreshLayout
         android:id="@+id/browserFrame"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <org.mozilla.geckoview.GeckoView
+        <com.ejemplo.navegador.NexoGeckoView
             android:id="@+id/geckoView"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
@@ -117,22 +117,25 @@
             android:textAllCaps="false"
             android:textSize="14sp"
             android:visibility="gone" />
-    </FrameLayout>
+    </com.ejemplo.navegador.PullRefreshLayout>
 
     <!-- Floating dock adapted from the supplied prototype; web content keeps its full viewport. -->
     <LinearLayout
         android:id="@+id/browserDock"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginStart="10dp"
-        android:layout_marginEnd="10dp"
-        android:layout_marginBottom="10dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginBottom="8dp"
         android:orientation="vertical"
-        android:padding="4dp">
+        android:paddingStart="4dp"
+        android:paddingTop="3dp"
+        android:paddingEnd="4dp"
+        android:paddingBottom="2dp">
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
-        android:layout_height="58dp"
+        android:layout_height="50dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="12dp"
@@ -148,8 +151,8 @@
 
         <ImageButton
             android:id="@+id/tabToolsButton"
-            android:layout_width="40dp"
-            android:layout_height="48dp"
+            android:layout_width="38dp"
+            android:layout_height="44dp"
             android:contentDescription="Red, grupos e identidad Burner de esta pestaña"
             android:src="@drawable/ic_tab_tools"
             android:scaleType="center" />
@@ -157,7 +160,7 @@
         <EditText
             android:id="@+id/omnibox"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="40dp"
             android:layout_weight="1"
             android:drawablePadding="10dp"
             android:gravity="center_vertical"
@@ -170,12 +173,12 @@
             android:paddingEnd="14dp"
             android:selectAllOnFocus="true"
             android:singleLine="true"
-            android:textSize="15sp" />
+            android:textSize="14sp" />
 
         <Button
             android:id="@+id/clearOmniboxButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
             android:layout_marginStart="2dp"
             android:contentDescription="@string/clear_address"
             android:gravity="center"
@@ -189,8 +192,8 @@
 
         <Button
             android:id="@+id/tabButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
             android:layout_marginStart="4dp"
             android:contentDescription="@string/open_tabs"
             android:gravity="center"
@@ -204,22 +207,22 @@
 
         <Button
             android:id="@+id/menuButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
             android:contentDescription="@string/open_menu"
             android:drawableTop="@drawable/ic_nav_menu"
             android:gravity="center"
             android:minWidth="0dp"
             android:minHeight="0dp"
-            android:paddingTop="10dp"
-            android:paddingBottom="10dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
             android:text="" />
     </LinearLayout>
 
     <LinearLayout
         android:id="@+id/navBar"
         android:layout_width="match_parent"
-        android:layout_height="50dp"
+        android:layout_height="46dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="8dp"
@@ -228,7 +231,7 @@
         <ImageButton
             android:id="@+id/backButton"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="44dp"
             android:layout_weight="1"
             android:contentDescription="Atrás"
             android:scaleType="center"
@@ -237,7 +240,7 @@
         <ImageButton
             android:id="@+id/forwardButton"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="44dp"
             android:layout_weight="1"
             android:contentDescription="Adelante"
             android:scaleType="center"
@@ -246,7 +249,7 @@
         <ImageButton
             android:id="@+id/homeButton"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="44dp"
             android:layout_weight="1"
             android:contentDescription="Inicio"
             android:scaleType="center"
@@ -255,7 +258,7 @@
         <ImageButton
             android:id="@+id/reloadButton"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="44dp"
             android:layout_weight="1"
             android:contentDescription="Recargar"
             android:scaleType="center"
@@ -264,7 +267,7 @@
         <ImageButton
             android:id="@+id/newTabButton"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="44dp"
             android:layout_weight="1"
             android:contentDescription="Nueva pestaña"
             android:scaleType="center"

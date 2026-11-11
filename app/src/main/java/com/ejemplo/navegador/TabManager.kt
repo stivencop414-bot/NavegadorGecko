@@ -146,6 +146,7 @@ object TabManager {
             url = initialUrl,
             title = if (isPrivate) "Pestaña privada" else "Nueva pestaña",
             isPrivate = isPrivate || burnerId != null,
+            desktopMode = appContext?.let { BrowserPrefs.desktopDefault(it) } == true,
             groupName = TabGroupRules.name(groupName),
             burnerId = burnerId,
             networkProfile = networkProfile

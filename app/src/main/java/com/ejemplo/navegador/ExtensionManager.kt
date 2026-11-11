@@ -1031,6 +1031,14 @@ object ExtensionManager {
         })
     }
 
+    /** Avisa al puente de que la app pasa a segundo plano o vuelve (recuperación de video). */
+    fun sendLifecycle(session: GeckoSession?, foreground: Boolean) {
+        postToTopLevel(session, JSONObject().apply {
+            put("type", "lifecycle")
+            put("state", if (foreground) "foreground" else "background")
+        })
+    }
+
     fun hasMediaBridge(session: GeckoSession?): Boolean =
         session != null && ports.any { it.sender.session === session && it.sender.isTopLevel() }
 

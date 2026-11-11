@@ -2,6 +2,8 @@
 (function() {
   'use strict';
   if (window.top !== window) return;
+  // YouTube ya se limpia con reglas locales; analizar su DOM solo restaría fluidez al video.
+  if (/(^|\.)(youtube\.com|youtube-nocookie\.com)$/.test(location.hostname)) return;
   let enabled = false;
   let pausedForMemory = false;
   let rich = false;
@@ -14,7 +16,14 @@
   let seen = new WeakMap();
   const pendingRoots = new Set();
   const MAX_NODES_PER_SCAN = 400;
-  const MAX_BATCHES = 4;
+  // Lotes por carga según la sensibilidad; desplazarse por un feed concede más hasta el tope.
+  const BATCHES = { conservative: 3, balanced: 4, aggressive: 8 };
+  let MAX_BATCHES = BATCHES.balanced;
+  let batchCap = MAX_BATCHES * 3;
+  let totalBatches = 0;
+  let grantScrollY = 0;
+  // Servidores de clic y redes publicitarias reconocibles en la propia dirección del enlace.
+  const AD_LINK = /(?:\/aclk\?|\/pagead\/|[?&]adurl=|[?&]utm_medium=(?:cpc|ppc|paid|display|banner)\b|doubleclick\.net|googleadservices\.com|googlesyndication\.com|adservice\.google\.|taboola\.com|outbrain\.com|adnxs\.com|criteo\.(?:com|net)|amazon-adsystem\.com|adform\.net|smartadserver\.com|pubmatic\.com|rubiconproject\.com|revcontent\.com|mgid\.com|zemanta\.com)/i;
   let walker = null;
   const hidden = new Map();
   const marker = /(?:^|[\s_-])(?:ads?|advert(?:isement|ising)?|sponsor(?:ed)?|promo(?:ted|tion)?|publicidad|banner)(?:$|[\s_-])/i;
@@ -130,10 +139,20 @@
 
     const anchors = element.tagName === 'A' ? [element] : Array.from(element.querySelectorAll('a[href]')).slice(0, 8);
     const linkHosts = [];
+    const externalUrls = [];
+    let adLink = false;
     for (const anchor of anchors) {
-      const host = hostOfUrl(anchor.getAttribute('href') || '');
+      const href = anchor.getAttribute('href') || '';
+      const host = hostOfUrl(href);
       if (host && !linkHosts.includes(host)) linkHosts.push(host);
+      if (!host) continue;
+      if (AD_LINK.test(href)) adLink = true;
+      if (siteOf(host) !== pageSite && externalUrls.length < 4) {
+        try { externalUrls.push(new URL(href, location.href).href.slice(0, 512)); } catch (error) {}
+      }
     }
+    if (frameElement && frameHost && AD_LINK.test(frameElement.getAttribute('src') || '')) adLink = true;
+    if (adLink) signals.push('ad-link');
     const external = linkHosts.filter(host => siteOf(host) !== pageSite);
     // Banner típico: pocos enlaces, todos hacia otro sitio, con imagen y tamaño de anuncio.
     // La señal no revela los dominios: en modo básico solo sale el nombre de la señal.
@@ -142,10 +161,22 @@
       signals.push('external-links');
       if (adSized && !signals.includes('ad-size')) signals.push('ad-size');
     }
+    // Tarjeta tipo banner (pocos enlaces, todos externos, con imagen): se comprueba
+    // en el dispositivo contra las listas de redes publicitarias.
+    if (!signals.length && external.length && external.length === linkHosts.length && anchors.length <= 2 &&
+        rect.width >= 120 && rect.height >= 50 && element.querySelector('img, picture')) {
+      signals.push('external-links');
+    }
     if (!signals.length) return null;
     if (/^(?:fixed|sticky)$/.test(getComputedStyle(element).position)) signals.push('fixed-position');
 
     const descriptor = { tag: element.tagName, signals: signals, width: rect.width, height: rect.height };
+    // Solo para la comprobación local contra las listas; el fondo no las envía al proveedor.
+    const localUrls = externalUrls.slice();
+    if (thirdPartyFrame && localUrls.length < 4) {
+      try { localUrls.push(new URL(frameElement.getAttribute('src'), location.href).href.slice(0, 512)); } catch (error) {}
+    }
+    if (localUrls.length) descriptor.localUrls = localUrls;
     // Local-only identity: separates similar cards, never forwarded to the provider.
     descriptor.localKey = JSON.stringify([
       String(element.id||'').slice(0,80),String(element.className||'').slice(0,240),
@@ -209,6 +240,7 @@
     }
     busy = true;
     batches++;
+    totalBatches++;
     const revision = epoch;
     const changed = new Set();
     const watcher = new MutationObserver(function(records) {
@@ -228,6 +260,7 @@
           // Un límite temporal no gasta el lote de esta página: se reintenta luego.
           retries++;
           batches--;
+          totalBatches--;
           for (const element of elements.values()) enqueue(element);
           retryLater(code === 'busy' ? 4000 : 30000);
         }
@@ -254,7 +287,7 @@
         }
       }
       if(deferred.length && retries<MAX_RETRIES && (!result.warning || ['busy','budget','rate','timeout','network','server'].includes(result.warning.code))) {
-        retries++;batches--;for(const element of deferred)enqueue(element);
+        retries++;batches--;totalBatches--;for(const element of deferred)enqueue(element);
         retryLater(result.warning && result.warning.code==='busy'?4000:30000);
       }
       report({ hidden: count, sources, code: result.warning ? result.warning.code : 'ok', memoryError: result.memoryError === true });
@@ -322,8 +355,22 @@
     }, 2600);
   }
 
+  /** Un video grande reproduciéndose: el análisis espera para no restarle fluidez. */
+  function videoBusy() {
+    try {
+      const area = innerWidth * innerHeight;
+      for (const video of document.getElementsByTagName('video')) {
+        if (video.paused || video.ended) continue;
+        const rect = video.getBoundingClientRect();
+        if (rect.width * rect.height >= area * 0.2) return true;
+      }
+    } catch (error) {}
+    return false;
+  }
+
   function schedule() {
     if (document.visibilityState === 'hidden' || pipActive()) { stopObserver(); return; }
+    if (videoBusy()) { stopObserver(); return; }
     if (!enabled || busy || batches >= MAX_BATCHES) return;
     if (timer !== null) return;
     timer = setTimeout(function() { timer = null; scan(); }, 1200);
@@ -360,13 +407,28 @@
 
   function updateVisibility() {
     if (document.visibilityState === 'hidden' || pipActive()) { if(pipActive())epoch++;stopObserver(); }
-    else if (enabled && batches < MAX_BATCHES) { enqueue(document.body); startObserver(); schedule(); }
+    else if (enabled && batches < MAX_BATCHES && !videoBusy()) { enqueue(document.body); startObserver(); schedule(); }
   }
+  // Reanudar al pausar o terminar el video; detenerse al empezar.
+  document.addEventListener('playing', function() { if (observer && videoBusy()) stopObserver(); }, true);
+  document.addEventListener('pause', updateVisibility, true);
+  document.addEventListener('ended', updateVisibility, true);
   document.addEventListener('visibilitychange', updateVisibility);
   document.addEventListener('nexo:pip-state',updateVisibility);
   // Native media protection can consume visibilitychange before content listeners.
   window.addEventListener('focus', updateVisibility);
   window.addEventListener('pageshow', updateVisibility);
+
+  // Feeds infinitos: tras recorrer dos pantallas más, dos lotes adicionales hasta el tope.
+  window.addEventListener('scroll', function() {
+    if (!enabled || batches < MAX_BATCHES || totalBatches >= batchCap) return;
+    if (Math.abs((window.scrollY || 0) - grantScrollY) < innerHeight * 2) return;
+    grantScrollY = window.scrollY || 0;
+    batches = Math.max(0, MAX_BATCHES - 2);
+    if (document.body) enqueue(document.body);
+    startObserver();
+    schedule();
+  }, { passive: true });
 
 
   async function refresh(pause = false) {
@@ -381,6 +443,8 @@
     restore();
     report({restored:true,code:pause?'reset':'ready'});
     batches = 0;
+    totalBatches = 0;
+    grantScrollY = window.scrollY || 0;
     seen = new WeakMap();
     pendingRoots.clear();
     walker = null;
@@ -392,6 +456,8 @@
       if (revision !== epoch) return;
       enabled = Boolean(state && state.enabled && state.aiEnabled);
       rich = Boolean(enabled && state.aiDetail === 'rich');
+      MAX_BATCHES = BATCHES[state && state.aiSensitivity] || BATCHES.balanced;
+      batchCap = MAX_BATCHES * 3;
       if (enabled && document.body) {
         pendingRoots.add(document.body);
         startObserver();
@@ -402,6 +468,8 @@
   browser.runtime.onMessage.addListener(function(message, sender) {
     if (sender.id === browser.runtime.id && message && message.type === 'AI_SCAN') {
       if (!walker && document.body) pendingRoots.add(document.body);
+      // Pedido a mano: un lote más aunque se haya agotado el automático (hasta el tope).
+      if (batches >= MAX_BATCHES && totalBatches < batchCap) batches = MAX_BATCHES - 1;
       return (async()=>{if(pausedForMemory)await refresh();return scan();})();
     }
     return undefined;

@@ -99,8 +99,7 @@ object BurnerMailbox {
         body.addView(NexoUi.section(activity, "Mensajes"))
         val items = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         body.addView(items)
-        body.addView(NexoUi.note(activity, "El buzón vive solo en memoria y no se incluye en copias ni restauraciones. " +
-            "Al destruir la identidad se solicita borrar la cuenta en mail.tm."))
+        body.addView(NexoUi.note(activity, "El buzón se borra al cerrar la identidad."))
 
         fun openMessage(account: MailTmClient.Account, message: MailTmClient.Message, row: View) {
             row.isEnabled = false

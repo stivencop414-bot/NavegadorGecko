@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "PhantomShield",
   "short_name": "PhantomShield",
-  "version": "8.8.0",
+  "version": "8.9.0",
   "description": "Bloquea anuncios y rastreadores con reglas locales (red, ocultación y YouTube). Clasificación IA opcional para lo que las reglas no detectan, con consentimiento, exclusiones y presupuesto.",
   "icons": {
     "48": "icons/icon-48.png",

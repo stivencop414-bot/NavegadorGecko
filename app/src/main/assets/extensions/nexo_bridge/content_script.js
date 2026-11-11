@@ -408,6 +408,114 @@
   }
 
   // ---------------------------------------------------------------
+  // Recuperación al volver a primer plano
+  // ---------------------------------------------------------------
+
+  /*
+   * Al salir de la app Android destruye la superficie de video y puede
+   * liberar el decodificador. Al volver, algunos reproductores (sobre todo
+   * los de MSE, como YouTube) quedan con el último cuadro congelado y no
+   * avanzan aunque se pulse reproducir. Un salto al mismo instante
+   * reconstruye la cadena de decodificación sin recargar la página.
+   */
+  const RECOVERY_DELAY_MS = 450;
+  const RECOVERY_CHECK_MS = 1300;
+  const RECOVERY_WINDOW_MS = 20000;
+  const pausedAt = new WeakMap();
+  let backgroundSnapshot = null;
+  let foregroundAt = 0;
+
+  document.addEventListener("pause", event => {
+    if (event.target && typeof event.target.pause === "function") pausedAt.set(event.target, Date.now());
+  }, true);
+
+  function mediaTime(video) {
+    const value = Number(video.currentTime);
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function nudge(video, forward) {
+    try {
+      const time = mediaTime(video) + (forward ? 0.05 : 0);
+      if (video.seekable && video.seekable.length) {
+        const end = video.seekable.end(video.seekable.length - 1);
+        video.currentTime = Math.min(time, Math.max(0, end - 0.05));
+      } else {
+        video.currentTime = time;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function watchProgress(video, attempt) {
+    const start = mediaTime(video);
+    setTimeout(() => {
+      if (!video.isConnected || video.paused || video.ended || video.seeking) return;
+      if (mediaTime(video) - start > 0.05) return;
+      // Sigue congelado: otro salto y, la segunda vez, reinicio de la reproducción.
+      if (attempt === 0) {
+        nudge(video, true);
+        watchProgress(video, 1);
+      } else if (attempt === 1) {
+        try {
+          video.pause();
+          const playing = video.play();
+          if (playing && typeof playing.catch === "function") playing.catch(() => {});
+        } catch (_) {}
+      }
+    }, RECOVERY_CHECK_MS);
+  }
+
+  function recoverVideo(entry) {
+    const video = entry.video;
+    if (!video || !video.isConnected || video.ended || !hasMedia(video)) return;
+    if (video.paused) {
+      // Rehace el cuadro y el decodificador; el siguiente "play" del usuario funciona.
+      nudge(video, false);
+      if (entry.playing && backgroundMedia && !pipUserPaused) {
+        try {
+          const playing = video.play();
+          if (playing && typeof playing.catch === "function") playing.catch(() => {});
+        } catch (_) {}
+        watchProgress(video, 0);
+      }
+      return;
+    }
+    watchProgress(video, 0);
+  }
+
+  function onBackground() {
+    const now = Date.now();
+    backgroundSnapshot = collectVideos().map(video => ({
+      video,
+      playing: isPlaying(video) || (!video.ended && now - (pausedAt.get(video) || 0) < 1500)
+    }));
+  }
+
+  function onForeground() {
+    const snapshot = backgroundSnapshot ||
+      collectVideos().map(video => ({ video, playing: isPlaying(video) }));
+    backgroundSnapshot = null;
+    foregroundAt = Date.now();
+    if (!snapshot.length) return;
+    setTimeout(() => {
+      snapshot.forEach(recoverVideo);
+      lastStateKey = "";
+      scheduleVideoReport();
+    }, RECOVERY_DELAY_MS);
+  }
+
+  // Si el usuario pulsa reproducir poco después de volver y el video no avanza, repararlo.
+  document.addEventListener("play", event => {
+    const video = event.target;
+    if (!video || typeof video.pause !== "function" || !foregroundAt) return;
+    if (Date.now() - foregroundAt > RECOVERY_WINDOW_MS) return;
+    watchProgress(video, 0);
+  }, true);
+
+  // ---------------------------------------------------------------
   // Estado hacia Nexo
   // ---------------------------------------------------------------
 
@@ -531,6 +639,11 @@
 
     if (message.type === "pip_command" && typeof message.command === "string") {
       pipCommand(message.command);
+    }
+
+    if (message.type === "lifecycle") {
+      if (message.state === "background") onBackground();
+      else if (message.state === "foreground") onForeground();
     }
   }
 

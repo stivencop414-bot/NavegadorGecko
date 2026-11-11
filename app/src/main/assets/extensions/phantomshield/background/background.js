@@ -406,6 +406,29 @@
     });
   }
 
+  /**
+   * Las direcciones de enlaces y marcos de cada candidato se comprueban aquí,
+   * en el dispositivo, contra las listas de red: un enlace a una red
+   * publicitaria conocida es un anuncio. Esas direcciones nunca llegan al
+   * proveedor de IA (el clasificador solo copia los campos que permite).
+   */
+  function enrichCandidates(candidates, documentUrl) {
+    if (!Array.isArray(candidates)) return candidates;
+    return candidates.map(function(candidate) {
+      if (!candidate || typeof candidate !== 'object') return candidate;
+      const copy = Object.assign({}, candidate);
+      const urls = Array.isArray(copy.localUrls) ? copy.localUrls.slice(0, 4) : [];
+      delete copy.localUrls;
+      if (engine && Array.isArray(copy.signals) && !copy.signals.includes('ad-network') && urls.some(function(url) {
+        return typeof url === 'string' && url.length <= 512 && /^https?:\/\//.test(url) &&
+          engine.shouldBlock(url, 'sub_frame', documentUrl, false);
+      })) {
+        copy.signals = copy.signals.concat('ad-network');
+      }
+      return copy;
+    });
+  }
+
   browser.runtime.onMessage.addListener(function(message, sender) {
     if (!message || typeof message.type !== 'string') return undefined;
 
@@ -419,7 +442,8 @@
           return { ok: false, error: 'Página no autorizada para IA.' };
         }
         const before=aiTabState(tab.id);
-        const result = await globalThis.PhantomAI.classify(host, message.candidates, tab.incognito);
+        const candidates = enrichCandidates(message.candidates, tab.url);
+        const result = await globalThis.PhantomAI.classify(host, candidates, tab.incognito);
         if(tabAi.get(tab.id)!==before)return {ok:false,code:'changed',error:'La página cambió.'};
         if (!isEnabledForHost(host)) return { ok: false, error: 'Protección desactivada.' };
         const ai = aiTabState(tab.id);
@@ -474,6 +498,7 @@
           enabled: isEnabledForHost(host),
           aiEnabled: isEnabledForHost(host) && await globalThis.PhantomAI.available(host, tab && tab.incognito),
           aiDetail: await globalThis.PhantomAI.config().then(function(config) { return config.detail; }, function() { return 'basic'; }),
+          aiSensitivity: await globalThis.PhantomAI.config().then(function(config) { return config.sensitivity; }, function() { return 'balanced'; }),
           host: host
         };
       });

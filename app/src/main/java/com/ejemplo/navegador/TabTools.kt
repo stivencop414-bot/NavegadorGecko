@@ -192,9 +192,8 @@ object TabTools {
             })
         }
         body.addView(NexoUi.note(activity,
-            "La ruta cubre el tráfico web HTTP(S) de esta pestaña; no es una VPN. Con proxy activo, WebRTC y las precargas se " +
-                "desactivan en todo Nexo y se bloquean solicitudes de fondo sin pestaña. El buzón, la IA y las listas usan conexiones propias." +
-                if (tab.burnerId != null) " Burner: contenedor aislado; Canvas/WebGL varían de forma experimental y no garantiza anonimato." else ""
+            "La ruta solo afecta al tráfico web de esta pestaña; no es una VPN." +
+                if (tab.burnerId != null) " Burner aísla cookies y datos; no garantiza anonimato." else ""
         ))
 
         val subtitle = listOfNotNull(host.ifBlank { null }, tab.networkState.takeIf { it.isNotBlank() }).joinToString(" · ")
@@ -234,7 +233,7 @@ object TabTools {
             topMargin = NexoUi.dp(activity, 8f)
         })
         body.addView(NexoUi.switchRow(activity, "DNS estricto", "Bloquear la navegación si falla DoH, sin volver al DNS del sistema.", strict) { strict = it })
-        body.addView(NexoUi.note(activity, "Este ajuste es global. Un Pi-hole UDP local necesita una pasarela HTTPS DoH. SOCKS5 usa el DNS del proxy en su pestaña."))
+        body.addView(NexoUi.note(activity, "Afecta a todas las pestañas. Para Pi-hole usa una pasarela DoH (HTTPS)."))
         body.addView(NexoUi.button(activity, "Guardar", primary = true) {
             if (selected == BrowserPrefs.DNS_CUSTOM && !DnsProfile.valid(uri.text.toString().trim())) {
                 uri.error = "Usa HTTPS, sin credenciales ni parámetros."; return@button

@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Configuración: secciones en tarjetas, encabezado con volver y botón Guardar fijo. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/settingsRoot"
     android:layout_width="match_parent"
@@ -70,23 +69,21 @@
                 android:text="Apariencia"
                 android:textSize="13sp"
                 android:textStyle="bold" />
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:paddingStart="16dp"
-                android:paddingTop="6dp"
+                android:paddingTop="4dp"
                 android:paddingEnd="12dp"
-                android:paddingBottom="6dp"
+                android:paddingBottom="4dp"
                 android:tag="card">
-
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
                     android:layout_marginBottom="8dp"
-                    android:text="Tema visual"
+                    android:text="Tema"
                     android:textSize="15sp" />
 
                 <Spinner
@@ -94,12 +91,10 @@
                     android:layout_width="match_parent"
                     android:layout_height="48dp"
                     android:layout_marginBottom="12dp" />
-
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
-
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -113,6 +108,37 @@
                     android:layout_width="match_parent"
                     android:layout_height="48dp"
                     android:layout_marginBottom="12dp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="8dp"
+                    android:text="Tamaño del texto de las páginas"
+                    android:textSize="15sp" />
+
+                <Spinner
+                    android:id="@+id/textSizeSpinner"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginBottom="12dp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+                <Switch
+                    android:id="@+id/forceZoomSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Permitir zoom en todas las páginas"
+                    android:textSize="15sp" />
             </LinearLayout>
 
             <TextView
@@ -125,32 +151,21 @@
                 android:text="Búsqueda e inicio"
                 android:textSize="13sp"
                 android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginBottom="10dp"
-                android:tag="muted"
-                android:text="Elige qué ves al abrir una pestaña nueva o pulsar Inicio."
-                android:textSize="13sp" />
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:paddingStart="16dp"
-                android:paddingTop="6dp"
+                android:paddingTop="4dp"
                 android:paddingEnd="12dp"
-                android:paddingBottom="6dp"
+                android:paddingBottom="4dp"
                 android:tag="card">
-
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
                     android:layout_marginBottom="8dp"
-                    android:text="Motor de búsqueda predeterminado"
+                    android:text="Motor de búsqueda"
                     android:textSize="15sp" />
 
                 <Spinner
@@ -158,37 +173,33 @@
                     android:layout_width="match_parent"
                     android:layout_height="48dp"
                     android:layout_marginBottom="12dp" />
-
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
-
                 <Switch
                     android:id="@+id/nexoHomeSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="56dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
                     android:switchPadding="16dp"
-                    android:text="Página de inicio de Nexo con accesos rápidos"
+                    android:text="Página de inicio de Nexo"
                     android:textSize="15sp" />
-
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
-
                 <Switch
                     android:id="@+id/freeSearchSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="56dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
                     android:switchPadding="16dp"
-                    android:text="Búsqueda libre · no forzar SafeSearch cuando el motor lo permita"
+                    android:text="Búsqueda sin SafeSearch forzado"
                     android:textSize="15sp" />
             </LinearLayout>
 
@@ -199,43 +210,154 @@
                 android:layout_marginTop="22dp"
                 android:layout_marginBottom="8dp"
                 android:tag="section"
-                android:text="Traducción de páginas"
+                android:text="Navegación"
                 android:textSize="13sp"
                 android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginBottom="10dp"
-                android:tag="muted"
-                android:text="Traducción integrada en el dispositivo. Nexo descarga el modelo del idioma la primera vez."
-                android:textSize="13sp" />
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:paddingStart="16dp"
-                android:paddingTop="6dp"
+                android:paddingTop="4dp"
                 android:paddingEnd="12dp"
-                android:paddingBottom="6dp"
+                android:paddingBottom="4dp"
                 android:tag="card">
-
+                <Switch
+                    android:id="@+id/pullToRefreshSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Deslizar hacia abajo para recargar"
+                    android:textSize="15sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+                <Switch
+                    android:id="@+id/desktopDefaultSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Versión de escritorio por defecto"
+                    android:textSize="15sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
                     android:layout_marginBottom="8dp"
-                    android:text="Idioma de traducción"
+                    android:text="Reproducción automática"
                     android:textSize="15sp" />
 
+                <Spinner
+                    android:id="@+id/autoplaySpinner"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginBottom="12dp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+                <Switch
+                    android:id="@+id/javascriptSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="JavaScript"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_marginTop="22dp"
+                android:layout_marginBottom="8dp"
+                android:tag="section"
+                android:text="Multimedia"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="4dp"
+                android:tag="card">
+                <Switch
+                    android:id="@+id/smartPipSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Mini video al salir de la app"
+                    android:textSize="15sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+                <Switch
+                    android:id="@+id/backgroundMediaSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Reproducción en segundo plano"
+                    android:textSize="15sp" />
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Traduce en la página con el motor de Gecko. Puede descargar idiomas de Mozilla con tu confirmación. El texto se procesa en el dispositivo."
-                    android:textSize="13sp"
-                    android:layout_marginBottom="12dp" />
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="12dp"
+                    android:tag="muted"
+                    android:text="Puede aumentar el consumo de batería."
+                    android:textSize="12.5sp" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_marginTop="22dp"
+                android:layout_marginBottom="8dp"
+                android:tag="section"
+                android:text="Traducción"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="4dp"
+                android:tag="card">
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="8dp"
+                    android:text="Traducir páginas a"
+                    android:textSize="15sp" />
 
                 <Spinner
                     android:id="@+id/translatorTargetSpinner"
@@ -251,108 +373,122 @@
                 android:layout_marginTop="22dp"
                 android:layout_marginBottom="8dp"
                 android:tag="section"
-                android:text="Multimedia"
+                android:text="Privacidad y seguridad"
                 android:textSize="13sp"
                 android:textStyle="bold" />
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:paddingStart="16dp"
-                android:paddingTop="6dp"
+                android:paddingTop="4dp"
                 android:paddingEnd="12dp"
-                android:paddingBottom="6dp"
+                android:paddingBottom="4dp"
                 android:tag="card">
-
                 <Switch
-                    android:id="@+id/smartPipSwitch"
+                    android:id="@+id/trackingSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="56dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
                     android:switchPadding="16dp"
-                    android:text="Mini video al salir de un video en reproducción"
+                    android:text="Protección contra rastreo"
                     android:textSize="15sp" />
-
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
-
                 <Switch
-                    android:id="@+id/backgroundMediaSwitch"
+                    android:id="@+id/strictTrackingSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="56dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
                     android:switchPadding="16dp"
-                    android:text="Reproducción en segundo plano con controles multimedia"
+                    android:text="Protección estricta"
                     android:textSize="15sp" />
-
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
-
-                <TextView
+                <Switch
+                    android:id="@+id/safeBrowsingSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:paddingTop="10dp"
-                    android:paddingBottom="10dp"
-                    android:tag="muted"
-                    android:text="Mantener contenido multimedia activo puede aumentar el consumo de batería."
-                    android:textSize="13sp" />
-            </LinearLayout>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginTop="22dp"
-                android:layout_marginBottom="8dp"
-                android:tag="section"
-                android:text="Privacidad y red"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingStart="16dp"
-                android:paddingTop="6dp"
-                android:paddingEnd="12dp"
-                android:paddingBottom="6dp"
-                android:tag="card">
-
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Avisar de sitios peligrosos"
+                    android:textSize="15sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+                <Switch
+                    android:id="@+id/fingerprintingSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Bloquear huellas digitales"
+                    android:textSize="15sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+                <Switch
+                    android:id="@+id/queryStrippingSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Quitar rastreo de los enlaces"
+                    android:textSize="15sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+                <Switch
+                    android:id="@+id/gpcSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Global Privacy Control (GPC)"
+                    android:textSize="15sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+                <Switch
+                    android:id="@+id/httpsOnlySwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Solo conexiones HTTPS"
+                    android:textSize="15sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
                     android:layout_marginBottom="8dp"
-                    android:text="Proveedor DNS seguro"
-                    android:textSize="15sp" />
-
-                <Spinner
-                    android:id="@+id/dnsSpinner"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginBottom="12dp" />
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:tag="divider" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="8dp"
-                    android:text="Política de cookies"
+                    android:text="Cookies"
                     android:textSize="15sp" />
 
                 <Spinner
@@ -360,54 +496,23 @@
                     android:layout_width="match_parent"
                     android:layout_height="48dp"
                     android:layout_marginBottom="12dp" />
-
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
-
-                <Switch
-                    android:id="@+id/trackingSwitch"
+                <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="56dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:switchPadding="16dp"
-                    android:text="Protección contra rastreo"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="8dp"
+                    android:text="DNS seguro"
                     android:textSize="15sp" />
 
-                <View
+                <Spinner
+                    android:id="@+id/dnsSpinner"
                     android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:tag="divider" />
-
-                <Switch
-                    android:id="@+id/gpcSwitch"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:minHeight="56dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:switchPadding="16dp"
-                    android:text="Global Privacy Control (GPC)"
-                    android:textSize="15sp" />
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:tag="divider" />
-
-                <Switch
-                    android:id="@+id/httpsOnlySwitch"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:minHeight="56dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:switchPadding="16dp"
-                    android:text="Modo solo HTTPS"
-                    android:textSize="15sp" />
+                    android:layout_height="48dp"
+                    android:layout_marginBottom="12dp" />
             </LinearLayout>
 
             <TextView
@@ -417,42 +522,38 @@
                 android:layout_marginTop="22dp"
                 android:layout_marginBottom="8dp"
                 android:tag="section"
-                android:text="Pestañas y rendimiento"
+                android:text="Pestañas"
                 android:textSize="13sp"
                 android:textStyle="bold" />
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:paddingStart="16dp"
-                android:paddingTop="6dp"
+                android:paddingTop="4dp"
                 android:paddingEnd="12dp"
-                android:paddingBottom="6dp"
+                android:paddingBottom="4dp"
                 android:tag="card">
-
                 <Switch
                     android:id="@+id/restoreTabsSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="56dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
                     android:switchPadding="16dp"
                     android:text="Restaurar pestañas al abrir Nexo"
                     android:textSize="15sp" />
-
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
-
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
                     android:layout_marginBottom="8dp"
-                    android:text="Pestañas activas máximas en memoria"
+                    android:text="Pestañas activas en memoria"
                     android:textSize="15sp" />
 
                 <Spinner
@@ -472,14 +573,74 @@
                 android:text="Datos de navegación"
                 android:textSize="13sp"
                 android:textStyle="bold" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="4dp"
+                android:tag="card">
+                <Switch
+                    android:id="@+id/clearOnExitSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Borrar cookies, caché e historial al salir"
+                    android:textSize="15sp" />
+            </LinearLayout>
 
             <Button
                 android:id="@+id/clearDataButton"
                 android:layout_width="match_parent"
                 android:layout_height="52dp"
-                android:text="Borrar cookies, caché, miniaturas e historial"
+                android:layout_marginTop="10dp"
+                android:text="Borrar datos de navegación ahora"
                 android:textAllCaps="false"
                 android:textSize="14.5sp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_marginTop="22dp"
+                android:layout_marginBottom="8dp"
+                android:tag="section"
+                android:text="Avanzado"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="4dp"
+                android:tag="card">
+                <Switch
+                    android:id="@+id/remoteDebugSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Depuración remota (USB)"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/aboutText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="22dp"
+                android:gravity="center"
+                android:tag="muted"
+                android:textSize="12.5sp" />
         </LinearLayout>
     </ScrollView>
 

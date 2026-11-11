@@ -51,10 +51,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       .filter(value => typeof value === 'string').map(normalizeHost)
       .find(value => value !== domain && excludedBy(domain, value));
     field('site-hint').textContent = !domain
-      ? 'PhantomShield se activa al navegar en sitios web.'
-      : !globalOn ? 'Activa el bloqueo general para proteger este sitio.'
-      : !siteOn && inherited ? 'Pausado por ' + inherited + '. Activar quitará esa excepción.'
-      : siteOn ? 'Reglas locales activas. Puedes pausarlas para este sitio.' : 'Protección pausada para este sitio.';
+      ? 'Se activa al abrir un sitio web.'
+      : !globalOn ? 'El bloqueo general está apagado.'
+      : !siteOn && inherited ? 'Pausado por ' + inherited + '.'
+      : siteOn ? 'Protección activa en este sitio.' : 'Protección pausada en este sitio.';
     field('site-blocks').textContent = domain ? Number(stats.tabBlocked || 0).toLocaleString('es') : '—';
     field('total-blocks').textContent = Number(stats.blockedCount || 0).toLocaleString('es');
     const badge = field('shield-status');
@@ -64,23 +64,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     const metric = key => Number.isSafeInteger(usage[key]) && usage[key] >= 0 ? usage[key] : 0;
     field('ai-tokens').textContent = metric('inputTokens') + metric('outputTokens') === 0 && metric('requests') && metric('requests') === metric('usageMissing') ? '—' : (metric('inputTokens') + metric('outputTokens')).toLocaleString('es');
     field('ai-detected').textContent = metric('detected').toLocaleString('es');
-    field('ai-usage-note').textContent = metric('analyzed') + ' candidatos analizados · ' + metric('requests') + ' solicitudes. ' +
-      (metric('usageMissing') ? metric('usageMissing') + ' sin datos de tokens. ' : '') + 'Tokens reportados por la API. '+metric('local')+' decisiones locales · '+metric('remote')+' del modelo · '+metric('memoryHits')+' de memoria · '+metric('cacheHits')+' de caché. No son anuncios únicos.';
+    field('ai-usage-note').textContent = metric('analyzed').toLocaleString('es') + ' analizados · ' +
+      metric('requests').toLocaleString('es') + ' solicitudes' + (metric('local') ? ' · ' + metric('local').toLocaleString('es') + ' resueltos sin modelo' : '');
     const config = stored.aiConfig && typeof stored.aiConfig === 'object' ? stored.aiConfig : {};
     const authorized = globalThis.PhantomAIConfig.hostAllowed(config, host);
     scanAvailable = Boolean(domain && globalOn && siteOn && config.enabled === true && config.consent === true && authorized && !(currentTab && currentTab.incognito));
     field('exclude-ai').hidden = !config.enabled || !authorized || !domain;
     field('disable-ai').hidden = !config.enabled;
-    field('ai-hint').textContent = !config.enabled ? 'IA apagada. Tu protección local funciona sin modelos ni claves.'
-      : currentTab && currentTab.incognito ? 'La IA no se utiliza en pestañas privadas.'
-      : !authorized ? 'Este sitio no está autorizado para IA. Puedes gestionarlo en ajustes.'
-      : !globalOn || !siteOn ? 'Activa la protección de este sitio para analizarlo.'
-      : (config.scope === 'public' ? 'Revisa automáticamente lo que las reglas locales no reconocen' : 'Activa en los sitios que elegiste') +
-        (config.detail === 'rich' ? '.' : '. Activa «Análisis detallado» en Configurar IA para detectar más anuncios.');
+    field('ai-hint').textContent = !config.enabled ? 'IA apagada. El bloqueo local sigue activo.'
+      : currentTab && currentTab.incognito ? 'Sin IA en pestañas privadas.'
+      : !authorized ? 'Sitio no autorizado para IA.'
+      : !globalOn || !siteOn ? 'Activa la protección del sitio para analizarlo.'
+      : config.detail === 'rich' ? '' : 'Consejo: el análisis detallado detecta más anuncios.';
+    field('ai-hint').hidden = !field('ai-hint').textContent;
     field('ai-mode').textContent = !config.enabled ? 'Apagada' : config.scope === 'public' ? 'Automática' : 'Sitios elegidos';
     // Resultado real de la última llamada: así se sabe si la IA funciona o por qué no.
     const aiState = stored.aiStatus && typeof stored.aiStatus === 'object' ? stored.aiStatus : null;
-    const stateText = { ok: 'Conectada: la última llamada funcionó', auth: 'La API rechazó la clave', model: 'Modelo o dirección no encontrados',
+    const stateText = { ok: 'Conectada', auth: 'La API rechazó la clave', model: 'Modelo o dirección no encontrados',
       request: 'La API rechazó la solicitud', rate: 'Límite del proveedor o sin saldo', server: 'Fallo temporal del proveedor',
       timeout: 'El proveedor tardó demasiado', network: 'Sin conexión con el proveedor', format: 'Respuesta ilegible del modelo',
       refusal: 'El modelo declinó responder' };
@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     field('ai-state').hidden = !showState;
     field('ai-state').textContent = showState
       ? (aiState.state === 'ok' ? '✓ ' : '✕ ') + stateText[aiState.state] + (aiState.http ? ' (HTTP ' + aiState.http + ')' : '') +
-        (aiState.state === 'ok' ? '' : '. Toca Configurar IA → Probar conexión.')
+        (aiState.state === 'ok' ? '' : '.')
       : '';
     field('ai-state').className = 'ai-state' + (showState ? (aiState.state === 'ok' ? ' good' : ' bad') : '');
     // Lo que la IA hizo en ESTA página: prueba visible de que trabaja.
@@ -96,22 +96,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     const pageNumber = key => page && Number.isSafeInteger(page[key]) && page[key] >= 0 ? page[key] : 0;
     const needsKey = config.enabled && !config.apiKey && ['openai','claude','openrouter'].includes(config.provider);
     let pageText = '';
-    if (needsKey) pageText = 'Falta la clave API para nuevas consultas. Añádela en IA y memoria; las reglas y coincidencias recordadas pueden seguir actuando.';
-    else if(scanAvailable && page && page.code==='reset') pageText='Contenido restaurado tras borrar memoria. Puedes volver a analizar esta página.';
-    else if(scanAvailable && page && ['auth','model','request','network','timeout','format','server','rate'].includes(page.code)) pageText='Análisis pendiente: '+(stateText[page.code]||'revisa la conexión')+'.';
+    const sourceNames = { local: 'locales', model: 'del modelo', memory: 'de memoria', cache: 'de caché' };
+    const sources = Object.keys(sourceNames).filter(key => pageNumber(key)).map(key => pageNumber(key) + ' ' + sourceNames[key]).join(' · ');
+    if (needsKey) pageText = 'Falta la clave API. Añádela en IA y memoria.';
+    else if(scanAvailable && page && page.code==='reset') pageText='Memoria borrada: contenido restaurado.';
+    else if(scanAvailable && page && ['auth','model','request','network','timeout','format','server','rate'].includes(page.code)) pageText='Pendiente: '+(stateText[page.code]||'revisa la conexión')+'.';
     else if (scanAvailable && page && pageNumber('analyzed')) {
-      pageText = 'En esta página: revisó ' + pageNumber('analyzed') + (pageNumber('analyzed') === 1 ? ' elemento' : ' elementos') +
-        ' y mantiene ocultos ' + pageNumber('hidden') + '. '+pageNumber('local')+' locales · '+pageNumber('model')+' del modelo · '+pageNumber('memory')+' de memoria · '+pageNumber('cache')+' de caché.';
+      pageText = 'Esta página: ' + pageNumber('analyzed') + ' revisados · ' + pageNumber('hidden') + ' ocultos' + (sources ? ' (' + sources + ')' : '') + '.';
     } else if (scanAvailable && page && page.code === 'idle') {
-      pageText = 'No se encontraron candidatos con las señales actuales. Esto no garantiza que la página esté libre de anuncios.';
+      pageText = 'Esta página: nada sospechoso por ahora.';
     } else if (scanAvailable && page && ['busy', 'budget', 'cooldown'].includes(page.code)) {
-      pageText = 'En esta página: en espera por el límite de solicitudes; se reintentará.';
+      pageText = 'Esta página: en espera por el límite de solicitudes.';
     } else if (scanAvailable) {
-      pageText = 'En esta página: revisando lo que las reglas no reconocen…';
+      pageText = 'Esta página: analizando…';
     }
-    if(scanAvailable && page && pageNumber('analyzed') && ['busy','budget','cooldown'].includes(page.code))pageText+=' El resto espera por el límite de solicitudes.';
-    if(scanAvailable && page && page.code==='limit')pageText+=' Límite de análisis de esta carga alcanzado.';
-    if(page && page.memoryError)pageText+=' No se pudo leer o guardar la memoria.';
+    if(scanAvailable && page && pageNumber('analyzed') && ['busy','budget','cooldown'].includes(page.code))pageText+=' El resto, en espera.';
+    if(scanAvailable && page && page.code==='limit')pageText+=' Límite de análisis alcanzado.';
+    if(page && page.memoryError)pageText+=' Error de memoria.';
     field('ai-page').hidden = !pageText;
     field('ai-page').textContent = pageText;
     field('ai-page').className = 'ai-page' + (needsKey ? ' bad' : page && pageNumber('hidden') ? ' good' : '');

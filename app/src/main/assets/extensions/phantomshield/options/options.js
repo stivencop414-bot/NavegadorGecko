@@ -71,9 +71,9 @@
     const tokens = number('inputTokens') + number('outputTokens');
     field('usage-tokens').textContent = tokens === 0 && number('requests') && number('usageMissing') === number('requests') ? '—' : tokens.toLocaleString('es');
     field('usage-detected').textContent = number('detected').toLocaleString('es');
-    field('usage-detail').textContent = number('requests') + ' solicitudes · ' + number('analyzed') + ' candidatos analizados · ' +
-      number('inputTokens') + ' tokens de entrada / ' + number('outputTokens') + ' de salida. ' +
-      number('usageMissing') + ' respuestas sin datos de uso; no se estiman tokens ni coste. Incluye decisiones de caché, no anuncios únicos.';
+    field('usage-detail').textContent = number('requests').toLocaleString('es') + ' solicitudes · ' +
+      number('analyzed').toLocaleString('es') + ' analizados · ' + number('inputTokens').toLocaleString('es') + ' entrada / ' +
+      number('outputTokens').toLocaleString('es') + ' salida';
   }
   const STATE_TEXT = {
     ok: 'Última llamada correcta',
@@ -199,6 +199,7 @@
       // Sin configuración previa se propone el análisis detallado; una ya
       // guardada conserva exactamente lo que el usuario aceptó.
       field('detail').value = saved.model ? saved.detail : 'rich';
+      field('sensitivity').value = saved.sensitivity || 'balanced';
       detailState();
       field('include-subdomains').checked = saved.includeSubdomains;
       field('excluded-hosts').value = saved.excludedHosts.join('\n');
@@ -269,6 +270,7 @@
         allowedHosts: field('hosts').value.split(/\s+/).filter(Boolean),
         scope: field('scope').value,
         detail: field('detail').value,
+        sensitivity: field('sensitivity').value,
         rememberDecisions: field('remember-decisions').checked,
         includeSubdomains: field('include-subdomains').checked,
         excludedHosts: field('excluded-hosts').value.split(/\s+/).filter(Boolean),

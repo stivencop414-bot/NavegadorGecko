@@ -218,3 +218,26 @@ test('definitive ad signals are hidden locally without calling the provider',asy
   const result=await h.ai.classify('news.com',[{id:'c-1',tag:'IFRAME',signals:['third-party-frame','ad-size'],width:300,height:250}],false);
   assert.equal(result.ok,true);assert.equal(result.decisions[0].hide,false);assert.equal(h.calls.length,1);assert.equal((await h.ai.usage()).local,0);
  });
+
+test('links to ad click servers or listed ad networks are hidden locally without tokens',async()=>{
+ const h=harness();
+ const result=await h.ai.classify('news.example.com',[
+  {id:'c-1',tag:'DIV',signals:['ad-link'],width:300,height:250},
+  {id:'c-2',tag:'A',signals:['external-links','ad-network'],width:320,height:100}],false);
+ assert.equal(result.ok,true); assert.equal(h.calls.length,0);
+ assert.deepEqual(result.decisions.map(d=>d.hide),[true,true]);
+});
+test('sensitivity changes the model confidence needed to hide',async()=>{
+ const reply=(url,options)=>{const c=JSON.parse(JSON.parse(options.body).messages[1].content).candidates;
+  return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({decisions:c.map(x=>({id:x.id,isAd:true,confidence:.7}))})}}]}));};
+ const balanced=harness({},reply), aggressive=harness({sensitivity:'aggressive'},reply);
+ const one=[{id:'c-1',tag:'DIV',signals:['ad-class'],width:340,height:140}];
+ assert.equal((await balanced.ai.classify('news.example.com',one,false)).decisions[0].hide,false);
+ assert.equal((await aggressive.ai.classify('news.example.com',one,false)).decisions[0].hide,true);
+});
+test('sensitivity is validated and defaults to balanced',()=>{
+ const h=harness();
+ assert.equal(h.api.validate({}).sensitivity,'balanced');
+ assert.equal(h.api.validate({sensitivity:'aggressive'}).sensitivity,'aggressive');
+ assert.throws(()=>h.api.validate({sensitivity:'max'}));
+});

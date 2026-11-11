@@ -15,7 +15,6 @@ import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import org.mozilla.geckoview.StorageController
 
 class SettingsActivity : Activity() {
     private lateinit var theme: Spinner
@@ -33,6 +32,25 @@ class SettingsActivity : Activity() {
     private lateinit var smartPip: Switch
     private lateinit var backgroundMedia: Switch
     private lateinit var translatorTarget: Spinner
+    private lateinit var textSize: Spinner
+    private lateinit var autoplay: Spinner
+    private lateinit var forceZoom: Switch
+    private lateinit var pullToRefresh: Switch
+    private lateinit var desktopDefault: Switch
+    private lateinit var javascript: Switch
+    private lateinit var strictTracking: Switch
+    private lateinit var safeBrowsing: Switch
+    private lateinit var fingerprinting: Switch
+    private lateinit var queryStripping: Switch
+    private lateinit var clearOnExit: Switch
+    private lateinit var remoteDebug: Switch
+
+    private val textSizes = listOf(80, 90, 100, 110, 120, 135, 150, 175)
+    private val autoplayOptions = listOf(
+        "Permitir" to BrowserPrefs.AUTOPLAY_ALLOW,
+        "Bloquear solo con sonido" to BrowserPrefs.AUTOPLAY_BLOCK_AUDIBLE,
+        "Bloquear siempre" to BrowserPrefs.AUTOPLAY_BLOCK_ALL
+    )
 
     private val themes = listOf(
         "Seguir sistema" to BrowserPrefs.THEME_SYSTEM,
@@ -107,6 +125,18 @@ class SettingsActivity : Activity() {
         smartPip = findViewById(R.id.smartPipSwitch)
         backgroundMedia = findViewById(R.id.backgroundMediaSwitch)
         translatorTarget = findViewById(R.id.translatorTargetSpinner)
+        textSize = findViewById(R.id.textSizeSpinner)
+        autoplay = findViewById(R.id.autoplaySpinner)
+        forceZoom = findViewById(R.id.forceZoomSwitch)
+        pullToRefresh = findViewById(R.id.pullToRefreshSwitch)
+        desktopDefault = findViewById(R.id.desktopDefaultSwitch)
+        javascript = findViewById(R.id.javascriptSwitch)
+        strictTracking = findViewById(R.id.strictTrackingSwitch)
+        safeBrowsing = findViewById(R.id.safeBrowsingSwitch)
+        fingerprinting = findViewById(R.id.fingerprintingSwitch)
+        queryStripping = findViewById(R.id.queryStrippingSwitch)
+        clearOnExit = findViewById(R.id.clearOnExitSwitch)
+        remoteDebug = findViewById(R.id.remoteDebugSwitch)
 
         populate()
         applyTheme()
@@ -164,6 +194,23 @@ class SettingsActivity : Activity() {
             this,
             translatorLanguages.map { it.first }
         )
+        textSize.adapter = ThemeManager.spinnerAdapter(this, textSizes.map { if (it == 100) "100 % (normal)" else "$it %" })
+        autoplay.adapter = ThemeManager.spinnerAdapter(this, autoplayOptions.map { it.first })
+        textSize.setSelection(textSizes.indexOf(BrowserPrefs.textScale(this)).takeIf { it >= 0 } ?: textSizes.indexOf(100))
+        autoplay.setSelection(autoplayOptions.indexOfFirst { it.second == BrowserPrefs.autoplay(this) }.coerceAtLeast(0))
+        forceZoom.isChecked = BrowserPrefs.forceZoom(this)
+        pullToRefresh.isChecked = BrowserPrefs.pullToRefresh(this)
+        desktopDefault.isChecked = BrowserPrefs.desktopDefault(this)
+        javascript.isChecked = BrowserPrefs.javascript(this)
+        strictTracking.isChecked = BrowserPrefs.strictTracking(this)
+        safeBrowsing.isChecked = BrowserPrefs.safeBrowsing(this)
+        fingerprinting.isChecked = BrowserPrefs.fingerprinting(this)
+        queryStripping.isChecked = BrowserPrefs.queryStripping(this)
+        clearOnExit.isChecked = BrowserPrefs.clearOnExit(this)
+        remoteDebug.isChecked = BrowserPrefs.remoteDebugging(this)
+        strictTracking.isEnabled = BrowserPrefs.trackingProtection(this)
+        tracking.setOnCheckedChangeListener { _, on -> strictTracking.isEnabled = on }
+        findViewById<TextView>(R.id.aboutText).text = aboutText()
 
         theme.setSelection(themes.indexOfFirst { it.second == BrowserPrefs.theme(this) }.coerceAtLeast(0))
         accent.setSelection(accents.indexOfFirst { it.second == BrowserPrefs.accent(this) }.coerceAtLeast(0))
@@ -205,6 +252,18 @@ class SettingsActivity : Activity() {
         BrowserPrefs.setNexoHome(this, nexoHome.isChecked)
         BrowserPrefs.setSmartPip(this, smartPip.isChecked)
         BrowserPrefs.setBackgroundMedia(this, backgroundMedia.isChecked)
+        BrowserPrefs.setTextScale(this, textSizes[textSize.selectedItemPosition])
+        BrowserPrefs.setAutoplay(this, autoplayOptions[autoplay.selectedItemPosition].second)
+        BrowserPrefs.setForceZoom(this, forceZoom.isChecked)
+        BrowserPrefs.setPullToRefresh(this, pullToRefresh.isChecked)
+        BrowserPrefs.setDesktopDefault(this, desktopDefault.isChecked)
+        BrowserPrefs.setJavascript(this, javascript.isChecked)
+        BrowserPrefs.setStrictTracking(this, strictTracking.isChecked)
+        BrowserPrefs.setSafeBrowsing(this, safeBrowsing.isChecked)
+        BrowserPrefs.setFingerprinting(this, fingerprinting.isChecked)
+        BrowserPrefs.setQueryStripping(this, queryStripping.isChecked)
+        BrowserPrefs.setClearOnExit(this, clearOnExit.isChecked)
+        BrowserPrefs.setRemoteDebugging(this, remoteDebug.isChecked)
         BrowserPrefs.setTranslatorTarget(
             this,
             translatorLanguages[
@@ -222,35 +281,25 @@ class SettingsActivity : Activity() {
 
     private fun confirmClear() {
         AlertDialog.Builder(this)
-            .setTitle("Borrar datos")
-            .setMessage(
-                "Se cerrarán las sesiones y se borrarán cookies, caché, " +
-                    "almacenamiento de sitios, miniaturas e historial."
-            )
+            .setTitle("Borrar datos de navegación")
+            .setMessage("Se borrarán cookies, caché, datos de sitios, miniaturas e historial. Las pestañas abiertas se conservan.")
             .setNegativeButton("Cancelar", null)
             .setPositiveButton("Borrar") { _, _ ->
-                TabManager.closeAllSessionsKeepingState()
-                GeckoRuntimeHolder.get(this).storageController
-                    .clearData(StorageController.ClearFlags.ALL)
-                    .accept(
-                        {
-                            HistoryStore.clear(this)
-                            TabPreviewStore.clear(this)
-                            runOnUiThread {
-                                Toast.makeText(this, "Datos de navegación borrados", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        { error ->
-                            runOnUiThread {
-                                Toast.makeText(
-                                    this,
-                                    "Error: ${error?.message ?: "desconocido"}",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
-                        }
-                    )
+                BrowsingData.clear(this) { ok, error ->
+                    runOnUiThread {
+                        Toast.makeText(
+                            this,
+                            if (ok) "Datos de navegación borrados" else "No se pudo borrar: ${error ?: "error desconocido"}",
+                            if (ok) Toast.LENGTH_SHORT else Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
             }.show()
+    }
+
+    private fun aboutText(): String {
+        val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: ""
+        return "Nexo $version · motor Gecko ${org.mozilla.geckoview.BuildConfig.MOZILLA_VERSION}"
     }
 
     private fun styleReadableTree(view: View) {
@@ -274,11 +323,15 @@ class SettingsActivity : Activity() {
         styleReadableTree(settingsRoot)
         listOf(
             theme, accent, search, liveTabs,
-            dns, cookies, translatorTarget
+            dns, cookies, translatorTarget, textSize, autoplay
         ).forEach {
             ThemeManager.styleSpinner(this, it)
         }
-        listOf(restore, tracking, gpc, httpsOnly, freeSearch, nexoHome, smartPip, backgroundMedia).forEach {
+        listOf(
+            restore, tracking, gpc, httpsOnly, freeSearch, nexoHome, smartPip, backgroundMedia,
+            forceZoom, pullToRefresh, desktopDefault, javascript, strictTracking, safeBrowsing,
+            fingerprinting, queryStripping, clearOnExit, remoteDebug
+        ).forEach {
             ThemeManager.styleSwitch(this, it)
         }
         ThemeManager.styleText(this, findViewById(R.id.settingsTitle))
