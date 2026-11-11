@@ -5,7 +5,7 @@
   "description": "Funciones internas de Nexo Browser.",
   "browser_specific_settings": {
     "gecko": {
-      "id": "nexo_bridge@com.ejemplo.navegador"
+      "id": "nexo_bridge@com.nexo.browser"
     }
   },
   "permissions": [

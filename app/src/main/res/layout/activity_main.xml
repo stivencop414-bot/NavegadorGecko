@@ -88,13 +88,13 @@
         android:textStyle="bold"
         android:visibility="gone" />
 
-    <com.ejemplo.navegador.PullRefreshLayout
+    <com.nexo.browser.PullRefreshLayout
         android:id="@+id/browserFrame"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <com.ejemplo.navegador.NexoGeckoView
+        <com.nexo.browser.NexoGeckoView
             android:id="@+id/geckoView"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
@@ -156,7 +156,7 @@
                 android:textSize="14sp"
                 android:visibility="gone" />
         </LinearLayout>
-    </com.ejemplo.navegador.PullRefreshLayout>
+    </com.nexo.browser.PullRefreshLayout>
 
     <!-- Floating dock adapted from the supplied prototype; web content keeps its full viewport. -->
     <LinearLayout

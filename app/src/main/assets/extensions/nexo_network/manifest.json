@@ -3,7 +3,7 @@
   "name": "Nexo Tab Network",
   "version": "1.0.0",
   "description": "Rutas HTTP(S) por pestaña y simulación de pruebas elegida por el usuario.",
-  "browser_specific_settings": { "gecko": { "id": "nexo_network@com.ejemplo.navegador" } },
+  "browser_specific_settings": { "gecko": { "id": "nexo_network@com.nexo.browser" } },
   "permissions": ["proxy", "privacy", "storage", "webRequest", "webRequestBlocking", "tabs", "nativeMessaging", "nativeMessagingFromContent", "geckoViewAddons", "<all_urls>"],
   "background": {"scripts": ["policy.js", "background.js"], "persistent": true},
   "content_scripts": [{"matches": ["http://*/*", "https://*/*"], "js": ["simulation.js"], "run_at": "document_start", "all_frames": true}],

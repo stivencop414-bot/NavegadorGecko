@@ -1,5 +1,12 @@
 # Nexo Browser
 
+<img src="docs/brand/nexo.svg" alt="Logo de Nexo Browser" width="112" />
+
+Desde **0.25.0**, el identificador Android es **`com.nexo.browser`**.
+Esta versión se instala como una app nueva junto a las anteriores; no transfiere
+automáticamente historial, pestañas, extensiones ni ajustes. Consulta
+[el cambio de identidad](docs/IDENTIDAD-NEXO.md) antes de instalarla.
+
 Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 
 ## Incluye
@@ -114,7 +121,7 @@ gradle :app:lintRelease
 Capturas de la interfaz nativa (Robolectric, opcional y fuera de la CI):
 
 ```bash
-gradle :app:testDebugUnitTest --tests 'com.ejemplo.navegador.ScreenshotTest' \
+gradle :app:testDebugUnitTest --tests 'com.nexo.browser.ScreenshotTest' \
   -PnexoScreenshots -PnexoShotsDir=/ruta/capturas
 ```
 
