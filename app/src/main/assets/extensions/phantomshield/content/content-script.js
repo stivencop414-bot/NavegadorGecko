@@ -6,7 +6,8 @@
 
   const DEFAULT_SETTINGS = {
     adblockEnabled: true,
-    privacyEnabled: false
+    privacyEnabled: false,
+    popupBlockEnabled: true
   };
 
   let current = Object.assign({}, DEFAULT_SETTINGS);
@@ -20,6 +21,7 @@
     if (!root) return;
     setBooleanAttribute(root, 'data-phantomshield-adblock', current.adblockEnabled);
     setBooleanAttribute(root, 'data-phantomshield-privacy', current.privacyEnabled);
+    setBooleanAttribute(root, 'data-phantomshield-popups', current.popupBlockEnabled);
     document.dispatchEvent(new CustomEvent('phantomshield:settings'));
   }
 

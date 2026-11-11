@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../../main/assets/extensions/nexo_bridge/content_script.js'), 'utf8');
 
-function harness() {
+function harness(extra = {}) {
   let now = 100000, nextId = 1, onMessage;
   const timers = new Map(), reports = [], videos = [];
   class Element extends EventTarget {
@@ -43,7 +43,8 @@ function harness() {
     MutationObserver: class { observe() { observed++; } },
     browser: { runtime: { connectNative: () => port, sendNativeMessage: () => Promise.resolve({}) } },
     setTimeout: (callback, delay) => schedule(callback, delay), clearTimeout: id => timers.delete(id),
-    setInterval: (callback, delay) => schedule(callback, delay, delay)
+    setInterval: (callback, delay) => schedule(callback, delay, delay),
+    btoa, ...extra
   });
   function tick(ms) {
     const end = now + ms;
@@ -71,6 +72,8 @@ function harness() {
     leave: () => onMessage({ type: 'pip_mode', active: false }),
     command: command => onMessage({ type: 'pip_command', command }),
     lifecycle: state => onMessage({ type: 'lifecycle', state }),
+    captions: active => onMessage({ type: 'captions', active }),
+    fire: (type, target) => { const event = new Event(type); Object.defineProperty(event, 'target', { value: target }); document.dispatchEvent(event); },
     changed: () => document.dispatchEvent(new Event('loadedmetadata')) };
 }
 
@@ -213,4 +216,69 @@ test('a video the user had paused before leaving stays paused', () => {
   const h = harness(), v = h.video(); v.paused = true; h.tick(5000);
   h.lifecycle('background'); h.lifecycle('foreground'); h.tick(3000);
   assert.equal(v.paused, true); assert.equal(v.plays, 0);
+});
+
+function audioMocks(state = 'running') {
+  const recorders = [], sources = [];
+  class FakeContext {
+    constructor() { this.state = state; }
+    resume() { return Promise.resolve(); }
+    close() { this.closed = true; }
+    createMediaElementSource(video) { const node = { video, connect() {} }; sources.push(node); return node; }
+    createMediaStreamDestination() { return { stream: {}, connect() {} }; }
+    createAnalyser() { return { fftSize: 512, connect() {}, getByteTimeDomainData: data => data.fill(150) }; }
+    get destination() { return {}; }
+  }
+  class FakeRecorder {
+    static isTypeSupported(type) { return type === 'audio/webm;codecs=opus'; }
+    constructor(stream, options) { this.options = options; this.state = 'inactive'; recorders.push(this); }
+    start(slice) { this.slice = slice; this.state = 'recording'; }
+    stop() { this.state = 'inactive'; }
+  }
+  const window = {};
+  return { recorders, sources, extra: { AudioContext: FakeContext, MediaRecorder: FakeRecorder } };
+}
+const flush = () => new Promise(resolve => setImmediate(resolve));
+
+test('live captions record compressed audio only while the video plays', async () => {
+  const audio = audioMocks();
+  const h = harness(audio.extra), v = h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  h.captions(true); await flush(); await flush();
+  assert.equal(audio.sources.length, 1, 'audio taken from the video element');
+  const recorder = audio.recorders[0];
+  assert.equal(recorder.state, 'recording'); assert.equal(recorder.slice, 250);
+  assert.equal(recorder.options.audioBitsPerSecond, 24000);
+  assert.ok(h.reports.some(x => x.type === 'captions_start'));
+  recorder.ondataavailable({ data: { size: 3, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } });
+  await flush(); await flush();
+  assert.ok(h.reports.some(x => x.type === 'captions_audio' && x.data === 'AQID'));
+  h.fire('pause', v);
+  assert.equal(recorder.state, 'inactive');
+  assert.ok(h.reports.some(x => x.type === 'captions_stop'));
+  h.fire('playing', v); await flush(); await flush();
+  assert.equal(audio.recorders.length, 2, 'a new recording starts with its own header');
+  assert.equal(audio.sources.length, 1, 'the element source is reused');
+  h.captions(false);
+  assert.equal(audio.recorders[1].state, 'inactive');
+});
+
+test('a suspended audio context never reroutes (and silences) the video', async () => {
+  const audio = audioMocks('suspended');
+  const h = harness(audio.extra); h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  h.captions(true); await flush(); h.tick(900); await flush(); await flush();
+  assert.equal(audio.sources.length, 0);
+  assert.ok(h.reports.some(x => x.type === 'captions_error' && x.code === 'suspended'));
+});
+
+test('going to the background stops captions recording and returning resumes it', async () => {
+  const audio = audioMocks();
+  const h = harness(audio.extra); h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  h.captions(true); await flush(); await flush();
+  h.lifecycle('background');
+  assert.equal(audio.recorders[0].state, 'inactive');
+  h.lifecycle('foreground'); h.tick(1000); await flush(); await flush();
+  assert.equal(audio.recorders.length, 2);
 });

@@ -44,6 +44,7 @@ class SettingsActivity : Activity() {
     private lateinit var queryStripping: Switch
     private lateinit var clearOnExit: Switch
     private lateinit var remoteDebug: Switch
+    private lateinit var captionsEnabled: Switch
 
     private val textSizes = listOf(80, 90, 100, 110, 120, 135, 150, 175)
     private val autoplayOptions = listOf(
@@ -137,12 +138,16 @@ class SettingsActivity : Activity() {
         queryStripping = findViewById(R.id.queryStrippingSwitch)
         clearOnExit = findViewById(R.id.clearOnExitSwitch)
         remoteDebug = findViewById(R.id.remoteDebugSwitch)
+        captionsEnabled = findViewById(R.id.captionsEnabledSwitch)
 
         populate()
         applyTheme()
         findViewById<Button>(R.id.saveSettingsButton).setOnClickListener { save() }
         findViewById<Button>(R.id.clearDataButton).setOnClickListener { confirmClear() }
         findViewById<Button>(R.id.defaultBrowserButton).setOnClickListener { requestDefaultBrowser() }
+        findViewById<Button>(R.id.configureCaptionsButton).setOnClickListener {
+            CaptionsUi.showSheet(this) { updateCaptionsSummary() }
+        }
     }
 
     override fun onResume() {
@@ -211,6 +216,8 @@ class SettingsActivity : Activity() {
         strictTracking.isEnabled = BrowserPrefs.trackingProtection(this)
         tracking.setOnCheckedChangeListener { _, on -> strictTracking.isEnabled = on }
         findViewById<TextView>(R.id.aboutText).text = aboutText()
+        captionsEnabled.isChecked = BrowserPrefs.captionsEnabled(this)
+        updateCaptionsSummary()
 
         theme.setSelection(themes.indexOfFirst { it.second == BrowserPrefs.theme(this) }.coerceAtLeast(0))
         accent.setSelection(accents.indexOfFirst { it.second == BrowserPrefs.accent(this) }.coerceAtLeast(0))
@@ -264,6 +271,7 @@ class SettingsActivity : Activity() {
         BrowserPrefs.setQueryStripping(this, queryStripping.isChecked)
         BrowserPrefs.setClearOnExit(this, clearOnExit.isChecked)
         BrowserPrefs.setRemoteDebugging(this, remoteDebug.isChecked)
+        BrowserPrefs.setCaptionsEnabled(this, captionsEnabled.isChecked)
         BrowserPrefs.setTranslatorTarget(
             this,
             translatorLanguages[
@@ -295,6 +303,14 @@ class SettingsActivity : Activity() {
                     }
                 }
             }.show()
+    }
+
+    private fun updateCaptionsSummary() {
+        val language = CaptionsUi.LANGUAGES.firstOrNull { it.first == BrowserPrefs.captionLanguage(this) }?.second ?: "Automático"
+        val target = CaptionsUi.TARGETS.firstOrNull { it.first == BrowserPrefs.captionTranslateTo(this) }?.second ?: "No traducir"
+        findViewById<TextView>(R.id.captionsSummary).text =
+            if (BrowserPrefs.deepgramKey(this).isBlank()) "Necesita una clave de Deepgram."
+            else "Audio: $language · Traducción: $target"
     }
 
     private fun aboutText(): String {
@@ -330,7 +346,7 @@ class SettingsActivity : Activity() {
         listOf(
             restore, tracking, gpc, httpsOnly, freeSearch, nexoHome, smartPip, backgroundMedia,
             forceZoom, pullToRefresh, desktopDefault, javascript, strictTracking, safeBrowsing,
-            fingerprinting, queryStripping, clearOnExit, remoteDebug
+            fingerprinting, queryStripping, clearOnExit, remoteDebug, captionsEnabled
         ).forEach {
             ThemeManager.styleSwitch(this, it)
         }
@@ -338,6 +354,7 @@ class SettingsActivity : Activity() {
         ThemeManager.styleButton(this, findViewById(R.id.saveSettingsButton), primary = true)
         ThemeManager.styleButton(this, findViewById(R.id.clearDataButton), danger = true)
         ThemeManager.styleButton(this, findViewById(R.id.defaultBrowserButton))
+        ThemeManager.styleButton(this, findViewById(R.id.configureCaptionsButton))
         ThemeManager.styleBackButton(this, findViewById(R.id.backButton))
         findViewById<View>(R.id.settingsFooter).background =
             ThemeManager.barBackground(this, lineOnTop = true)

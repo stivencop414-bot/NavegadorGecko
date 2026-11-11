@@ -147,4 +147,36 @@ class ScreenshotTest {
         val activity = Robolectric.buildActivity(SettingsActivity::class.java).setup().get()
         save(activity.window.decorView, "settings-dark")
     }
+
+    @Test fun captionsSheet() {
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        activity.setContentView(FrameLayout(activity))
+        BrowserPrefs.setCaptionTranslateTo(activity, "es")
+        CaptionsUi.showSheet(activity)
+        dialogShot(null, "captions-sheet-dark")
+    }
+
+    @Test fun captionsOverlay() {
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        val p = ThemeManager.palette(activity)
+        val root = activity.layoutInflater.inflate(R.layout.activity_main, null)
+        root.setBackgroundColor(p.background)
+        root.findViewById<View>(R.id.geckoView).setBackgroundColor(0xFF1F2937.toInt())
+        activity.setContentView(root)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        val frame = root.findViewById<View>(R.id.browserFrame)
+        val video = View(activity).apply { setBackgroundColor(0xFF374151.toInt()) }
+        val rect = android.graphics.Rect(0, 160, frame.width, 160 + frame.width * 9 / 16)
+        (frame as android.view.ViewGroup).addView(video, 1, FrameLayout.LayoutParams(rect.width(), rect.height()).apply { topMargin = rect.top })
+        val cc = root.findViewById<android.widget.Button>(R.id.captionsButton)
+        cc.visibility = View.VISIBLE
+        CaptionsUi.styleChip(activity, cc, true)
+        val mini = root.findViewById<android.widget.Button>(R.id.miniPlayerButton)
+        mini.visibility = View.VISIBLE
+        CaptionsUi.styleChip(activity, mini, false)
+        CaptionsUi.render(activity, root.findViewById(R.id.captionView), frame.width, frame.height, rect,
+            "Hoy vamos a ver cómo funciona el motor de un navegador." to "And the rendering", false)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        save(activity.window.decorView, "captions-overlay")
+    }
 }

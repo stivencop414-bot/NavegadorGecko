@@ -13,8 +13,8 @@ android {
         applicationId = "com.ejemplo.navegador"
         minSdk = 26
         targetSdk = 34
-        versionCode = 39
-        versionName = "0.21.0"
+        versionCode = 40
+        versionName = "0.22.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -88,8 +88,12 @@ dependencies {
     implementation("org.mozilla.geckoview:geckoview-omni:159.0.20261102144711")
     implementation("androidx.core:core:1.19.1")
     implementation("androidx.documentfile:documentfile:1.1.0")
+    // WebSocket para los subtítulos en vivo (Deepgram).
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
+    // org.json real en las pruebas JVM (el de Android es un stub).
+    testImplementation("org.json:json:20240303")
     if (project.hasProperty("nexoScreenshots")) {
         testImplementation("org.robolectric:robolectric:4.16")
     }

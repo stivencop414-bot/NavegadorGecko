@@ -13,6 +13,7 @@ import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 
 object TabManager {
+    private const val PRIVATE_LIVE_LIMIT = 8
     interface Listener {
         fun onActiveTabChanged(tab: BrowserTab, session: GeckoSession)
         fun onTabChanged(tab: BrowserTab)
@@ -960,6 +961,8 @@ object TabManager {
                 override fun onPageStart(session: GeckoSession, url: String) {
                     if (TabRouting.bootstrap(session,url) || TabRouting.preparing(session)) return
                     TabRouting.targetStarted(session)
+                    // Una página nueva no hereda los subtítulos (ni su consumo de Deepgram).
+                    if (LiveCaptions.isActive(session)) LiveCaptions.stop(session)
                     tab.navigationEpoch++
                     TranslatorManager.forget(session)
                     PagePrompts.onPageStart(session)
@@ -1015,7 +1018,9 @@ object TabManager {
         val currentUrl = tab.url
 
         tab.session = null
-        tab.sessionState = null
+        // Un "kill" lo decide Android (no es culpa de la página): conservar el
+        // historial y la posición. Tras un fallo real se carga la URL limpia.
+        if (reason != "kill") tab.sessionState = null
         if (tab.isFullScreen) {
             tab.isFullScreen = false
             if (tab.id == activeId) listener?.onFullScreenChanged(tab, false)
@@ -1093,10 +1098,13 @@ object TabManager {
 
     private fun trimSessions() {
         val maxLive = BrowserPrefs.maxLiveTabs(requireContext())
+        // Las privadas y Burner no guardan estado: descartarlas las "reiniciaría"
+        // y cerraría sus sesiones iniciadas. Solo se descartan si son muchas.
         val background = tabs
             .filter {
                 it.id != activeId && it.session != null &&
-                    !BrowserMediaController.isPlaying(it.id)
+                    !BrowserMediaController.isPlaying(it.id) &&
+                    (!it.isPrivate || tabs.count { other -> other.isPrivate && other.session != null } > PRIVATE_LIVE_LIMIT)
             }
             .sortedByDescending { it.lastUsed }
 
@@ -1246,24 +1254,26 @@ object TabManager {
      * segundo plano (conservan URL e historial y se restauran al volver).
      * Las privadas se respetan: cerrarlas borraría su contenido.
      */
+    /**
+     * Solo una presión de memoria real descarta pestañas. TRIM_MEMORY_BACKGROUND
+     * llega siempre que la app pasa a segundo plano (en Android 14+ es casi la
+     * única señal) y descartar con ella reiniciaba las pestañas sin motivo.
+     */
     fun onTrimMemory(level: Int) {
         if (!initialized) return
-        val keep = when {
-            level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND -> 0
-            level == 10 /* TRIM_MEMORY_RUNNING_LOW */ || level == 15 /* RUNNING_CRITICAL */ -> 1
-            else -> return
-        }
+        TabPreviewStore.trimMemory()
+        val critical = level == 15 /* RUNNING_CRITICAL */ || level >= 80 /* COMPLETE */
+        if (!critical) return
         tabs.filter {
             it.id != activeId && it.session != null && !it.isPrivate &&
                 !BrowserMediaController.isPlaying(it.id)
         }
             .sortedByDescending { it.lastUsed }
-            .drop(keep)
+            .drop(2)
             .forEach { tab ->
                 tab.session?.let { closeSession(it) }
                 tab.session = null
             }
-        TabPreviewStore.trimMemory()
     }
 
     private fun notifyActive() {

@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   function controls() {
     field('adblock-toggle').disabled = !loaded || busy;
     field('privacy-toggle').disabled = !loaded || busy;
+    field('popup-block-toggle').disabled = !loaded || busy || !field('adblock-toggle').checked;
     field('anti-block-toggle').disabled = !loaded || busy;
     field('site-toggle').disabled = !loaded || busy || !domain || !field('adblock-toggle').checked;
     field('scan-ai').disabled = !loaded || busy || !scanAvailable;
@@ -43,6 +44,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const siteOn = !stats.siteDisabled;
     field('adblock-toggle').checked = globalOn;
     field('privacy-toggle').checked = stats.settings.privacyEnabled === true;
+    field('popup-block-toggle').checked = stats.settings.popupBlockEnabled !== false;
     field('anti-block-toggle').checked = stats.settings.antiBlockEnabled === true;
     field('site-toggle').checked = globalOn && siteOn;
     field('site-control').hidden = !domain;
@@ -199,6 +201,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const enabled=field('anti-block-toggle').checked;
     mutate(async()=>{await browser.storage.local.set({antiBlockEnabled:enabled});showMessage('Parcheador '+(enabled?'activado':'desactivado')+'. Recarga para aplicarlo.');});
   });
+  field('popup-block-toggle').addEventListener('change', () => {
+    const enabled = field('popup-block-toggle').checked;
+    mutate(async () => {
+      await browser.storage.local.set({ popupBlockEnabled: enabled });
+      showMessage(enabled ? 'Ventanas emergentes bloqueadas.' : 'Ventanas emergentes permitidas.');
+    });
+  });
   field('privacy-toggle').addEventListener('change', () => {
     const enabled = field('privacy-toggle').checked;
     mutate(async () => { await browser.storage.local.set({ privacyEnabled: enabled }); showMessage('El cambio de Canvas se aplica al recargar la página.'); });
@@ -221,7 +230,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showMessage('Contadores reiniciados.');
   }));
   const changed = (values, area) => {
-    if (area === 'local' && ['adblockEnabled','privacyEnabled','antiBlockEnabled','disabled_domains','aiConfig','aiStats','aiStatus','blockedCount','phantom_last_update','phantom_update_results'].some(key => key in values)) {
+    if (area === 'local' && ['adblockEnabled','privacyEnabled','popupBlockEnabled','antiBlockEnabled','disabled_domains','aiConfig','aiStats','aiStatus','blockedCount','phantom_last_update','phantom_update_results'].some(key => key in values)) {
       refresh().catch(() => showMessage('No se pudo actualizar el estado de protección.', true));
     }
   };

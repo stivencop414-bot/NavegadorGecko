@@ -46,7 +46,11 @@ class MainActivity :
     Activity(),
     TabManager.Listener,
     BrowserMediaController.Listener,
+    LiveCaptions.Listener,
     BrowserHost {
+    private lateinit var captionsButton: Button
+    private lateinit var captionView: TextView
+    private var lastCaptionMessage: String? = null
     private lateinit var geckoView: GeckoView
     private lateinit var omnibox: EditText
     private lateinit var progress: ProgressBar
@@ -153,6 +157,7 @@ class MainActivity :
         BrowserHosts.attach(this)
         bindViews()
         BrowserMediaController.attach(this)
+        LiveCaptions.attach(this)
         applyTheme()
         configureUi()
         ThemeManager.takeInitialFocus(root)
@@ -210,6 +215,8 @@ class MainActivity :
         clearOmniboxButton = findViewById(R.id.clearOmniboxButton)
         privateBanner = findViewById(R.id.privateBanner)
         miniPlayerButton = findViewById(R.id.miniPlayerButton)
+        captionsButton = findViewById(R.id.captionsButton)
+        captionView = findViewById(R.id.captionView)
         findBar = findViewById(R.id.findBar)
         findInput = findViewById(R.id.findInput)
         findCount = findViewById(R.id.findCount)
@@ -234,6 +241,11 @@ class MainActivity :
         }
         findViewById<Button>(R.id.menuButton).setOnClickListener { showMenu(it) }
         miniPlayerButton.setOnClickListener { startMiniPlayer() }
+        captionsButton.setOnClickListener { toggleCaptions() }
+        captionsButton.setOnLongClickListener {
+            CaptionsUi.showSheet(this) { refreshCaptionsUi() }
+            true
+        }
 
         clearOmniboxButton.setOnClickListener {
             omnibox.setText("")
@@ -764,6 +776,8 @@ class MainActivity :
     override fun onActiveTabChanged(tab: BrowserTab, session: GeckoSession) {
         if (attachedSession !== session) {
             hideFindBar()
+            // Los subtítulos son de la pestaña visible: no seguir transcribiendo otra.
+            attachedSession?.let { LiveCaptions.stop(it) }
             if (attachedSession != null) geckoView.releaseSession()
             // Fondo del tema mientras la página pinta (evita el destello blanco).
             runCatching {
@@ -1069,6 +1083,51 @@ class MainActivity :
         val tab = TabManager.activeTab()
         val key = tab?.let { it.id + "|" + it.url }
         setMiniChipVisible(!immersive && !isInPictureInPictureMode && isMiniVideoAvailable() && key != miniChipHiddenFor)
+        refreshCaptionsUi()
+    }
+
+    // ---------------------------------------------------------------
+    // Subtítulos en vivo
+    // ---------------------------------------------------------------
+
+    override fun onCaptionsChanged(session: GeckoSession) {
+        if (session !== attachedSession) return
+        refreshCaptionsUi()
+        val message = LiveCaptions.message(session)
+        if (LiveCaptions.state(session) == LiveCaptions.State.ERROR && message != null && message != lastCaptionMessage) {
+            lastCaptionMessage = message
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun toggleCaptions() {
+        val session = attachedSession ?: return
+        if (!LiveCaptions.isActive(session) && BrowserPrefs.deepgramKey(this).isBlank()) {
+            CaptionsUi.showSheet(this, askKey = true) {
+                if (BrowserPrefs.deepgramKey(this).isNotBlank()) toggleCaptions()
+            }
+            return
+        }
+        lastCaptionMessage = null
+        val on = LiveCaptions.toggle(this, session)
+        Toast.makeText(this, if (on) "Subtítulos activados" else "Subtítulos desactivados", Toast.LENGTH_SHORT).show()
+        refreshCaptionsUi()
+    }
+
+    private fun refreshCaptionsUi() {
+        if (!::captionsButton.isInitialized) return
+        val tab = TabManager.activeTab()
+        val session = attachedSession
+        val active = LiveCaptions.isActive(session)
+        val available = tab != null && (active || (BrowserPrefs.captionsEnabled(this) && hasMiniVideo(tab)))
+        captionsButton.visibility = if (available && !immersive && !isInPictureInPictureMode) View.VISIBLE else View.GONE
+        CaptionsUi.styleChip(this, captionsButton, active)
+        val display = if (active) LiveCaptions.display(this, session) else null
+        CaptionsUi.render(
+            this, captionView, browserFrame.width, browserFrame.height,
+            if (pipCrop != null || isInPictureInPictureMode) null else tab?.let { BrowserMediaController.videoRect(it.id) },
+            display, isInPictureInPictureMode
+        )
     }
 
     /**
@@ -1528,6 +1587,8 @@ class MainActivity :
         if (!isInPictureInPictureMode) ExtensionManager.setPipMode(attachedSession, false)
         runCatching { unregisterReceiver(pipControlReceiver) }
         BrowserMediaController.attach(null)
+        LiveCaptions.attach(null)
+        if (isFinishing && !isChangingConfigurations) LiveCaptions.stopAll()
         ExtensionManager.detachPromptActivity(this)
         BrowserHosts.detach(this)
         filePickerCallback?.invoke(emptyList())

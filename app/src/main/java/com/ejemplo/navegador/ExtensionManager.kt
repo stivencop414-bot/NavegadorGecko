@@ -1031,12 +1031,27 @@ object ExtensionManager {
         })
     }
 
+    /** Pide al puente que empiece o deje de captar el audio del video (subtítulos en vivo). */
+    fun setCaptions(session: GeckoSession?, active: Boolean): Boolean =
+        postToTopLevel(session, JSONObject().apply {
+            put("type", "captions")
+            put("active", active)
+        })
+
     /** Avisa al puente de que la app pasa a segundo plano o vuelve (recuperación de video). */
     fun sendLifecycle(session: GeckoSession?, foreground: Boolean) {
         postToTopLevel(session, JSONObject().apply {
             put("type", "lifecycle")
             put("state", if (foreground) "foreground" else "background")
         })
+    }
+
+    private fun captionErrorText(code: String): String = when (code) {
+        "no_video" -> "No hay un video en esta página."
+        "suspended" -> "Toca el video una vez y vuelve a activar los subtítulos."
+        "unsupported" -> "Esta página no permite captar el audio."
+        "silent" -> "El video no deja captar su audio (puede estar protegido)."
+        else -> "No se pudo captar el audio del video."
     }
 
     fun hasMediaBridge(session: GeckoSession?): Boolean =
@@ -1511,6 +1526,15 @@ object ExtensionManager {
                                     )
                                 }
                                 return
+                            }
+                            val session = port.sender.session
+                            if (json != null && session != null && port.sender.isTopLevel()) {
+                                when (json.optString("type")) {
+                                    "captions_start" -> LiveCaptions.onRecordingStarted(AppContext.get(), session)
+                                    "captions_audio" -> LiveCaptions.onAudio(session, json.optString("data"))
+                                    "captions_stop" -> LiveCaptions.onRecordingStopped(session)
+                                    "captions_error" -> LiveCaptions.onPageError(session, captionErrorText(json.optString("code")))
+                                }
                             }
                             // Los mensajes no reconocidos no se reflejan de vuelta
                             // al contenido. Esto evita convertir el bridge en un eco de datos.

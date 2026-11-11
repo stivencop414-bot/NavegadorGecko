@@ -14,7 +14,8 @@
 
   const state = {
     adblockEnabled: false,
-    privacyEnabled: false
+    privacyEnabled: false,
+    popupBlockEnabled: true
   };
   let canvasRestore = null;
   let updateYouTubeMonitoring = function() {};
@@ -30,6 +31,7 @@
   function syncSettings() {
     state.adblockEnabled = readBooleanAttribute('data-phantomshield-adblock', false);
     state.privacyEnabled = readBooleanAttribute('data-phantomshield-privacy', false);
+    state.popupBlockEnabled = readBooleanAttribute('data-phantomshield-popups', true);
     if (state.privacyEnabled) installCanvasPrivacy();
     else if (canvasRestore) { canvasRestore(); canvasRestore = null; }
     if (!state.adblockEnabled) restoreYouTubeVideo();
@@ -64,16 +66,85 @@
     }
   }
 
+  /*
+   * Ventanas emergentes y "popunders": las redes de publicidad abren una
+   * pestaña nueva al tocar cualquier parte de la página (un reproductor, un
+   * texto o una capa transparente). Una ventana hacia otro sitio solo se
+   * permite si el toque fue sobre un enlace o botón que apunta a ese destino,
+   * o sobre un botón de compartir, iniciar sesión o pagar.
+   */
+  const TRUSTED_WINDOW_HOSTS = [
+    'accounts.google.com', 'appleid.apple.com', 'login.microsoftonline.com', 'login.live.com',
+    'github.com', 'facebook.com', 'twitter.com', 'x.com', 'linkedin.com', 'pinterest.com',
+    'reddit.com', 'wa.me', 'whatsapp.com', 't.me', 'telegram.me', 'paypal.com', 'stripe.com',
+    'mercadopago.com', 'mercadolibre.com', 'google.com', 'youtube.com', 'discord.com', 'tiktok.com'
+  ];
+  const INTENT_WORDS = /(share|compart|tweet|post|login|log in|sign|inici|acceder|entrar|pay|pag|checkout|comprar|donat|auth|google|apple|microsoft|github|facebook|whatsapp|telegram|linkedin|pinterest|reddit)/i;
+  const TWO_PART_SUFFIX = /\.(?:com?|org|net|gov|edu|ac)\.[a-z]{2}$/;
+
+  function siteOf(host) {
+    const parts = String(host || '').toLowerCase().split('.').filter(Boolean);
+    return parts.slice(TWO_PART_SUFFIX.test(host) ? -3 : -2).join('.');
+  }
+
+  function parseUrl(value) {
+    try {
+      const parsed = new URL(String(value), location.href);
+      return /^https?:$/.test(parsed.protocol) ? parsed : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function isCrossSite(value) {
+    const parsed = parseUrl(value);
+    return Boolean(parsed && siteOf(parsed.hostname) !== siteOf(location.hostname));
+  }
+
+  /** Capa invisible que cubre la página para capturar el primer toque. */
+  function looksLikeTrap(element) {
+    try {
+      const rect = element.getBoundingClientRect();
+      if (rect.width * rect.height < innerWidth * innerHeight * 0.35) return false;
+      const style = getComputedStyle(element);
+      return Number(style.opacity) < 0.15 || style.visibility === 'hidden' ||
+        (!String(element.textContent || '').trim() && !element.querySelector('img, video, canvas, svg, picture'));
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function intendedWindow(target, url) {
+    const parsed = parseUrl(url);
+    if (!parsed) return true;
+    const host = parsed.hostname.toLowerCase();
+    if (TRUSTED_WINDOW_HOSTS.some(function(domain) { return hostnameMatches(host, domain); })) return true;
+    if (!target || typeof target.closest !== 'function') return false;
+    const control = target.closest('a[href], button, [role="button"], [role="link"], [role="menuitem"], input[type="button"], input[type="submit"], summary');
+    if (!control || looksLikeTrap(control)) return false;
+    const href = control.getAttribute && control.getAttribute('href');
+    const linked = href ? parseUrl(href) : null;
+    if (linked && siteOf(linked.hostname) === siteOf(host)) return true;
+    const label = [control.getAttribute('aria-label'), control.getAttribute('title'), control.className,
+      control.id, String(control.textContent || '').slice(0, 80)].join(' ');
+    return INTENT_WORDS.test(label) || label.toLowerCase().includes(siteOf(host).split('.')[0]);
+  }
+
   function installPopupGuard() {
     const originalOpen = window.open;
     if (typeof originalOpen !== 'function') return;
 
     let lastTrustedGesture = 0;
+    let lastGestureTarget = null;
     const recordGesture = function(event) {
-      if (event.isTrusted) lastTrustedGesture = Date.now();
+      if (!event.isTrusted) return;
+      lastTrustedGesture = Date.now();
+      lastGestureTarget = event.target;
     };
+    window.addEventListener('pointerdown', recordGesture, true);
     window.addEventListener('pointerup', recordGesture, true);
     window.addEventListener('touchend', recordGesture, true);
+    window.addEventListener('click', recordGesture, true);
     window.addEventListener('keydown', recordGesture, true);
 
     window.open = function(url) {
@@ -90,19 +161,32 @@
         reportBlockedPopup();
         return null;
       }
+      if (state.popupBlockEnabled && isCrossSite(url) &&
+          !intendedWindow(Date.now() - lastTrustedGesture <= 1500 ? lastGestureTarget : null, url)) {
+        reportBlockedPopup();
+        return null;
+      }
       return originalOpen.apply(this, arguments);
     };
 
     document.addEventListener('click', function(event) {
-      if (!state.adblockEnabled || event.isTrusted) return;
+      if (!state.adblockEnabled) return;
       const element = event.target instanceof Element ? event.target.closest('a[href]') : null;
-      if (element && isKnownPopupUrl(element.href)) {
+      if (!element) return;
+      const opensWindow = /^_(?:blank|new)$|^[^_]/i.test(element.getAttribute('target') || '');
+      const blocked = isKnownPopupUrl(element.href) ||
+        // Un script que crea un enlace y lo "pulsa" para abrir otro sitio en una pestaña nueva.
+        (state.popupBlockEnabled && !event.isTrusted && opensWindow && isCrossSite(element.href)) ||
+        // Enlace transparente que cubre la página para robar el primer toque.
+        (state.popupBlockEnabled && event.isTrusted && opensWindow && isCrossSite(element.href) && looksLikeTrap(element));
+      if (blocked) {
         event.preventDefault();
         event.stopImmediatePropagation();
         reportBlockedPopup();
       }
     }, true);
   }
+
 
   function installCanvasPrivacy() {
     if (canvasRestore || !window.HTMLCanvasElement || !window.CanvasRenderingContext2D) return;

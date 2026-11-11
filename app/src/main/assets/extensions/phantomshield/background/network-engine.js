@@ -5,18 +5,21 @@
 (function() {
   'use strict';
 
+  // `popup` es un tipo propio: las reglas $popup solo valen para ventanas nuevas
+  // (antes se aplicaban a cualquier recurso de ese dominio).
   const REQUEST_TYPES = new Set([
     'document', 'subdocument', 'script', 'image', 'stylesheet',
-    'xmlhttprequest', 'media', 'font', 'object', 'ping', 'websocket', 'other'
+    'xmlhttprequest', 'media', 'font', 'object', 'ping', 'websocket', 'other', 'popup'
   ]);
 
   const UNSUPPORTED_OPTIONS = new Set([
     'badfilter', 'csp', 'elemhide', 'generichide', 'genericblock',
     'removeparam', 'redirect', 'redirect-rule', 'replace', 'urltransform',
-    'match-case', 'popup', 'popunder', 'strict1p', 'strict3p'
+    'match-case', 'strict1p', 'strict3p'
   ]);
 
   const OPTION_ALIASES = Object.freeze({
+    popunder: 'popup',
     '1p': '~third-party',
     '3p': 'third-party',
     css: 'stylesheet',
@@ -54,6 +57,9 @@
       this.globalExceptionRules = [];
       // `||dominio^` sin opciones (la gran mayoría): basta con el nombre.
       this.plainDomains = new Set();
+      // Reglas exclusivas de ventanas nuevas: aparte, para no evaluarlas en cada recurso.
+      this.popupRules = [];
+      this.popupExceptions = [];
       this.ruleKeys = new Set();
       this.ruleTotal = 0;
     }
@@ -77,6 +83,8 @@
       this.exceptionTokenIndex = other.exceptionTokenIndex;
       this.globalExceptionRules = other.globalExceptionRules;
       this.plainDomains = other.plainDomains;
+      this.popupRules = other.popupRules;
+      this.popupExceptions = other.popupExceptions;
       this.ruleKeys = other.ruleKeys;
       this.ruleTotal = other.ruleTotal;
     }
@@ -251,6 +259,11 @@
       // El texto original solo servía para detectar duplicados.
       rule.raw = null;
 
+      if (rule.options.popup && Object.keys(rule.options).filter(function(key) { return REQUEST_TYPES.has(key); }).length === 1) {
+        (rule.isException ? this.popupExceptions : this.popupRules).push(rule);
+        this.ruleTotal++;
+        return true;
+      }
       if (!rule.isException && rule.simpleDomain && rule.plain) {
         this.plainDomains.add(rule.simpleDomain);
         this.ruleTotal++;
@@ -385,7 +398,8 @@
         object: 'object',
         ping: 'ping',
         beacon: 'ping',
-        websocket: 'websocket'
+        websocket: 'websocket',
+        popup: 'popup'
       };
       return mapping[type] || 'other';
     }
@@ -443,6 +457,13 @@
       }
 
       const isThirdParty = this.isThirdPartyRequest(url, documentUrl);
+
+      if (requestType === 'popup') {
+        const matches = (rule) => (rule.simpleDomain ? this._hostnameMatches(hostname, rule.simpleDomain) : this._test(rule, url)) &&
+          this._matchOptions(rule, 'popup', isThirdParty, documentDomain);
+        if (this.popupExceptions.some(matches)) return false;
+        if (this.popupRules.some(matches)) return true;
+      }
 
       for (const rule of this._findExceptionRules(hostname, url)) {
         if ((rule.simpleDomain || this._test(rule, url)) &&

@@ -130,6 +130,24 @@ object BrowserPrefs {
     fun remoteDebugging(c: Context) = p(c).getBoolean("remote_debugging", false)
     fun setRemoteDebugging(c: Context, v: Boolean) = p(c).edit().putBoolean("remote_debugging", v).apply()
 
+    // Subtítulos en vivo (Deepgram) y su traducción.
+    const val TRANSLATE_GOOGLE = "google"
+    const val TRANSLATE_DEEPL = "deepl"
+    fun captionsEnabled(c: Context) = p(c).getBoolean("captions_enabled", true)
+    fun setCaptionsEnabled(c: Context, v: Boolean) = p(c).edit().putBoolean("captions_enabled", v).apply()
+    fun deepgramKey(c: Context) = p(c).getString("deepgram_key", "").orEmpty()
+    fun setDeepgramKey(c: Context, v: String) = p(c).edit().putString("deepgram_key", v.trim()).apply()
+    fun captionLanguage(c: Context) = p(c).getString("caption_language", "multi") ?: "multi"
+    fun setCaptionLanguage(c: Context, v: String) = p(c).edit().putString("caption_language", v).apply()
+    fun captionTranslateTo(c: Context) = p(c).getString("caption_translate", "") ?: ""
+    fun setCaptionTranslateTo(c: Context, v: String) = p(c).edit().putString("caption_translate", v).apply()
+    fun translationProvider(c: Context) = p(c).getString("translation_provider", TRANSLATE_GOOGLE) ?: TRANSLATE_GOOGLE
+    fun setTranslationProvider(c: Context, v: String) = p(c).edit().putString("translation_provider", v).apply()
+    fun deeplKey(c: Context) = p(c).getString("deepl_key", "").orEmpty()
+    fun setDeeplKey(c: Context, v: String) = p(c).edit().putString("deepl_key", v.trim()).apply()
+    fun captionSize(c: Context) = p(c).getInt("caption_size", 16).coerceIn(12, 26)
+    fun setCaptionSize(c: Context, v: Int) = p(c).edit().putInt("caption_size", v.coerceIn(12, 26)).apply()
+
     fun pullToRefresh(c: Context) = p(c).getBoolean("pull_to_refresh", true)
     fun setPullToRefresh(c: Context, v: Boolean) = p(c).edit().putBoolean("pull_to_refresh", v).apply()
     fun smartPip(c: Context) = p(c).getBoolean("smart_pip", true)

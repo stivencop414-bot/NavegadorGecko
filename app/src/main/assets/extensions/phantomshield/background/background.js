@@ -13,6 +13,7 @@
   const DEFAULT_SETTINGS = Object.freeze({
     adblockEnabled: true,
     privacyEnabled: false,
+    popupBlockEnabled: true,
     antiBlockEnabled: false
   });
 
@@ -196,6 +197,12 @@
     });
   }
 
+  const TWO_PART_SUFFIX = /\.(?:com?|org|net|gov|edu|ac)\.[a-z]{2}$/;
+  function siteOfHost(host) {
+    const parts = String(host || '').toLowerCase().split('.').filter(Boolean);
+    return parts.slice(TWO_PART_SUFFIX.test(host) ? -3 : -2).join('.');
+  }
+
   function isEnabledForHost(hostname) {
     return settings.adblockEnabled && !isHostDisabled(hostname);
   }
@@ -294,6 +301,11 @@
     function(details) {
       if (!details.url || isExtensionUrl(details.url)) return {};
 
+      // Primera carga de una pestaña abierta por otra página: candidata a ventana emergente.
+      const openedByPage = details.type === 'main_frame' && typeof details.tabId === 'number' && details.tabId >= 0 &&
+        !tabHosts.has(details.tabId) && !badgeFallbackHosts.has(details.tabId) &&
+        /^https?:\/\//.test(details.originUrl || '');
+
       if (details.type === 'main_frame' && typeof details.tabId === 'number' && details.tabId >= 0) {
         tabHosts.set(details.tabId, hostOf(details.url));
         badgeFallbackHosts.delete(details.tabId);
@@ -344,8 +356,16 @@
         // para recursos): antes, tocar un resultado patrocinado o visitar el
         // sitio de una empresa de publicidad daba error de conexión. Solo se
         // cortan las redes de ventanas emergentes, que nadie visita a propósito.
-        return POPUP_HOSTS.some(function(domain) { return hostnameMatches(parsedUrl.hostname, domain); })
-          ? block() : {};
+        if (POPUP_HOSTS.some(function(domain) { return hostnameMatches(parsedUrl.hostname, domain); })) return block();
+        // Ventana nueva hacia una red de "popunder" (reglas $popup de las listas): se cierra sola.
+        if (openedByPage && settings.popupBlockEnabled && engine && siteOfHost(hostOf(details.originUrl)) !== siteOfHost(parsedUrl.hostname) &&
+            engine.shouldBlock(url, 'popup', details.originUrl, false)) {
+          if (!details.incognito) engine.recordBlocked();
+          countTabBlock(details.tabId);
+          if (!details.incognito) scheduleCountPersist();
+          return { redirectUrl: browser.runtime.getURL('web-accessible/popup-blocked.html') };
+        }
+        return {};
       }
 
       if (isYouTubeAdRequest(parsedUrl)) return block();

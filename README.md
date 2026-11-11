@@ -15,6 +15,10 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Temas Midnight, OLED y claro.
 - Siete colores de acento, con cobalto por defecto.
 - Historial con búsqueda en vivo (título, dominio o dirección, sin distinguir tildes), descargas y compartir.
+- Subtítulos en vivo para cualquier video (botón CC): el audio se comprime en la página (Opus, ~24 kbps),
+  Deepgram lo transcribe en streaming con tu clave y las frases se traducen al momento (Google sin clave o DeepL),
+  sin descargar modelos. Solo transcribe mientras el video suena en primer plano; se puede ocultar el botón.
+- Bloqueo de ventanas emergentes y "popunders" (reglas $popup de las listas y toques robados), con interruptor.
 - Deslizar hacia abajo para recargar (solo cuando la página está arriba y el gesto no lo usa la propia web).
 - Recuperación automática del video al volver a la app: si el reproductor quedó congelado, se repara sin recargar.
 - Ajustes de navegador: tamaño del texto, zoom en todas las páginas, versión de escritorio por defecto,
@@ -22,7 +26,7 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
   digitales, limpieza de parámetros de rastreo, borrar datos al salir y depuración remota.
 - Limpieza de datos.
 - Administrador de extensiones.
-- PhantomShield 8.9.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
+- PhantomShield 9.0.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
   eliminación de anuncios de YouTube, contadores reales y controles por sitio. IA opcional
   (tu propia API) para los anuncios que las reglas no reconocen; las señales inequívocas se
   resuelven en el dispositivo sin gastar tokens y el panel muestra lo revisado/ocultado en cada página.

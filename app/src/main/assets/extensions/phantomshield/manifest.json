@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "PhantomShield",
   "short_name": "PhantomShield",
-  "version": "8.9.0",
+  "version": "9.0.0",
   "description": "Bloquea anuncios y rastreadores con reglas locales (red, ocultación y YouTube). Clasificación IA opcional para lo que las reglas no detectan, con consentimiento, exclusiones y presupuesto.",
   "icons": {
     "48": "icons/icon-48.png",
@@ -13,8 +13,14 @@
       "id": "phantomshield@geckoview.internal",
       "strict_min_version": "142.0",
       "data_collection_permissions": {
-        "required": ["none"],
-        "optional": ["websiteContent", "browsingActivity", "authenticationInfo"]
+        "required": [
+          "none"
+        ],
+        "optional": [
+          "websiteContent",
+          "browsingActivity",
+          "authenticationInfo"
+        ]
       }
     }
   },
@@ -58,13 +64,20 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["content/ai-detector.js"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content/ai-detector.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     },
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "js": [
         "content/content-script.js"
       ],
@@ -73,7 +86,9 @@
       "match_about_blank": true
     },
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "js": [
         "content/page-hooks.js"
       ],
@@ -83,7 +98,10 @@
       "world": "MAIN"
     },
     {
-      "matches": ["*://*.facebook.com/*", "*://*.instagram.com/*"],
+      "matches": [
+        "*://*.facebook.com/*",
+        "*://*.instagram.com/*"
+      ],
       "js": [
         "content/heuristic-vision.js"
       ],
@@ -91,7 +109,9 @@
       "all_frames": false
     },
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "js": [
         "data/cosmetic-rules.js",
         "content/cosmetic-filter.js"
@@ -103,6 +123,8 @@
   "web_accessible_resources": [
     "web-accessible/noop.js",
     "web-accessible/ga-surrogate.js",
-    "web-accessible/gtm-surrogate.js"
+    "web-accessible/gtm-surrogate.js",
+    "web-accessible/popup-blocked.html",
+    "web-accessible/popup-blocked.js"
   ]
 }

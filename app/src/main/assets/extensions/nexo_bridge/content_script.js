@@ -516,6 +516,163 @@
   }, true);
 
   // ---------------------------------------------------------------
+  // Subtítulos en vivo: audio del video comprimido hacia Nexo
+  // ---------------------------------------------------------------
+
+  /*
+   * El audio se toma del propio video con Web Audio (el sonido sigue
+   * saliendo igual) y se comprime en Opus a ~24 kbps con el codificador
+   * nativo de MediaRecorder: muy poco trabajo para el teléfono. Solo se
+   * graba mientras el video se reproduce en primer plano.
+   */
+  const CAPTION_SLICE_MS = 250;
+  const audioGraphs = new WeakMap();
+  const captions = { active: false, video: null, recorder: null, silentTimer: 0 };
+
+  function sendToNexo(message) {
+    if (!port) return false;
+    try { port.postMessage(message); return true; } catch (_) { return false; }
+  }
+
+  function captionError(code) {
+    sendToNexo({ type: "captions_error", code });
+  }
+
+  function captionVideo() {
+    const videos = collectVideos().filter(video => hasMedia(video));
+    return (pipVideo && pipVideo.isConnected ? pipVideo : null) ||
+      bestVideo(videos, true) || bestVideo(videos, false);
+  }
+
+  function bytesToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(binary);
+  }
+
+  async function audioGraph(video) {
+    const known = audioGraphs.get(video);
+    if (known) return known;
+    const Context = window.AudioContext || window.webkitAudioContext;
+    if (typeof Context !== "function" || typeof MediaRecorder !== "function") throw new Error("unsupported");
+    const context = new Context();
+    if (context.state !== "running") {
+      try { await Promise.race([context.resume(), new Promise(resolve => setTimeout(resolve, 800))]); } catch (_) {}
+    }
+    // Sin un contexto en marcha, desviar el audio dejaría el video en silencio.
+    if (context.state !== "running") {
+      try { context.close(); } catch (_) {}
+      throw new Error("suspended");
+    }
+    const source = context.createMediaElementSource(video);
+    source.connect(context.destination);
+    const destination = context.createMediaStreamDestination();
+    source.connect(destination);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const graph = { context, destination, analyser };
+    audioGraphs.set(video, graph);
+    return graph;
+  }
+
+  function stopRecording(notify) {
+    const recorder = captions.recorder;
+    captions.recorder = null;
+    clearTimeout(captions.silentTimer);
+    captions.silentTimer = 0;
+    if (recorder) {
+      try { if (recorder.state !== "inactive") recorder.stop(); } catch (_) {}
+      if (notify) sendToNexo({ type: "captions_stop" });
+    }
+  }
+
+  /** Un video protegido (DRM) o de otro origen sin permiso entrega silencio. */
+  function watchSilence(graph, recorder) {
+    const samples = new Uint8Array(graph.analyser.fftSize);
+    let checks = 0;
+    let heard = false;
+    const check = () => {
+      if (captions.recorder !== recorder) return;
+      graph.analyser.getByteTimeDomainData(samples);
+      for (const value of samples) if (Math.abs(value - 128) > 2) { heard = true; break; }
+      checks++;
+      if (heard) return;
+      if (checks >= 6) { captionError("silent"); return; }
+      captions.silentTimer = setTimeout(check, 2000);
+    };
+    captions.silentTimer = setTimeout(check, 2000);
+  }
+
+  async function startRecording() {
+    if (!captions.active || captions.recorder) return;
+    const video = captions.video && captions.video.isConnected ? captions.video : captionVideo();
+    if (!video) { captionError("no_video"); return; }
+    captions.video = video;
+    if (video.paused || video.ended || document.visibilityState === "hidden") return;
+    let graph;
+    try {
+      graph = await audioGraph(video);
+    } catch (error) {
+      captionError(error && error.message === "suspended" ? "suspended" : "unsupported");
+      return;
+    }
+    if (!captions.active || captions.recorder || video.paused) return;
+    const mimeType = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus"]
+      .find(type => MediaRecorder.isTypeSupported(type)) || "";
+    let recorder;
+    try {
+      recorder = new MediaRecorder(graph.destination.stream, mimeType ? { mimeType, audioBitsPerSecond: 24000 } : undefined);
+    } catch (_) {
+      captionError("unsupported");
+      return;
+    }
+    captions.recorder = recorder;
+    recorder.ondataavailable = event => {
+      if (!event.data || !event.data.size || captions.recorder !== recorder) return;
+      event.data.arrayBuffer().then(buffer => {
+        if (captions.recorder === recorder) sendToNexo({ type: "captions_audio", data: bytesToBase64(buffer) });
+      }).catch(() => {});
+    };
+    sendToNexo({ type: "captions_start", mime: mimeType });
+    try {
+      recorder.start(CAPTION_SLICE_MS);
+    } catch (_) {
+      captions.recorder = null;
+      captionError("unsupported");
+      return;
+    }
+    watchSilence(graph, recorder);
+  }
+
+  function setCaptions(active) {
+    captions.active = active === true;
+    if (!captions.active) {
+      stopRecording(false);
+      captions.video = null;
+      return;
+    }
+    captions.video = captionVideo();
+    startRecording();
+  }
+
+  // Grabar solo mientras el video suena: en pausa no se envía nada (ni se cobra).
+  document.addEventListener("playing", event => {
+    if (captions.active && (!captions.video || event.target === captions.video)) {
+      if (!captions.video) captions.video = event.target;
+      startRecording();
+    }
+  }, true);
+  ["pause", "ended", "emptied"].forEach(type => {
+    document.addEventListener(type, event => {
+      if (captions.active && event.target === captions.video) stopRecording(true);
+    }, true);
+  });
+
+  // ---------------------------------------------------------------
   // Estado hacia Nexo
   // ---------------------------------------------------------------
 
@@ -642,8 +799,17 @@
     }
 
     if (message.type === "lifecycle") {
-      if (message.state === "background") onBackground();
-      else if (message.state === "foreground") onForeground();
+      if (message.state === "background") {
+        onBackground();
+        if (captions.recorder) stopRecording(true);
+      } else if (message.state === "foreground") {
+        onForeground();
+        if (captions.active) setTimeout(startRecording, 900);
+      }
+    }
+
+    if (message.type === "captions") {
+      setCaptions(message.active === true);
     }
   }
 

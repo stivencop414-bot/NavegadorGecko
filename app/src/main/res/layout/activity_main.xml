@@ -99,24 +99,63 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
 
-        <Button
-            android:id="@+id/miniPlayerButton"
+        <TextView
+            android:id="@+id/captionView"
             android:layout_width="wrap_content"
-            android:layout_height="48dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|start"
+            android:gravity="center"
+            android:maxLines="3"
+            android:paddingStart="12dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="6dp"
+            android:textSize="16sp"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/videoChips"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:layout_gravity="bottom|end"
             android:layout_marginEnd="16dp"
             android:layout_marginBottom="16dp"
-            android:drawableStart="@drawable/ic_pip"
-            android:drawablePadding="8dp"
-            android:gravity="center"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-            android:paddingStart="16dp"
-            android:paddingEnd="18dp"
-            android:text="@string/mini_video"
-            android:textAllCaps="false"
-            android:textSize="14sp"
-            android:visibility="gone" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/captionsButton"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:layout_marginEnd="8dp"
+                android:contentDescription="Subtítulos en vivo"
+                android:gravity="center"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:text="CC"
+                android:textAllCaps="false"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/miniPlayerButton"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:drawableStart="@drawable/ic_pip"
+                android:drawablePadding="8dp"
+                android:gravity="center"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingStart="16dp"
+                android:paddingEnd="18dp"
+                android:text="@string/mini_video"
+                android:textAllCaps="false"
+                android:textSize="14sp"
+                android:visibility="gone" />
+        </LinearLayout>
     </com.ejemplo.navegador.PullRefreshLayout>
 
     <!-- Floating dock adapted from the supplied prototype; web content keeps its full viewport. -->
