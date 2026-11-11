@@ -71,3 +71,8 @@ test('quick AI controls recover after scanning and changing the patcher setting'
   assert.equal(h.field('exclude-ai').disabled,false);await h.fire('disable-ai');
   assert.equal(h.state.aiConfig.enabled,false);assert.equal(h.state.adblockEnabled,true);
 });
+
+ test('legacy custom providers do not show a false missing-key error',async()=>{
+  const h=await harness({aiConfig:{enabled:true,consent:true,scope:'public',endpoint:'https://api.example/v1',model:'small'}});
+  assert.doesNotMatch(h.field('ai-page').textContent,/Falta la clave/);
+ });

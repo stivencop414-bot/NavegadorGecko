@@ -207,8 +207,14 @@ test('definitive ad signals are hidden locally without calling the provider',asy
  const h=harness();
  const result=await h.ai.classify('news.example.com',[
   {id:'c-1',tag:'INS',signals:['ad-attribute'],width:300,height:250},
-  {id:'c-2',tag:'IFRAME',signals:['third-party-frame','ad-size'],width:728,height:90}],false);
+  {id:'c-2',tag:'IFRAME',signals:['third-party-frame','ad-size','advertisement-label'],width:728,height:90}],false);
  assert.equal(result.ok,true); assert.equal(h.calls.length,0);
  assert.deepEqual(result.decisions.map(d=>d.hide),[true,true]);
  const usage=await h.ai.usage(); assert.equal(usage.local,2); assert.equal(usage.detected,2);
 });
+
+ test('a third-party frame with ad dimensions is not automatically an ad',async()=>{
+  const h=harness({},()=>new Response(JSON.stringify({choices:[{message:{content:'{"decisions":[{"id":"c-1","isAd":false,"confidence":0.99}]}'}}]})));
+  const result=await h.ai.classify('news.com',[{id:'c-1',tag:'IFRAME',signals:['third-party-frame','ad-size'],width:300,height:250}],false);
+  assert.equal(result.ok,true);assert.equal(result.decisions[0].hide,false);assert.equal(h.calls.length,1);assert.equal((await h.ai.usage()).local,0);
+ });

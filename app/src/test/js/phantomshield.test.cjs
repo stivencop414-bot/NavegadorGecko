@@ -42,7 +42,7 @@ async function background() {
   }
   await new Promise(setImmediate);
   return {
-    browser, stored, calls: () => calls,
+    browser, stored, memory:context.PhantomAIMemory, calls: () => calls,
     request: override => beforeRequest.listeners[0]({
       url: 'https://doubleclick.net/ad.js', documentUrl: 'https://example.com/page',
       type: 'script', tabId: 10, incognito: false, ...override
@@ -100,3 +100,33 @@ test('AI is off by default and makes no provider request', async () => {
     assert.equal(h.calls(), initial);
   } finally { h.close(); }
 });
+
+ test('learned-domain management is restricted to own normal extension pages',async()=>{
+  const h=await background();try{
+   await h.memory.remember('news.com',['a'.repeat(64)],()=>true);
+   for(const sender of [
+    {id:h.browser.runtime.id,url:'https://news.com',tab:{id:10}},
+    {id:'other',url:'moz-extension://phantom/options/options.html'},
+    {id:h.browser.runtime.id,url:'moz-extension://phantom/options/options.html',tab:{id:10,incognito:true}}
+   ])assert.equal((await h.message({type:'AI_MEMORY_CLEAR'},sender)).ok,false);
+   const own={id:h.browser.runtime.id,url:'moz-extension://phantom/options/options.html'};
+   assert.equal((await h.message({type:'AI_MEMORY_LIST'},own)).domains.length,1);
+   const result=await h.message({type:'AI_MEMORY_EXCLUDE',host:'news.com'},own);
+   assert.equal(result.ok,true);assert.equal(result.domains.length,0);assert.ok(h.stored.aiConfig.excludedHosts.includes('news.com'));
+   assert.equal(h.stored.aiMemoryRevision,null);
+  }finally{h.close()}
+ });
+
+ test('idle is visible after detector initialization and restoring ads reverses its badge contribution',async()=>{
+  const h=await background();try{
+   const sender={id:h.browser.runtime.id,frameId:0,url:'https://news.com/',tab:{id:10,url:'https://news.com/',incognito:false}};
+   await h.message({type:'AI_PAGE',restored:true,code:'ready'},sender);
+   await h.message({type:'AI_PAGE',idle:true},sender);
+   assert.equal((await h.message({type:'GET_STATS',tabId:10})).tabAi.code,'idle');
+   await h.message({type:'AI_PAGE',hidden:2,sources:{memory:2},code:'ok'},sender);
+   assert.equal((await h.message({type:'GET_STATS',tabId:10})).tabBlocked,2);
+   await h.message({type:'AI_PAGE',restored:true,code:'reset'},sender);
+   const restored=await h.message({type:'GET_STATS',tabId:10});
+   assert.equal(restored.tabBlocked,0);assert.equal(restored.tabAi.hidden,0);assert.equal(restored.tabAi.memory,0);
+  }finally{h.close()}
+ });

@@ -65,7 +65,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     field('ai-tokens').textContent = metric('inputTokens') + metric('outputTokens') === 0 && metric('requests') && metric('requests') === metric('usageMissing') ? '—' : (metric('inputTokens') + metric('outputTokens')).toLocaleString('es');
     field('ai-detected').textContent = metric('detected').toLocaleString('es');
     field('ai-usage-note').textContent = metric('analyzed') + ' candidatos analizados · ' + metric('requests') + ' solicitudes. ' +
-      (metric('usageMissing') ? metric('usageMissing') + ' sin datos de tokens. ' : '') + 'Tokens reportados por la API; incluye decisiones de caché, no anuncios únicos.';
+      (metric('usageMissing') ? metric('usageMissing') + ' sin datos de tokens. ' : '') + 'Tokens reportados por la API. '+metric('local')+' decisiones locales · '+metric('remote')+' del modelo · '+metric('memoryHits')+' de memoria · '+metric('cacheHits')+' de caché. No son anuncios únicos.';
     const config = stored.aiConfig && typeof stored.aiConfig === 'object' ? stored.aiConfig : {};
     const authorized = globalThis.PhantomAIConfig.hostAllowed(config, host);
     scanAvailable = Boolean(domain && globalOn && siteOn && config.enabled === true && config.consent === true && authorized && !(currentTab && currentTab.incognito));
@@ -94,19 +94,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Lo que la IA hizo en ESTA página: prueba visible de que trabaja.
     const page = stats.tabAi && typeof stats.tabAi === 'object' ? stats.tabAi : null;
     const pageNumber = key => page && Number.isSafeInteger(page[key]) && page[key] >= 0 ? page[key] : 0;
-    const needsKey = config.enabled && !config.apiKey && config.provider !== 'custom';
+    const needsKey = config.enabled && !config.apiKey && ['openai','claude','openrouter'].includes(config.provider);
     let pageText = '';
-    if (needsKey) pageText = 'Falta la clave API: la IA no puede analizar. Añádela en Configurar IA.';
+    if (needsKey) pageText = 'Falta la clave API para nuevas consultas. Añádela en IA y memoria; las reglas y coincidencias recordadas pueden seguir actuando.';
+    else if(scanAvailable && page && page.code==='reset') pageText='Contenido restaurado tras borrar memoria. Puedes volver a analizar esta página.';
+    else if(scanAvailable && page && ['auth','model','request','network','timeout','format','server','rate'].includes(page.code)) pageText='Análisis pendiente: '+(stateText[page.code]||'revisa la conexión')+'.';
     else if (scanAvailable && page && pageNumber('analyzed')) {
       pageText = 'En esta página: revisó ' + pageNumber('analyzed') + (pageNumber('analyzed') === 1 ? ' elemento' : ' elementos') +
-        ' y ocultó ' + pageNumber('hidden') + '.';
+        ' y mantiene ocultos ' + pageNumber('hidden') + '. '+pageNumber('local')+' locales · '+pageNumber('model')+' del modelo · '+pageNumber('memory')+' de memoria · '+pageNumber('cache')+' de caché.';
     } else if (scanAvailable && page && page.code === 'idle') {
-      pageText = 'En esta página: nada dudoso; las reglas locales ya cubren lo visible.';
+      pageText = 'No se encontraron candidatos con las señales actuales. Esto no garantiza que la página esté libre de anuncios.';
     } else if (scanAvailable && page && ['busy', 'budget', 'cooldown'].includes(page.code)) {
       pageText = 'En esta página: en espera por el límite de solicitudes; se reintentará.';
     } else if (scanAvailable) {
       pageText = 'En esta página: revisando lo que las reglas no reconocen…';
     }
+    if(scanAvailable && page && pageNumber('analyzed') && ['busy','budget','cooldown'].includes(page.code))pageText+=' El resto espera por el límite de solicitudes.';
+    if(scanAvailable && page && page.code==='limit')pageText+=' Límite de análisis de esta carga alcanzado.';
+    if(page && page.memoryError)pageText+=' No se pudo leer o guardar la memoria.';
     field('ai-page').hidden = !pageText;
     field('ai-page').textContent = pageText;
     field('ai-page').className = 'ai-page' + (needsKey ? ' bad' : page && pageNumber('hidden') ? ' good' : '');
@@ -220,7 +225,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   };
   if (browser.storage.onChanged) browser.storage.onChanged.addListener(changed);
+  const activityChanged=message=>{if(message && message.type==='AI_ACTIVITY_UPDATED' && currentTab && message.tabId===currentTab.id)refresh().catch(()=>{});};
+  if(browser.runtime.onMessage)browser.runtime.onMessage.addListener(activityChanged);
   window.addEventListener('pagehide', () => {
+    if(browser.runtime.onMessage)browser.runtime.onMessage.removeListener(activityChanged);
     if (browser.storage.onChanged && browser.storage.onChanged.removeListener) browser.storage.onChanged.removeListener(changed);
   }, { once: true });
   try { await refresh(); }

@@ -3,6 +3,7 @@
   'use strict';
   if (window.top !== window) return;
   let enabled = false;
+  let pausedForMemory = false;
   let rich = false;
   let observer = null;
   let timer = null;
@@ -98,7 +99,7 @@
     return Boolean(root && root.getAttribute && root.getAttribute('data-nexo-pip-active')==='true');
   }
   function describe(element) {
-    if (element.closest('form, nav, header, [role="dialog"], [contenteditable="true"], #phantomshield-ad-bait, #nexo-pip-mask, .nexo-pip-video, .nexo-pip-ancestor') ||
+    if (element.closest('form, nav, header, [role="dialog"], [contenteditable="true"], #phantomshield-ad-bait, #phantomshield-ai-toast, #nexo-pip-mask, .nexo-pip-video, .nexo-pip-ancestor') ||
         element.querySelector('input, textarea, select, video, audio, canvas, [contenteditable="true"]') ||
         element.contains(document.activeElement) || hidden.has(element)) return null;
     const rect = element.getBoundingClientRect();
@@ -145,6 +146,11 @@
     if (/^(?:fixed|sticky)$/.test(getComputedStyle(element).position)) signals.push('fixed-position');
 
     const descriptor = { tag: element.tagName, signals: signals, width: rect.width, height: rect.height };
+    // Local-only identity: separates similar cards, never forwarded to the provider.
+    descriptor.localKey = JSON.stringify([
+      String(element.id||'').slice(0,80),String(element.className||'').slice(0,240),
+      (element.getAttribute('data-ad-slot')||'').slice(0,80),frameHost,excerpt(element).slice(0,160)
+    ]);
     if (rich) {
       // Contexto para que el modelo pueda decidir; el fondo lo vuelve a limitar y sanear.
       const text = excerpt(element);
@@ -229,28 +235,37 @@
         return result || { ok: false, error: 'IA no disponible.' };
       }
       let count = 0;
+      const sources={local:0,model:0,memory:0,cache:0};
+      const deferred=[];
       for (const candidate of candidates) {
         const element = elements.get(candidate.id);
         const current = describe(element);
         // A slow response must never hide a container that has changed content.
         if (changed.has(candidate.id) || !element.isConnected || !current ||
             JSON.stringify(current) !== descriptors.get(candidate.id)) continue;
-        seen.set(element, JSON.stringify(current));
         const decision = result.decisions.find(item => item.id === candidate.id);
+        if(!decision || decision.deferred) { deferred.push(element);continue; }
+        seen.set(element, JSON.stringify(current));
         if (decision && decision.hide === true) {
           hidden.set(element, { value: element.style.getPropertyValue('display'), priority: element.style.getPropertyPriority('display') });
           element.style.setProperty('display', 'none', 'important');
           count++;
+          if(Object.hasOwn(sources,decision.source))sources[decision.source]++;
         }
       }
-      report({ hidden: count, code: 'ok' });
+      if(deferred.length && retries<MAX_RETRIES && (!result.warning || ['busy','budget','rate','timeout','network','server'].includes(result.warning.code))) {
+        retries++;batches--;for(const element of deferred)enqueue(element);
+        retryLater(result.warning && result.warning.code==='busy'?4000:30000);
+      }
+      report({ hidden: count, sources, code: result.warning ? result.warning.code : 'ok', memoryError: result.memoryError === true });
       if (count) showToast(count);
-      return { ok: true, analyzed: candidates.length, hidden: count };
+      return { ok: true, analyzed: candidates.length-deferred.length, hidden: count };
     } catch (error) {
       return { ok: false, error: 'IA no disponible; continúa el bloqueo local.' };
     } finally {
       watcher.disconnect(); busy = false;
       if (batches >= MAX_BATCHES) {
+        report({code:'limit'});
         stopObserver();
         pendingRoots.clear();
         walker = null;
@@ -298,7 +313,7 @@
     }
     const parts = host._phantom;
     if (!parts) return;
-    parts.text.textContent = 'IA de PhantomShield ocultó ' + toastCount + (toastCount === 1 ? ' anuncio' : ' anuncios');
+    parts.text.textContent = 'PhantomShield ocultó ' + toastCount + (toastCount === 1 ? ' anuncio' : ' anuncios');
     requestAnimationFrame(function() { parts.pill.style.opacity = '1'; });
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function() {
@@ -354,7 +369,8 @@
   window.addEventListener('pageshow', updateVisibility);
 
 
-  async function refresh() {
+  async function refresh(pause = false) {
+    pausedForMemory = pause;
     const revision = ++epoch;
     enabled = false;
     rich = false;
@@ -363,11 +379,14 @@
     clearTimeout(timer);
     timer = null;
     restore();
+    report({restored:true,code:pause?'reset':'ready'});
+    batches = 0;
     seen = new WeakMap();
     pendingRoots.clear();
     walker = null;
     retries = 0;
     reportedIdle = false;
+    if(pause)return;
     try {
       const state = await browser.runtime.sendMessage({ type: 'GET_SITE_STATE' });
       if (revision !== epoch) return;
@@ -383,12 +402,16 @@
   browser.runtime.onMessage.addListener(function(message, sender) {
     if (sender.id === browser.runtime.id && message && message.type === 'AI_SCAN') {
       if (!walker && document.body) pendingRoots.add(document.body);
-      return scan();
+      return (async()=>{if(pausedForMemory)await refresh();return scan();})();
     }
     return undefined;
   });
   browser.storage.onChanged.addListener(function(changes, area) {
-    if (area === 'local' && (changes.aiConfig || changes.adblockEnabled || changes.disabled_domains)) refresh();
+    if(area!=='local')return;
+    if(changes.aiMemoryRevision) {
+      const value=changes.aiMemoryRevision.newValue;
+      if(value && (!value.host || value.host===location.hostname))refresh(true);
+    }else if(changes.aiConfig || changes.adblockEnabled || changes.disabled_domains)refresh();
   });
   refresh();
 })();

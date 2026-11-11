@@ -769,3 +769,17 @@ select { font:inherit; width:100%; min-height:48px; padding:12px; color:var(--te
 select#detail {
   margin-bottom:0;
 }
+
+.memory-card { border-color: color-mix(in srgb, var(--accent, #5578ff) 40%, transparent); }
+.memory-toolbar { display:flex; gap:8px; margin-top:16px; align-items:center; }
+.memory-toolbar input { flex:1; min-width:0; }
+.memory-domains { display:grid; gap:10px; margin:12px 0; max-height:420px; overflow:auto; }
+.memory-domain { padding:16px; border:1px solid rgba(128,144,180,.25); border-radius:16px; background:rgba(128,144,180,.05); }
+.memory-domain h3 { font-size:14px; margin:0 0 8px; overflow-wrap:anywhere; }
+.memory-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.memory-actions button { min-height:44px; flex:1; }
+#memory-status { font-size:13px; line-height:1.5; }
+@media(max-width:360px) { .memory-toolbar { flex-wrap:wrap; } .memory-toolbar input { flex-basis:100%; } }
+
+body { padding-bottom:var(--action-space,168px); }
+html { scroll-padding-bottom:var(--action-space,168px); }
