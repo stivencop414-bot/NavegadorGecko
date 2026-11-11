@@ -783,3 +783,14 @@ select#detail {
 
 body { padding-bottom:var(--action-space,168px); }
 html { scroll-padding-bottom:var(--action-space,168px); }
+
+/* Memoria: mismos controles que el resto de la página. */
+.memory-switch { margin-top:12px; }
+.memory-switch label[for] { margin:0 0 4px; font-size:13px; font-weight:600; }
+.memory-toolbar input { min-height:42px; }
+.memory-toolbar button { min-height:42px; padding:0 16px; font-size:12px; }
+.memory-clear { width:100%; margin-top:6px; font-size:12px; color:var(--danger); }
+#memory-status:empty, #memory-summary:empty { display:none; }
+.memory-domain { padding:12px 14px; }
+.memory-actions button { min-height:38px; font-size:12px; }
+select { font-size:13px; font-weight:500; }

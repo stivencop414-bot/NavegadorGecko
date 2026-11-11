@@ -515,7 +515,7 @@ object ThemeManager {
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
             intArrayOf(
                 ColorUtils.setAlphaComponent(p.accent, 120),
-                ColorUtils.setAlphaComponent(p.muted, if (p.isDark) 110 else 60)
+                ColorUtils.setAlphaComponent(p.muted, if (p.isDark) 110 else 100)
             )
         )
     }

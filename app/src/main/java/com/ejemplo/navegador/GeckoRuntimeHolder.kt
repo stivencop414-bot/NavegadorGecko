@@ -131,6 +131,37 @@ object GeckoRuntimeHolder {
         settings.contentBlocking.setCookieBehaviorPrivateMode(
             ContentBlocking.CookieBehavior.ACCEPT_FIRST_PARTY
         )
+
+        val tracking = BrowserPrefs.trackingProtection(context)
+        val strict = tracking && BrowserPrefs.strictTracking(context)
+        runCatching {
+            settings.contentBlocking.setEnhancedTrackingProtectionLevel(
+                when {
+                    strict -> ContentBlocking.EtpLevel.STRICT
+                    tracking -> ContentBlocking.EtpLevel.DEFAULT
+                    else -> ContentBlocking.EtpLevel.NONE
+                }
+            )
+            settings.contentBlocking.setStrictSocialTrackingProtection(strict)
+        }
+        runCatching {
+            settings.contentBlocking.setSafeBrowsing(
+                if (BrowserPrefs.safeBrowsing(context)) ContentBlocking.SafeBrowsing.DEFAULT
+                else ContentBlocking.SafeBrowsing.NONE
+            )
+        }
+        runCatching { settings.contentBlocking.setQueryParameterStrippingEnabled(BrowserPrefs.queryStripping(context)) }
+        runCatching {
+            settings.setFingerprintingProtection(BrowserPrefs.fingerprinting(context))
+            settings.setFingerprintingProtectionPrivateBrowsing(true)
+        }
+        runCatching {
+            settings.setAutomaticFontSizeAdjustment(false)
+            settings.setFontSizeFactor(BrowserPrefs.textScale(context) / 100f)
+        }
+        runCatching { settings.setForceUserScalableEnabled(BrowserPrefs.forceZoom(context)) }
+        runCatching { settings.setJavaScriptEnabled(BrowserPrefs.javascript(context)) }
+        runCatching { settings.setRemoteDebuggingEnabled(BrowserPrefs.remoteDebugging(context)) }
     }
 }
 

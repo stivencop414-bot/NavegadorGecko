@@ -46,7 +46,11 @@ class MainActivity :
     Activity(),
     TabManager.Listener,
     BrowserMediaController.Listener,
+    LiveCaptions.Listener,
     BrowserHost {
+    private lateinit var captionsButton: Button
+    private lateinit var captionView: TextView
+    private var lastCaptionMessage: String? = null
     private lateinit var geckoView: GeckoView
     private lateinit var omnibox: EditText
     private lateinit var progress: ProgressBar
@@ -57,7 +61,7 @@ class MainActivity :
     private lateinit var privateBanner: TextView
     private lateinit var miniPlayerButton: Button
     private lateinit var root: View
-    private lateinit var browserFrame: android.widget.FrameLayout
+    private lateinit var browserFrame: PullRefreshLayout
     private lateinit var startPage: StartPageView
     private var startPageKey = ""
 
@@ -88,6 +92,7 @@ class MainActivity :
     // Un sitio puso un elemento (normalmente el video) en pantalla completa.
     private var fullScreenActive = false
     private var pendingPipEntry: Runnable? = null
+    private var wasBackgrounded = false
 
     // Selector de archivos y permisos pedidos por páginas web.
     private var filePickerCallback: ((List<Uri>) -> Unit)? = null
@@ -152,6 +157,7 @@ class MainActivity :
         BrowserHosts.attach(this)
         bindViews()
         BrowserMediaController.attach(this)
+        LiveCaptions.attach(this)
         applyTheme()
         configureUi()
         ThemeManager.takeInitialFocus(root)
@@ -195,6 +201,12 @@ class MainActivity :
         browserFrame.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             if (pipCrop != null && isInPictureInPictureMode) applyPipCrop()
         }
+        browserFrame.enabledForPage = {
+            BrowserPrefs.pullToRefresh(this) && !isInPictureInPictureMode && !fullScreenActive &&
+                startPage.visibility != View.VISIBLE && findBar.visibility != View.VISIBLE &&
+                TabManager.activeTab()?.let { !BrowserPrefs.isNexoHome(it.url) } == true
+        }
+        browserFrame.onRefresh = { TabManager.reload() }
         omnibox = findViewById(R.id.omnibox)
         progress = findViewById(R.id.pageProgress)
         tabButton = findViewById(R.id.tabButton)
@@ -203,6 +215,8 @@ class MainActivity :
         clearOmniboxButton = findViewById(R.id.clearOmniboxButton)
         privateBanner = findViewById(R.id.privateBanner)
         miniPlayerButton = findViewById(R.id.miniPlayerButton)
+        captionsButton = findViewById(R.id.captionsButton)
+        captionView = findViewById(R.id.captionView)
         findBar = findViewById(R.id.findBar)
         findInput = findViewById(R.id.findInput)
         findCount = findViewById(R.id.findCount)
@@ -227,6 +241,11 @@ class MainActivity :
         }
         findViewById<Button>(R.id.menuButton).setOnClickListener { showMenu(it) }
         miniPlayerButton.setOnClickListener { startMiniPlayer() }
+        captionsButton.setOnClickListener { toggleCaptions() }
+        captionsButton.setOnLongClickListener {
+            CaptionsUi.showSheet(this) { refreshCaptionsUi() }
+            true
+        }
 
         clearOmniboxButton.setOnClickListener {
             omnibox.setText("")
@@ -647,6 +666,7 @@ class MainActivity :
         }
         topBar.background = null
         navBar.background = null
+        browserFrame.applyPalette(p.surface, p.accent, p.outline)
         ThemeManager.styleEdit(this, omnibox)
         ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),TabManager.activeTab()?.let { it.burnerId != null || it.networkProfile != null } == true)
         styleMiniPlayerChip()
@@ -756,6 +776,8 @@ class MainActivity :
     override fun onActiveTabChanged(tab: BrowserTab, session: GeckoSession) {
         if (attachedSession !== session) {
             hideFindBar()
+            // Los subtítulos son de la pestaña visible: no seguir transcribiendo otra.
+            attachedSession?.let { LiveCaptions.stop(it) }
             if (attachedSession != null) geckoView.releaseSession()
             // Fondo del tema mientras la página pinta (evita el destello blanco).
             runCatching {
@@ -835,7 +857,10 @@ class MainActivity :
         if (tab.id != TabManager.activeTab()?.id) return
         progress.progress = progressValue
         progress.visibility = if (loading && !immersive) View.VISIBLE else View.GONE
-        if (!loading) scheduleIdlePreview(tab)
+        if (!loading) {
+            browserFrame.finishRefresh()
+            scheduleIdlePreview(tab)
+        }
     }
 
     override fun onTabCountChanged(count: Int) {
@@ -946,7 +971,13 @@ class MainActivity :
         activityStopped = false
         val tab = TabManager.activeTab()
         if (tab != null && tab.session == null) TabManager.switchTo(tab.id)
-        else TabManager.resumeActive()
+        else {
+            TabManager.resumeActive()
+            // La superficie de video se recrea al volver: el puente repara el reproductor si quedó congelado.
+            val session = tab?.session
+            if (session != null && wasBackgrounded) geckoView.postDelayed({ ExtensionManager.sendLifecycle(session, true) }, 250L)
+        }
+        wasBackgrounded = false
     }
 
     override fun onResume() {
@@ -989,6 +1020,8 @@ class MainActivity :
         if (!isInPictureInPictureMode) {
             val tab = TabManager.activeTab()
 
+            ExtensionManager.sendLifecycle(tab?.session, false)
+            wasBackgrounded = true
             TabManager.prepareForBackground()
 
             /*
@@ -1050,6 +1083,64 @@ class MainActivity :
         val tab = TabManager.activeTab()
         val key = tab?.let { it.id + "|" + it.url }
         setMiniChipVisible(!immersive && !isInPictureInPictureMode && isMiniVideoAvailable() && key != miniChipHiddenFor)
+        refreshCaptionsUi()
+    }
+
+    // ---------------------------------------------------------------
+    // Subtítulos en vivo
+    // ---------------------------------------------------------------
+
+    override fun onCaptionsChanged(session: GeckoSession) {
+        if (session !== attachedSession) return
+        refreshCaptionsUi()
+        val message = LiveCaptions.message(session)
+        if (LiveCaptions.state(session) == LiveCaptions.State.ERROR && message != null && message != lastCaptionMessage) {
+            lastCaptionMessage = message
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            // Sin clave y sin subtítulos propios: abrir la configuración directamente.
+            if (BrowserPrefs.deepgramKey(this).isBlank() && message.contains("Deepgram")) {
+                LiveCaptions.stop(session)
+                CaptionsUi.showSheet(this, askKey = true) { refreshCaptionsUi() }
+            }
+        }
+    }
+
+    private fun toggleCaptions() {
+        val session = attachedSession ?: return
+        // Activos: la hoja rápida permite elegir idioma y modo, o apagarlos.
+        if (LiveCaptions.isActive(session)) {
+            CaptionsUi.showQuick(this, session, onChange = { refreshCaptionsUi() }) {
+                LiveCaptions.stop(session)
+                Toast.makeText(this, "Subtítulos desactivados", Toast.LENGTH_SHORT).show()
+                refreshCaptionsUi()
+            }
+            return
+        }
+        // Sin clave también funciona con videos que traen subtítulos propios; si no, la página lo avisa.
+        lastCaptionMessage = null
+        LiveCaptions.toggle(this, session)
+        val target = BrowserPrefs.captionTranslateTo(this)
+        Toast.makeText(this,
+            if (target.isBlank()) "Subtítulos activados · toca CC para traducir"
+            else "Subtítulos activados · traducción: ${CaptionProtocol.languageLabel(target)}",
+            Toast.LENGTH_SHORT).show()
+        refreshCaptionsUi()
+    }
+
+    private fun refreshCaptionsUi() {
+        if (!::captionsButton.isInitialized) return
+        val tab = TabManager.activeTab()
+        val session = attachedSession
+        val active = LiveCaptions.isActive(session)
+        val available = tab != null && (active || (BrowserPrefs.captionsEnabled(this) && hasMiniVideo(tab)))
+        captionsButton.visibility = if (available && !immersive && !isInPictureInPictureMode) View.VISIBLE else View.GONE
+        CaptionsUi.styleChip(this, captionsButton, active)
+        val display = if (active) LiveCaptions.display(this, session) else null
+        CaptionsUi.render(
+            this, captionView, browserFrame.width, browserFrame.height,
+            if (pipCrop != null || isInPictureInPictureMode) null else tab?.let { BrowserMediaController.videoRect(it.id) },
+            display, isInPictureInPictureMode
+        )
     }
 
     /**
@@ -1392,6 +1483,8 @@ class MainActivity :
             activityStopped -> {
                 // El usuario cerró la ventana mini (la X o arrastrándola).
                 pipPlaybackWasActive = false
+                ExtensionManager.sendLifecycle(tab?.session, false)
+                wasBackgrounded = true
                 if (tab != null && BrowserPrefs.backgroundMedia(this) &&
                     BrowserMediaController.isPlaybackActive(tab.id)
                 ) {
@@ -1413,6 +1506,9 @@ class MainActivity :
                 // Volvió a pantalla completa desde la ventana mini.
                 pipPlaybackWasActive = false
                 TabManager.resumeActive()
+                tab?.session?.let { session ->
+                    geckoView.postDelayed({ ExtensionManager.sendLifecycle(session, true) }, 350L)
+                }
             }
         }
 
@@ -1504,6 +1600,8 @@ class MainActivity :
         if (!isInPictureInPictureMode) ExtensionManager.setPipMode(attachedSession, false)
         runCatching { unregisterReceiver(pipControlReceiver) }
         BrowserMediaController.attach(null)
+        LiveCaptions.attach(null)
+        if (isFinishing && !isChangingConfigurations) LiveCaptions.stopAll()
         ExtensionManager.detachPromptActivity(this)
         BrowserHosts.detach(this)
         filePickerCallback?.invoke(emptyList())
@@ -1517,6 +1615,9 @@ class MainActivity :
             attachedSession = null
         }
         // No cerrar las GeckoSession al recrear o destruir solo la Activity.
+        if (isFinishing && !isChangingConfigurations && BrowserPrefs.clearOnExit(this)) {
+            BrowsingData.clear(this)
+        }
         super.onDestroy()
     }
 

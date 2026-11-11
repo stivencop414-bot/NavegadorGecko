@@ -13,6 +13,7 @@
   const DEFAULT_SETTINGS = Object.freeze({
     adblockEnabled: true,
     privacyEnabled: false,
+    popupBlockEnabled: true,
     antiBlockEnabled: false
   });
 
@@ -196,6 +197,12 @@
     });
   }
 
+  const TWO_PART_SUFFIX = /\.(?:com?|org|net|gov|edu|ac)\.[a-z]{2}$/;
+  function siteOfHost(host) {
+    const parts = String(host || '').toLowerCase().split('.').filter(Boolean);
+    return parts.slice(TWO_PART_SUFFIX.test(host) ? -3 : -2).join('.');
+  }
+
   function isEnabledForHost(hostname) {
     return settings.adblockEnabled && !isHostDisabled(hostname);
   }
@@ -294,6 +301,11 @@
     function(details) {
       if (!details.url || isExtensionUrl(details.url)) return {};
 
+      // Primera carga de una pestaña abierta por otra página: candidata a ventana emergente.
+      const openedByPage = details.type === 'main_frame' && typeof details.tabId === 'number' && details.tabId >= 0 &&
+        !tabHosts.has(details.tabId) && !badgeFallbackHosts.has(details.tabId) &&
+        /^https?:\/\//.test(details.originUrl || '');
+
       if (details.type === 'main_frame' && typeof details.tabId === 'number' && details.tabId >= 0) {
         tabHosts.set(details.tabId, hostOf(details.url));
         badgeFallbackHosts.delete(details.tabId);
@@ -344,8 +356,16 @@
         // para recursos): antes, tocar un resultado patrocinado o visitar el
         // sitio de una empresa de publicidad daba error de conexión. Solo se
         // cortan las redes de ventanas emergentes, que nadie visita a propósito.
-        return POPUP_HOSTS.some(function(domain) { return hostnameMatches(parsedUrl.hostname, domain); })
-          ? block() : {};
+        if (POPUP_HOSTS.some(function(domain) { return hostnameMatches(parsedUrl.hostname, domain); })) return block();
+        // Ventana nueva hacia una red de "popunder" (reglas $popup de las listas): se cierra sola.
+        if (openedByPage && settings.popupBlockEnabled && engine && siteOfHost(hostOf(details.originUrl)) !== siteOfHost(parsedUrl.hostname) &&
+            engine.shouldBlock(url, 'popup', details.originUrl, false)) {
+          if (!details.incognito) engine.recordBlocked();
+          countTabBlock(details.tabId);
+          if (!details.incognito) scheduleCountPersist();
+          return { redirectUrl: browser.runtime.getURL('web-accessible/popup-blocked.html') };
+        }
+        return {};
       }
 
       if (isYouTubeAdRequest(parsedUrl)) return block();
@@ -406,6 +426,29 @@
     });
   }
 
+  /**
+   * Las direcciones de enlaces y marcos de cada candidato se comprueban aquí,
+   * en el dispositivo, contra las listas de red: un enlace a una red
+   * publicitaria conocida es un anuncio. Esas direcciones nunca llegan al
+   * proveedor de IA (el clasificador solo copia los campos que permite).
+   */
+  function enrichCandidates(candidates, documentUrl) {
+    if (!Array.isArray(candidates)) return candidates;
+    return candidates.map(function(candidate) {
+      if (!candidate || typeof candidate !== 'object') return candidate;
+      const copy = Object.assign({}, candidate);
+      const urls = Array.isArray(copy.localUrls) ? copy.localUrls.slice(0, 4) : [];
+      delete copy.localUrls;
+      if (engine && Array.isArray(copy.signals) && !copy.signals.includes('ad-network') && urls.some(function(url) {
+        return typeof url === 'string' && url.length <= 512 && /^https?:\/\//.test(url) &&
+          engine.shouldBlock(url, 'sub_frame', documentUrl, false);
+      })) {
+        copy.signals = copy.signals.concat('ad-network');
+      }
+      return copy;
+    });
+  }
+
   browser.runtime.onMessage.addListener(function(message, sender) {
     if (!message || typeof message.type !== 'string') return undefined;
 
@@ -419,7 +462,8 @@
           return { ok: false, error: 'Página no autorizada para IA.' };
         }
         const before=aiTabState(tab.id);
-        const result = await globalThis.PhantomAI.classify(host, message.candidates, tab.incognito);
+        const candidates = enrichCandidates(message.candidates, tab.url);
+        const result = await globalThis.PhantomAI.classify(host, candidates, tab.incognito);
         if(tabAi.get(tab.id)!==before)return {ok:false,code:'changed',error:'La página cambió.'};
         if (!isEnabledForHost(host)) return { ok: false, error: 'Protección desactivada.' };
         const ai = aiTabState(tab.id);
@@ -474,6 +518,7 @@
           enabled: isEnabledForHost(host),
           aiEnabled: isEnabledForHost(host) && await globalThis.PhantomAI.available(host, tab && tab.incognito),
           aiDetail: await globalThis.PhantomAI.config().then(function(config) { return config.detail; }, function() { return 'basic'; }),
+          aiSensitivity: await globalThis.PhantomAI.config().then(function(config) { return config.sensitivity; }, function() { return 'balanced'; }),
           host: host
         };
       });

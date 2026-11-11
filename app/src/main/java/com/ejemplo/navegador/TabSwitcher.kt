@@ -372,7 +372,15 @@ object TabSwitcher {
             ?.removePrefix("www.").orEmpty()
 
         // Marcador (logo + dominio) debajo; la miniatura lo cubre al cargar.
-        val preview = FrameLayout(activity).apply { setBackgroundColor(p.accentSoft) }
+        // Esquinas inferiores redondeadas también en el propio fondo de la miniatura.
+        val bottomRadius = dp(activity, 19f).toFloat()
+        val preview = FrameLayout(activity).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(p.accentSoft)
+                cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, bottomRadius, bottomRadius, bottomRadius, bottomRadius)
+            }
+            clipToOutline = true
+        }
         preview.addView(LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER

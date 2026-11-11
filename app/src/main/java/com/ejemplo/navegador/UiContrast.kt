@@ -12,9 +12,11 @@ object UiContrast {
         return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
     }
 
+    /** Blanco siempre que cumpla AA (4.5:1); si no, el de mayor contraste. */
     fun foreground(background: Int): Int {
         val l = luminance(background)
-        return if ((l + 0.05) / 0.05 >= 1.05 / (l + 0.05)) 0xFF000000.toInt()
-        else 0xFFFFFFFF.toInt()
+        val white = 1.05 / (l + 0.05)
+        val black = (l + 0.05) / 0.05
+        return if (white >= 4.5 || white > black) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
     }
 }

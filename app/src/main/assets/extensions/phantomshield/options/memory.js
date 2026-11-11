@@ -11,7 +11,7 @@
     const query=field('memory-search').value.trim().toLowerCase();
     field('memory-domains').replaceChildren();
     const visible=domains.filter(d=>d.host.includes(query));
-    field('memory-summary').textContent=domains.length?domains.length+' dominios · '+domains.reduce((n,d)=>n+d.rules,0)+' huellas · '+domains.reduce((n,d)=>n+d.hits,0)+' coincidencias reutilizadas.':loaded?'Aún no hay decisiones recordadas. Activa la memoria y guarda; aprenderá de los próximos análisis compatibles.':'Consultando memoria…';
+    field('memory-summary').textContent=domains.length?domains.length+' dominios · '+domains.reduce((n,d)=>n+d.rules,0)+' huellas · '+domains.reduce((n,d)=>n+d.hits,0)+' reutilizadas.':loaded?'Sin anuncios recordados todavía.':'Consultando memoria…';
     for(const domain of visible){
       const card=document.createElement('article');card.className='memory-domain';
       const title=document.createElement('h3');title.textContent=domain.host;
@@ -33,7 +33,7 @@
       const result=await browser.runtime.sendMessage({type,host});
       if(!result || !result.ok)throw Error(result && result.error || 'No se pudo consultar la memoria.');
       domains=result.domains||[];loaded=true;
-      field('memory-status').textContent=type==='AI_MEMORY_LIST'?'Memoria actualizada.':type==='AI_MEMORY_EXCLUDE'?'Dominio excluido de IA y memoria eliminada.':'Memoria eliminada. Contenido restaurado; puedes volver a analizar manualmente.';
+      field('memory-status').textContent=type==='AI_MEMORY_LIST'?'':type==='AI_MEMORY_EXCLUDE'?'Dominio excluido de IA.':'Memoria borrada.';
       field('memory-confirm').hidden=true;
     }catch(error){field('memory-status').textContent=error.message || 'No se pudo completar la operación.';}
     finally{busy=false;render();}

@@ -7,7 +7,9 @@
     requestsPerMinute: 6, requestsPerHour: 60, timeoutMs: 12000, jsonMode: false,
     // 'basic': solo tipo, señales y tamaño. 'rich': añade un fragmento corto del
     // texto visible del candidato, dominios de sus enlaces y nombres de clase.
-    detail: 'basic', rememberDecisions: false
+    detail: 'basic', rememberDecisions: false,
+    // Umbral y alcance del análisis: 'conservative', 'balanced' o 'aggressive'.
+    sensitivity: 'balanced'
   });
 
   const providers = Object.freeze({
@@ -33,6 +35,8 @@
     config.includeSubdomains = input.includeSubdomains === true;
     config.detail = input.detail === undefined ? 'basic' : input.detail;
     if (!['basic', 'rich'].includes(config.detail)) throw new Error('Nivel de detalle IA inválido.');
+    config.sensitivity = input.sensitivity === undefined ? 'balanced' : input.sensitivity;
+    if (!['conservative', 'balanced', 'aggressive'].includes(config.sensitivity)) throw new Error('Sensibilidad IA inválida.');
     for (const [key, min, max] of [['requestsPerMinute', 1, 12], ['requestsPerHour', 1, 120]]) {
       config[key] = input[key] === undefined ? defaults[key] : Number(input[key]);
       if (!Number.isInteger(config[key]) || config[key] < min || config[key] > max) {

@@ -103,6 +103,86 @@ object BrowserPrefs {
     fun cookieMode(c: Context) = p(c).getString("cookie_mode", COOKIES_BALANCED) ?: COOKIES_BALANCED
     fun setCookieMode(c: Context, v: String) = p(c).edit().putString("cookie_mode", v).apply()
 
+    const val AUTOPLAY_ALLOW = "allow"
+    const val AUTOPLAY_BLOCK_AUDIBLE = "block_audible"
+    const val AUTOPLAY_BLOCK_ALL = "block_all"
+
+    fun textScale(c: Context) = p(c).getInt("text_scale", 100).coerceIn(80, 200)
+    fun setTextScale(c: Context, v: Int) = p(c).edit().putInt("text_scale", v.coerceIn(80, 200)).apply()
+    fun forceZoom(c: Context) = p(c).getBoolean("force_zoom", false)
+    fun setForceZoom(c: Context, v: Boolean) = p(c).edit().putBoolean("force_zoom", v).apply()
+    fun desktopDefault(c: Context) = p(c).getBoolean("desktop_default", false)
+    fun setDesktopDefault(c: Context, v: Boolean) = p(c).edit().putBoolean("desktop_default", v).apply()
+    fun autoplay(c: Context) = p(c).getString("autoplay", AUTOPLAY_ALLOW) ?: AUTOPLAY_ALLOW
+    fun setAutoplay(c: Context, v: String) = p(c).edit().putString("autoplay", v).apply()
+    fun javascript(c: Context) = p(c).getBoolean("javascript", true)
+    fun setJavascript(c: Context, v: Boolean) = p(c).edit().putBoolean("javascript", v).apply()
+    fun strictTracking(c: Context) = p(c).getBoolean("strict_tracking", false)
+    fun setStrictTracking(c: Context, v: Boolean) = p(c).edit().putBoolean("strict_tracking", v).apply()
+    fun safeBrowsing(c: Context) = p(c).getBoolean("safe_browsing", true)
+    fun setSafeBrowsing(c: Context, v: Boolean) = p(c).edit().putBoolean("safe_browsing", v).apply()
+    fun fingerprinting(c: Context) = p(c).getBoolean("fingerprinting", true)
+    fun setFingerprinting(c: Context, v: Boolean) = p(c).edit().putBoolean("fingerprinting", v).apply()
+    fun queryStripping(c: Context) = p(c).getBoolean("query_stripping", true)
+    fun setQueryStripping(c: Context, v: Boolean) = p(c).edit().putBoolean("query_stripping", v).apply()
+    fun clearOnExit(c: Context) = p(c).getBoolean("clear_on_exit", false)
+    fun setClearOnExit(c: Context, v: Boolean) = p(c).edit().putBoolean("clear_on_exit", v).apply()
+    fun remoteDebugging(c: Context) = p(c).getBoolean("remote_debugging", false)
+    fun setRemoteDebugging(c: Context, v: Boolean) = p(c).edit().putBoolean("remote_debugging", v).apply()
+
+    // Subtítulos en vivo (Deepgram) y su traducción.
+    const val TRANSLATE_GOOGLE = "google"
+    const val TRANSLATE_DEEPL = "deepl"
+    fun captionsEnabled(c: Context) = p(c).getBoolean("captions_enabled", true)
+    fun setCaptionsEnabled(c: Context, v: Boolean) = p(c).edit().putBoolean("captions_enabled", v).apply()
+    /** Las claves viven cifradas en [SecretStore]; las de 0.22.0 (en claro) se migran al leerlas. */
+    private fun secret(c: Context, name: String): String {
+        val legacy = p(c).getString(name, null)
+        if (legacy != null) {
+            SecretStore.put(c, name, legacy)
+            p(c).edit().remove(name).apply()
+        }
+        return SecretStore.get(c, name)
+    }
+    fun deepgramKey(c: Context) = secret(c, "deepgram_key")
+    fun setDeepgramKey(c: Context, v: String) = SecretStore.put(c, "deepgram_key", v)
+    fun captionLanguage(c: Context) = p(c).getString("caption_language", "multi") ?: "multi"
+    fun setCaptionLanguage(c: Context, v: String) = p(c).edit().putString("caption_language", v).apply()
+    fun captionTranslateTo(c: Context) = p(c).getString("caption_translate", "") ?: ""
+    fun setCaptionTranslateTo(c: Context, v: String) = p(c).edit().putString("caption_translate", v).apply()
+    fun translationProvider(c: Context) = p(c).getString("translation_provider", TRANSLATE_GOOGLE) ?: TRANSLATE_GOOGLE
+    fun setTranslationProvider(c: Context, v: String) = p(c).edit().putString("translation_provider", v).apply()
+    fun deeplKey(c: Context) = secret(c, "deepl_key")
+    fun setDeeplKey(c: Context, v: String) = SecretStore.put(c, "deepl_key", v)
+    // Traducción con un modelo de IA (por lotes, con contexto).
+    const val TRANSLATE_AI = "ai"
+    fun aiTranslateProvider(c: Context) = p(c).getString("ai_translate_provider", "openai") ?: "openai"
+    fun setAiTranslateProvider(c: Context, v: String) = p(c).edit().putString("ai_translate_provider", v).apply()
+    fun aiTranslateModel(c: Context) = p(c).getString("ai_translate_model", "") ?: ""
+    fun setAiTranslateModel(c: Context, v: String) = p(c).edit().putString("ai_translate_model", v.trim()).apply()
+    fun aiTranslateEndpoint(c: Context) = p(c).getString("ai_translate_endpoint", "") ?: ""
+    fun setAiTranslateEndpoint(c: Context, v: String) = p(c).edit().putString("ai_translate_endpoint", v.trim()).apply()
+    fun aiTranslateKey(c: Context) = secret(c, "ai_translate_key")
+    fun setAiTranslateKey(c: Context, v: String) = SecretStore.put(c, "ai_translate_key", v)
+    // Original, traducido o ambos.
+    fun captionMode(c: Context) = p(c).getString("caption_mode", "translated") ?: "translated"
+    fun setCaptionMode(c: Context, v: String) = p(c).edit().putString("caption_mode", v).apply()
+    // Límite diario de audio enviado a Deepgram (minutos; 0 = sin límite) y consumo de hoy.
+    fun captionDailyLimit(c: Context) = p(c).getInt("caption_daily_limit", 120).coerceIn(0, 1440)
+    fun setCaptionDailyLimit(c: Context, v: Int) = p(c).edit().putInt("caption_daily_limit", v.coerceIn(0, 1440)).apply()
+    private fun today(): String = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
+    fun captionSecondsToday(c: Context): Int =
+        if (p(c).getString("caption_usage_day", "") == today()) p(c).getInt("caption_usage_seconds", 0) else 0
+    fun addCaptionSeconds(c: Context, seconds: Int) {
+        if (seconds <= 0) return
+        val total = captionSecondsToday(c) + seconds
+        p(c).edit().putString("caption_usage_day", today()).putInt("caption_usage_seconds", total).apply()
+    }
+    fun captionSize(c: Context) = p(c).getInt("caption_size", 16).coerceIn(12, 26)
+    fun setCaptionSize(c: Context, v: Int) = p(c).edit().putInt("caption_size", v.coerceIn(12, 26)).apply()
+
+    fun pullToRefresh(c: Context) = p(c).getBoolean("pull_to_refresh", true)
+    fun setPullToRefresh(c: Context, v: Boolean) = p(c).edit().putBoolean("pull_to_refresh", v).apply()
     fun smartPip(c: Context) = p(c).getBoolean("smart_pip", true)
     fun setSmartPip(c: Context, v: Boolean) = p(c).edit().putBoolean("smart_pip", v).apply()
 

@@ -13,8 +13,8 @@ android {
         applicationId = "com.ejemplo.navegador"
         minSdk = 26
         targetSdk = 34
-        versionCode = 38
-        versionName = "0.20.0"
+        versionCode = 42
+        versionName = "0.24.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -55,6 +55,18 @@ android {
         viewBinding = false
         buildConfig = false
     }
+    // Capturas locales de la interfaz nativa (./gradlew ... -PnexoScreenshots).
+    if (project.hasProperty("nexoScreenshots")) {
+        testOptions.unitTests.isIncludeAndroidResources = true
+        testOptions.unitTests.all { test ->
+            project.findProperty("nexoShotsDir")?.let { test.systemProperty("nexo.shots", it.toString()) }
+            project.findProperty("robolectricDir")?.let {
+                test.systemProperty("robolectric.offline", "true")
+                test.systemProperty("robolectric.dependency.dir", it.toString())
+            }
+        }
+        sourceSets.getByName("test").kotlin.srcDir("src/screenshotTest/java")
+    }
 }
 androidComponents {
     // AGP 9 does not create this release test component by default. The release
@@ -76,6 +88,13 @@ dependencies {
     implementation("org.mozilla.geckoview:geckoview-omni:159.0.20261102144711")
     implementation("androidx.core:core:1.19.1")
     implementation("androidx.documentfile:documentfile:1.1.0")
+    // WebSocket para los subtítulos en vivo (Deepgram).
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
+    // org.json real en las pruebas JVM (el de Android es un stub).
+    testImplementation("org.json:json:20240303")
+    if (project.hasProperty("nexoScreenshots")) {
+        testImplementation("org.robolectric:robolectric:4.16")
+    }
 }

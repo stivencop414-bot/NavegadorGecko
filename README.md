@@ -15,9 +15,29 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Temas Midnight, OLED y claro.
 - Siete colores de acento, con cobalto por defecto.
 - Historial con búsqueda en vivo (título, dominio o dirección, sin distinguir tildes), descargas y compartir.
+- Subtítulos en vivo para cualquier video (botón CC):
+  - Si el video trae subtítulos propios (WebVTT), se usan esos sin Deepgram ni clave y se traducen todos
+    por adelantado en lotes grandes.
+  - Si no, el audio se comprime en la página (Opus, ~24 kbps) y Deepgram lo transcribe en streaming desde el
+    proceso nativo; la clave nunca llega a la página.
+  - Traducción a 37 idiomas sin esperas artificiales: cada frase sale al momento si no hay otra petición en
+    curso (lo que llega mientras tanto viaja junto en la siguiente), el texto provisional se traduce por
+    anticipado y la frase final suele aparecer ya traducida. Google sin clave, DeepL o un modelo de IA
+    (OpenAI, Claude, OpenRouter o propio) con contexto; con IA, Google muestra un respaldo rápido mientras
+    responde el modelo. Modos: traducido, ambos u original.
+  - Tocar CC con los subtítulos activos abre el selector: idioma de destino, modo e idioma del video; los
+    cambios se aplican al instante sin cortar el audio.
+  - Claves cifradas con el Android Keystore. Reconexión con espera creciente (máx. 3), control de flujo,
+    contador de minutos y límite diario. Solo transcribe mientras el video suena en primer plano.
+- Bloqueo de ventanas emergentes y "popunders" (reglas $popup de las listas y toques robados), con interruptor.
+- Deslizar hacia abajo para recargar (solo cuando la página está arriba y el gesto no lo usa la propia web).
+- Recuperación automática del video al volver a la app: si el reproductor quedó congelado, se repara sin recargar.
+- Ajustes de navegador: tamaño del texto, zoom en todas las páginas, versión de escritorio por defecto,
+  reproducción automática, JavaScript, protección estricta, aviso de sitios peligrosos, bloqueo de huellas
+  digitales, limpieza de parámetros de rastreo, borrar datos al salir y depuración remota.
 - Limpieza de datos.
 - Administrador de extensiones.
-- PhantomShield 8.8.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
+- PhantomShield 9.0.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
   eliminación de anuncios de YouTube, contadores reales y controles por sitio. IA opcional
   (tu propia API) para los anuncios que las reglas no reconocen; las señales inequívocas se
   resuelven en el dispositivo sin gastar tokens y el panel muestra lo revisado/ocultado en cada página.
@@ -89,6 +109,13 @@ node --test app/src/test/js/*.test.cjs  # regresiones de extensiones y mini repr
 gradle :app:testDebugUnitTest   # tests unitarios (reglas de URL, buscador, nombres de archivo)
 gradle :app:assembleDebug
 gradle :app:lintRelease
+```
+
+Capturas de la interfaz nativa (Robolectric, opcional y fuera de la CI):
+
+```bash
+gradle :app:testDebugUnitTest --tests 'com.ejemplo.navegador.ScreenshotTest' \
+  -PnexoScreenshots -PnexoShotsDir=/ruta/capturas
 ```
 
 Las librerías nativas van comprimidas en el APK (como Firefox para Android): el APK

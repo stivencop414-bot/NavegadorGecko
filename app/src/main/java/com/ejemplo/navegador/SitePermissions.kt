@@ -91,7 +91,18 @@ object SitePermissions : PermissionDelegate {
             PermissionDelegate.PERMISSION_DESKTOP_NOTIFICATION ->
                 return GeckoResult.fromValue(ContentPermission.VALUE_DENY)
 
-            // Reproducción automática y rastreo: comportamiento por defecto de Gecko.
+            PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ->
+                return GeckoResult.fromValue(
+                    if (BrowserPrefs.autoplay(AppContext.get()) == BrowserPrefs.AUTOPLAY_ALLOW) ContentPermission.VALUE_ALLOW
+                    else ContentPermission.VALUE_DENY
+                )
+            PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE ->
+                return GeckoResult.fromValue(
+                    if (BrowserPrefs.autoplay(AppContext.get()) == BrowserPrefs.AUTOPLAY_BLOCK_ALL) ContentPermission.VALUE_DENY
+                    else ContentPermission.VALUE_ALLOW
+                )
+
+            // Rastreo y demás: comportamiento por defecto de Gecko.
             else -> return GeckoResult.fromValue(ContentPermission.VALUE_PROMPT)
         }
 

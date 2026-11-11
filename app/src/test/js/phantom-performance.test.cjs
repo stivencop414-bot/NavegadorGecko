@@ -120,6 +120,8 @@ test('AI disconnects the document observer once its request batches are exhauste
   const h = await aiPage(); assert.equal(h.active(), 1);
   for (let n = 0; n < 4; n++) { const result = await h.scan(); assert.equal(result.ok, true); }
   assert.equal(h.active(), 0); assert.equal(h.queued(), 0);
+  // Manual scans may add batches beyond the automatic limit, but never past the per-page cap.
+  for (let n = 4; n < 12; n++) { const result = await h.scan(); assert.equal(result.ok, true); }
   const result = await h.scan(); assert.equal(result.ok, false);
 });
 

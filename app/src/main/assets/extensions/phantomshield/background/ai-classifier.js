@@ -2,7 +2,9 @@
 (function() {
   'use strict';
   const SIGNALS = new Set(['ad-attribute', 'ad-class', 'sponsored-label', 'advertisement-label', 'sponsored-link',
-    'ad-size', 'third-party-frame', 'external-links', 'fixed-position']);
+    'ad-size', 'third-party-frame', 'external-links', 'fixed-position', 'ad-link', 'ad-network']);
+  // Confianza mínima del modelo para ocultar, según la sensibilidad elegida.
+  const THRESHOLDS = Object.freeze({ conservative: 0.9, balanced: 0.8, aggressive: 0.65 });
   const TAGS = new Set(['DIV', 'ASIDE', 'SECTION', 'ARTICLE', 'INS', 'IFRAME', 'LI', 'A', 'FIGURE']);
   const HIDE_CONFIDENCE = 0.8;
   const MAX_RESPONSE_BYTES = 65536;
@@ -16,6 +18,7 @@
     'dialogs, login or newsletter forms, comments, video players and user controls. ' +
     'A known ad-network host in "links" or "frame", a "Sponsored/Patrocinado/Publicidad" label, or a standard ' +
     'ad size together with third-party links is strong evidence. Size or a generic class name alone is not.\n' +
+    '"ad-link" means a link to an ad click server and "ad-network" a link or frame to a known ad network: both are ads.\n' +
     'Without text or links (basic mode) judge the signal combination: "ad-class" with "ad-size", "external-links" ' +
     'or "fixed-position" is usually an ad slot; "sponsored-label" or "advertisement-label" on a card is a ' +
     'promoted item; a lone "ad-class" on a large container is unsure.\n' +
@@ -79,11 +82,15 @@
    * marcados rel=sponsored o marcos de terceros con tamaño estándar de anuncio.
    * Se resuelven al instante y sin gastar tokens.
    */
-  function definitiveAd(candidate) {
+  function definitiveAd(candidate, sensitivity) {
     const has = function(signal) { return candidate.signals.includes(signal); };
-    return has('ad-attribute') ||
-      (has('sponsored-link') && (has('sponsored-label') || has('advertisement-label'))) ||
-      (has('advertisement-label') && (has('ad-class') || has('ad-size') || has('third-party-frame')));
+    // Enlaces de clic publicitario o hacia una red que las listas bloquean: inequívocos.
+    if (has('ad-attribute') || has('ad-link') || has('ad-network') ||
+        (has('sponsored-link') && (has('sponsored-label') || has('advertisement-label'))) ||
+        (has('advertisement-label') && (has('ad-class') || has('ad-size') || has('third-party-frame')))) return true;
+    if (sensitivity !== 'aggressive') return false;
+    return has('sponsored-link') || has('sponsored-label') || (has('third-party-frame') && has('ad-size')) ||
+      (has('ad-class') && (has('ad-size') || has('fixed-position') || has('external-links')));
   }
 
   function sanitize(candidates, rich) {
@@ -121,7 +128,7 @@
   }
 
   /** Extrae el objeto JSON aunque el modelo lo envuelva en texto o ```json. */
-  function parseDecisions(content, validIds) {
+  function parseDecisions(content, validIds, threshold) {
     let parsed = null;
     const text = String(content).replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
     try { parsed = JSON.parse(text); } catch (error) {
@@ -140,7 +147,7 @@
           typeof decision.isAd !== 'boolean') continue;
       const confidence = Number(decision.confidence);
       if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) continue;
-      decisions.set(decision.id, decision.isAd && confidence >= HIDE_CONFIDENCE);
+      decisions.set(decision.id, decision.isAd && confidence >= (threshold || HIDE_CONFIDENCE));
       decisions.confidence.set(decision.id, confidence);
     }
     if(validIds.size && !decisions.size) throw new AIError('format');
@@ -349,7 +356,7 @@
             recorded = true;
             if (result.refusal) throw new AIError('refusal');
             if (result.error) throw result.error;
-            const decisions = parseDecisions(result.content, validIds);
+            const decisions = parseDecisions(result.content, validIds, THRESHOLDS[config.sensitivity]);
             this.variants.set(variantKey, variant);
             if (this.variants.size > 20) this.variants.delete(this.variants.keys().next().value);
             return decisions;
@@ -404,7 +411,7 @@
         for(const [key,cached] of this.cache)if(now-cached.time>600000)this.cache.delete(key);
         const decisions=new Map(), missing=new Map();
         for(const c of batch) {
-          if(definitiveAd(c))decisions.set(c.id,{id:c.id,hide:true,source:'local'});
+          if(definitiveAd(c,config.sensitivity))decisions.set(c.id,{id:c.id,hide:true,source:'local'});
           else if(remembered.has(keys.get(c.id)))decisions.set(c.id,{id:c.id,hide:true,source:'memory'});
           else if(this.cache.has(signature(c)))decisions.set(c.id,{id:c.id,hide:this.cache.get(signature(c)).hide,source:'cache'});
           else missing.set(signature(c),c);

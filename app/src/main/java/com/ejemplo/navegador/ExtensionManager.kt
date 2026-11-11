@@ -1031,6 +1031,36 @@ object ExtensionManager {
         })
     }
 
+    /** Pide al puente que empiece o deje de captar el audio del video (subtítulos en vivo). */
+    fun setCaptions(session: GeckoSession?, active: Boolean, live: Boolean = false): Boolean =
+        postToTopLevel(session, JSONObject().apply {
+            put("type", "captions")
+            put("active", active)
+            // live: hay clave de Deepgram; sin ella solo se usan las pistas de subtítulos del video.
+            put("live", live)
+        })
+
+    /** Tras un corte de red: grabación nueva (con cabecera) para la conexión nueva. */
+    fun restartCaptions(session: GeckoSession?): Boolean =
+        postToTopLevel(session, JSONObject().put("type", "captions_restart"))
+
+    /** Avisa al puente de que la app pasa a segundo plano o vuelve (recuperación de video). */
+    fun sendLifecycle(session: GeckoSession?, foreground: Boolean) {
+        postToTopLevel(session, JSONObject().apply {
+            put("type", "lifecycle")
+            put("state", if (foreground) "foreground" else "background")
+        })
+    }
+
+    private fun captionErrorText(code: String): String = when (code) {
+        "no_video" -> "No hay un video en esta página."
+        "suspended" -> "Toca el video una vez y vuelve a activar los subtítulos."
+        "unsupported" -> "Esta página no permite captar el audio."
+        "silent" -> "El video no deja captar su audio (puede estar protegido)."
+        "need_key" -> "Hace falta una clave de Deepgram para este video."
+        else -> "No se pudo captar el audio del video."
+    }
+
     fun hasMediaBridge(session: GeckoSession?): Boolean =
         session != null && ports.any { it.sender.session === session && it.sender.isTopLevel() }
 
@@ -1503,6 +1533,20 @@ object ExtensionManager {
                                     )
                                 }
                                 return
+                            }
+                            val session = port.sender.session
+                            if (json != null && session != null && port.sender.isTopLevel()) {
+                                when (json.optString("type")) {
+                                    "captions_start" -> LiveCaptions.onRecordingStarted(AppContext.get(), session)
+                                    "captions_audio" -> LiveCaptions.onAudio(session, json.optString("data"))
+                                    "captions_stop" -> LiveCaptions.onRecordingStopped(session)
+                                    "captions_error" -> json.optString("code").let { code ->
+                                        LiveCaptions.onPageError(AppContext.get(), session, code, captionErrorText(code))
+                                    }
+                                    "captions_track" -> LiveCaptions.onTrack(session)
+                                    "captions_cues" -> json.optJSONArray("cues")?.let { LiveCaptions.onCues(AppContext.get(), session, it) }
+                                    "captions_active" -> json.optJSONArray("ids")?.let { LiveCaptions.onActiveCues(AppContext.get(), session, it) }
+                                }
                             }
                             // Los mensajes no reconocidos no se reflejan de vuelta
                             // al contenido. Esto evita convertir el bridge en un eco de datos.

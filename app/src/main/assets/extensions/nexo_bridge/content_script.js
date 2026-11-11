@@ -408,6 +408,355 @@
   }
 
   // ---------------------------------------------------------------
+  // Recuperación al volver a primer plano
+  // ---------------------------------------------------------------
+
+  /*
+   * Al salir de la app Android destruye la superficie de video y puede
+   * liberar el decodificador. Al volver, algunos reproductores (sobre todo
+   * los de MSE, como YouTube) quedan con el último cuadro congelado y no
+   * avanzan aunque se pulse reproducir. Un salto al mismo instante
+   * reconstruye la cadena de decodificación sin recargar la página.
+   */
+  const RECOVERY_DELAY_MS = 450;
+  const RECOVERY_CHECK_MS = 1300;
+  const RECOVERY_WINDOW_MS = 20000;
+  const pausedAt = new WeakMap();
+  let backgroundSnapshot = null;
+  let foregroundAt = 0;
+
+  document.addEventListener("pause", event => {
+    if (event.target && typeof event.target.pause === "function") pausedAt.set(event.target, Date.now());
+  }, true);
+
+  function mediaTime(video) {
+    const value = Number(video.currentTime);
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function nudge(video, forward) {
+    try {
+      const time = mediaTime(video) + (forward ? 0.05 : 0);
+      if (video.seekable && video.seekable.length) {
+        const end = video.seekable.end(video.seekable.length - 1);
+        video.currentTime = Math.min(time, Math.max(0, end - 0.05));
+      } else {
+        video.currentTime = time;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function watchProgress(video, attempt) {
+    const start = mediaTime(video);
+    setTimeout(() => {
+      if (!video.isConnected || video.paused || video.ended || video.seeking) return;
+      if (mediaTime(video) - start > 0.05) return;
+      // Sigue congelado: otro salto y, la segunda vez, reinicio de la reproducción.
+      if (attempt === 0) {
+        nudge(video, true);
+        watchProgress(video, 1);
+      } else if (attempt === 1) {
+        try {
+          video.pause();
+          const playing = video.play();
+          if (playing && typeof playing.catch === "function") playing.catch(() => {});
+        } catch (_) {}
+      }
+    }, RECOVERY_CHECK_MS);
+  }
+
+  function recoverVideo(entry) {
+    const video = entry.video;
+    if (!video || !video.isConnected || video.ended || !hasMedia(video)) return;
+    if (video.paused) {
+      // Rehace el cuadro y el decodificador; el siguiente "play" del usuario funciona.
+      nudge(video, false);
+      if (entry.playing && backgroundMedia && !pipUserPaused) {
+        try {
+          const playing = video.play();
+          if (playing && typeof playing.catch === "function") playing.catch(() => {});
+        } catch (_) {}
+        watchProgress(video, 0);
+      }
+      return;
+    }
+    watchProgress(video, 0);
+  }
+
+  function onBackground() {
+    const now = Date.now();
+    backgroundSnapshot = collectVideos().map(video => ({
+      video,
+      playing: isPlaying(video) || (!video.ended && now - (pausedAt.get(video) || 0) < 1500)
+    }));
+  }
+
+  function onForeground() {
+    const snapshot = backgroundSnapshot ||
+      collectVideos().map(video => ({ video, playing: isPlaying(video) }));
+    backgroundSnapshot = null;
+    foregroundAt = Date.now();
+    if (!snapshot.length) return;
+    setTimeout(() => {
+      snapshot.forEach(recoverVideo);
+      lastStateKey = "";
+      scheduleVideoReport();
+    }, RECOVERY_DELAY_MS);
+  }
+
+  // Si el usuario pulsa reproducir poco después de volver y el video no avanza, repararlo.
+  document.addEventListener("play", event => {
+    const video = event.target;
+    if (!video || typeof video.pause !== "function" || !foregroundAt) return;
+    if (Date.now() - foregroundAt > RECOVERY_WINDOW_MS) return;
+    watchProgress(video, 0);
+  }, true);
+
+  // ---------------------------------------------------------------
+  // Subtítulos en vivo: audio del video comprimido hacia Nexo
+  // ---------------------------------------------------------------
+
+  /*
+   * El audio se toma del propio video con Web Audio (el sonido sigue
+   * saliendo igual) y se comprime en Opus a ~24 kbps con el codificador
+   * nativo de MediaRecorder: muy poco trabajo para el teléfono. Solo se
+   * graba mientras el video se reproduce en primer plano.
+   */
+  const CAPTION_SLICE_MS = 250;
+  const audioGraphs = new WeakMap();
+  const captions = { active: false, live: false, video: null, recorder: null, silentTimer: 0,
+    track: null, trackMode: "", trackTimer: 0 };
+  const MAX_CUES = 3000;
+
+  function sendToNexo(message) {
+    if (!port) return false;
+    try { port.postMessage(message); return true; } catch (_) { return false; }
+  }
+
+  function captionError(code) {
+    sendToNexo({ type: "captions_error", code });
+  }
+
+  function captionVideo() {
+    const videos = collectVideos().filter(video => hasMedia(video));
+    return (pipVideo && pipVideo.isConnected ? pipVideo : null) ||
+      bestVideo(videos, true) || bestVideo(videos, false);
+  }
+
+  function bytesToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(binary);
+  }
+
+  async function audioGraph(video) {
+    const known = audioGraphs.get(video);
+    if (known) return known;
+    const Context = window.AudioContext || window.webkitAudioContext;
+    if (typeof Context !== "function" || typeof MediaRecorder !== "function") throw new Error("unsupported");
+    const context = new Context();
+    if (context.state !== "running") {
+      try { await Promise.race([context.resume(), new Promise(resolve => setTimeout(resolve, 800))]); } catch (_) {}
+    }
+    // Sin un contexto en marcha, desviar el audio dejaría el video en silencio.
+    if (context.state !== "running") {
+      try { context.close(); } catch (_) {}
+      throw new Error("suspended");
+    }
+    const source = context.createMediaElementSource(video);
+    // La salida normal se conserva para siempre: el video sigue sonando igual.
+    source.connect(context.destination);
+    const destination = context.createMediaStreamDestination();
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 512;
+    const graph = { context, source, destination, analyser, tapped: false };
+    audioGraphs.set(video, graph);
+    return graph;
+  }
+
+  /** Rama de captura conectada solo mientras se graba; fuera de eso no hay trabajo extra. */
+  function tap(graph, on) {
+    if (!graph || graph.tapped === on) return;
+    try {
+      if (on) { graph.source.connect(graph.destination); graph.source.connect(graph.analyser); }
+      else { graph.source.disconnect(graph.destination); graph.source.disconnect(graph.analyser); }
+      graph.tapped = on;
+    } catch (_) {}
+  }
+
+  function stopRecording(notify) {
+    const recorder = captions.recorder;
+    captions.recorder = null;
+    clearTimeout(captions.silentTimer);
+    captions.silentTimer = 0;
+    if (captions.video) tap(audioGraphs.get(captions.video), false);
+    if (recorder) {
+      try { if (recorder.state !== "inactive") recorder.stop(); } catch (_) {}
+      if (notify) sendToNexo({ type: "captions_stop" });
+    }
+  }
+
+  /** Un video protegido (DRM) o de otro origen sin permiso entrega silencio. */
+  function watchSilence(graph, recorder) {
+    const samples = new Uint8Array(graph.analyser.fftSize);
+    let checks = 0;
+    let heard = false;
+    const check = () => {
+      if (captions.recorder !== recorder) return;
+      graph.analyser.getByteTimeDomainData(samples);
+      for (const value of samples) if (Math.abs(value - 128) > 2) { heard = true; break; }
+      checks++;
+      if (heard) return;
+      if (checks >= 6) { captionError("silent"); return; }
+      captions.silentTimer = setTimeout(check, 2000);
+    };
+    captions.silentTimer = setTimeout(check, 2000);
+  }
+
+  async function startRecording() {
+    if (!captions.active || !captions.live || captions.track || captions.recorder) return;
+    const video = captions.video && captions.video.isConnected ? captions.video : captionVideo();
+    if (!video) { captionError("no_video"); return; }
+    captions.video = video;
+    if (video.paused || video.ended || document.visibilityState === "hidden") return;
+    let graph;
+    try {
+      graph = await audioGraph(video);
+    } catch (error) {
+      captionError(error && error.message === "suspended" ? "suspended" : "unsupported");
+      return;
+    }
+    if (!captions.active || captions.recorder || video.paused) return;
+    tap(graph, true);
+    const mimeType = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus"]
+      .find(type => MediaRecorder.isTypeSupported(type)) || "";
+    let recorder;
+    try {
+      recorder = new MediaRecorder(graph.destination.stream, mimeType ? { mimeType, audioBitsPerSecond: 24000 } : undefined);
+    } catch (_) {
+      captionError("unsupported");
+      return;
+    }
+    captions.recorder = recorder;
+    recorder.ondataavailable = event => {
+      if (!event.data || !event.data.size || captions.recorder !== recorder) return;
+      event.data.arrayBuffer().then(buffer => {
+        if (captions.recorder === recorder) sendToNexo({ type: "captions_audio", data: bytesToBase64(buffer) });
+      }).catch(() => {});
+    };
+    sendToNexo({ type: "captions_start", mime: mimeType });
+    try {
+      recorder.start(CAPTION_SLICE_MS);
+    } catch (_) {
+      captions.recorder = null;
+      captionError("unsupported");
+      return;
+    }
+    watchSilence(graph, recorder);
+  }
+
+  // --- Pista de subtítulos del propio video: sin Deepgram ---------------
+
+  function cueText(cue) {
+    return String(cue.text || "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim().slice(0, 300);
+  }
+
+  function sendCues(track) {
+    const cues = track.cues;
+    if (!cues || !cues.length) return false;
+    const list = [];
+    for (let i = 0; i < cues.length && i < MAX_CUES; i++) {
+      const text = cueText(cues[i]);
+      if (text) list.push({ i, s: cues[i].startTime, e: cues[i].endTime, t: text });
+    }
+    // Todas las líneas por adelantado, en bloques: Nexo las traduce en lotes grandes.
+    for (let i = 0; i < list.length; i += 200) sendToNexo({ type: "captions_cues", cues: list.slice(i, i + 200) });
+    sendActiveCues();
+    return list.length > 0;
+  }
+
+  function sendActiveCues() {
+    const track = captions.track;
+    if (!track) return;
+    const cues = Array.from(track.cues || []);
+    const ids = Array.from(track.activeCues || []).map(cue => cues.indexOf(cue)).filter(i => i >= 0);
+    sendToNexo({ type: "captions_active", ids });
+  }
+
+  function releaseTrack() {
+    clearTimeout(captions.trackTimer);
+    captions.trackTimer = 0;
+    const track = captions.track;
+    captions.track = null;
+    if (!track) return;
+    track.removeEventListener("cuechange", sendActiveCues);
+    try { track.mode = captions.trackMode || "disabled"; } catch (_) {}
+  }
+
+  /** Usa la pista de subtítulos o capítulos del video si existe y se puede leer. */
+  function useTextTrack(video) {
+    const tracks = Array.from(video.textTracks || [])
+      .filter(track => track.kind === "subtitles" || track.kind === "captions");
+    if (!tracks.length) return false;
+    const track = tracks.find(item => item.mode === "showing") || tracks[0];
+    captions.track = track;
+    captions.trackMode = track.mode;
+    // "hidden" carga las líneas sin dibujarlas: Nexo muestra las suyas (traducidas).
+    try { track.mode = "hidden"; } catch (_) {}
+    track.addEventListener("cuechange", sendActiveCues);
+    sendToNexo({ type: "captions_track", lang: track.language || "" });
+    let attempts = 0;
+    const load = () => {
+      if (captions.track !== track) return;
+      if (sendCues(track)) return;
+      // Pista vacía o de otro origen sin permiso: se recurre al audio si hay clave.
+      if (++attempts >= 10) {
+        releaseTrack();
+        if (captions.live) startRecording(); else captionError("need_key");
+        return;
+      }
+      captions.trackTimer = setTimeout(load, 500);
+    };
+    load();
+    return true;
+  }
+
+  function setCaptions(active, live) {
+    captions.active = active === true;
+    captions.live = live === true;
+    if (!captions.active) {
+      stopRecording(false);
+      releaseTrack();
+      captions.video = null;
+      return;
+    }
+    captions.video = captionVideo();
+    if (!captions.video) { captionError("no_video"); return; }
+    if (useTextTrack(captions.video)) return;
+    if (!captions.live) { captionError("need_key"); return; }
+    startRecording();
+  }
+
+  // Grabar solo mientras el video suena: en pausa no se envía nada (ni se cobra).
+  document.addEventListener("playing", event => {
+    if (captions.active && (!captions.video || event.target === captions.video)) {
+      if (!captions.video) captions.video = event.target;
+      startRecording();
+    }
+  }, true);
+  ["pause", "ended", "emptied"].forEach(type => {
+    document.addEventListener(type, event => {
+      if (captions.active && event.target === captions.video) stopRecording(true);
+    }, true);
+  });
+
+  // ---------------------------------------------------------------
   // Estado hacia Nexo
   // ---------------------------------------------------------------
 
@@ -531,6 +880,25 @@
 
     if (message.type === "pip_command" && typeof message.command === "string") {
       pipCommand(message.command);
+    }
+
+    if (message.type === "lifecycle") {
+      if (message.state === "background") {
+        onBackground();
+        if (captions.recorder) stopRecording(true);
+      } else if (message.state === "foreground") {
+        onForeground();
+        if (captions.active) setTimeout(startRecording, 900);
+      }
+    }
+
+    if (message.type === "captions") {
+      setCaptions(message.active === true, message.live === true);
+    }
+
+    if (message.type === "captions_restart" && captions.active && !captions.track) {
+      stopRecording(false);
+      startRecording();
     }
   }
 
