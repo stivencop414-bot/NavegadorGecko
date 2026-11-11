@@ -15,9 +15,15 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Temas Midnight, OLED y claro.
 - Siete colores de acento, con cobalto por defecto.
 - Historial con búsqueda en vivo (título, dominio o dirección, sin distinguir tildes), descargas y compartir.
-- Subtítulos en vivo para cualquier video (botón CC): el audio se comprime en la página (Opus, ~24 kbps),
-  Deepgram lo transcribe en streaming con tu clave y las frases se traducen al momento (Google sin clave o DeepL),
-  sin descargar modelos. Solo transcribe mientras el video suena en primer plano; se puede ocultar el botón.
+- Subtítulos en vivo para cualquier video (botón CC):
+  - Si el video trae subtítulos propios (WebVTT), se usan esos sin Deepgram ni clave y se traducen todos
+    por adelantado en lotes grandes.
+  - Si no, el audio se comprime en la página (Opus, ~24 kbps) y Deepgram lo transcribe en streaming desde el
+    proceso nativo; la clave nunca llega a la página.
+  - Traducción por lotes (una petición en curso, con caché) con Google sin clave, DeepL o un modelo de IA
+    (OpenAI, Claude, OpenRouter o propio) que recibe el contexto anterior. Modos: traducido, ambos u original.
+  - Claves cifradas con el Android Keystore. Reconexión con espera creciente (máx. 3), control de flujo,
+    contador de minutos y límite diario. Solo transcribe mientras el video suena en primer plano.
 - Bloqueo de ventanas emergentes y "popunders" (reglas $popup de las listas y toques robados), con interruptor.
 - Deslizar hacia abajo para recargar (solo cuando la página está arriba y el gesto no lo usa la propia web).
 - Recuperación automática del video al volver a la app: si el reproductor quedó congelado, se repara sin recargar.

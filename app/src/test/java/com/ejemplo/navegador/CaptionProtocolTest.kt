@@ -50,4 +50,57 @@ class CaptionProtocolTest {
         assertTrue(done.length + pending.length <= 41)
         assertTrue(done.endsWith("number 4 here.") || pending.endsWith("number 4 here."))
     }
+
+    @Test fun batchesTranslationsWithOneRequestInFlight() {
+        val batcher = TranslationBatcher(delayMs = 1000, maxChars = 30, maxLines = 3)
+        batcher.add(TranslationBatcher.Item(1, "Hello."), now = 0)
+        assertEquals(1000L, batcher.dueAt())
+        assertNull(batcher.take(500))
+        batcher.add(TranslationBatcher.Item(2, "How are you?"), now = 400)
+        val first = batcher.take(1000)!!
+        assertEquals(listOf(1L, 2L), first.map { it.id })
+        batcher.add(TranslationBatcher.Item(3, "Fine."), now = 1100)
+        assertNull("only one request at a time", batcher.dueAt())
+        batcher.done()
+        // Too much text waiting: send right away, without exceeding the size of a batch.
+        batcher.add(TranslationBatcher.Item(4, "A rather long subtitle line."), now = 1200)
+        assertEquals(0L, batcher.dueAt())
+        assertEquals(listOf(3L), batcher.take(1200)!!.map { it.id })
+    }
+
+    @Test fun batchFormatsKeepLineOrder() {
+        assertEquals(listOf("Hola.", "¿Cómo estás?"),
+            CaptionProtocol.parseGoogleLines("""[[["Hola.\n","Hello.\n",null],["¿Cómo estás?","How are you?",null]],null,"en"]""", 2))
+        assertNull(CaptionProtocol.parseGoogleLines("""[[["Hola. ¿Cómo estás?","x",null]],null,"en"]""", 2))
+        assertTrue(CaptionProtocol.deeplBatchBody(listOf("a", "b"), "es").startsWith("text=a&text=b&target_lang=ES"))
+        assertEquals(listOf("x", "y"), CaptionProtocol.parseDeeplLines("""{"translations":[{"text":"x"},{"text":"y"}]}""", 2))
+    }
+
+    @Test fun aiTranslationRequestsAndParsing() {
+        val openai = CaptionProtocol.aiRequest("openai", "", "", "k", "Spanish", listOf("Hi", "Bye"), listOf("Before"))
+        assertEquals("https://api.openai.com/v1/chat/completions", openai.url)
+        assertEquals("Bearer k", openai.headers["Authorization"])
+        assertTrue(openai.body.contains("gpt-4.1-mini"))
+        val user = org.json.JSONObject(openai.body).getJSONArray("messages").getJSONObject(1).getString("content")
+        assertEquals("[\"Hi\",\"Bye\"]", org.json.JSONObject(user).getJSONArray("lines").toString())
+        assertEquals("[\"Before\"]", org.json.JSONObject(user).getJSONArray("context").toString())
+        val claude = CaptionProtocol.aiRequest("claude", "", "claude-haiku-5-5", "k", "Spanish", listOf("Hi"), emptyList())
+        assertEquals("https://api.anthropic.com/v1/messages", claude.url)
+        assertEquals("k", claude.headers["x-api-key"])
+        assertEquals(listOf("Hola", "Adiós"), CaptionProtocol.parseAiLines(
+            """{"choices":[{"message":{"content":"```json\n{\"t\":[\"Hola\",\"Adiós\"]}\n```"}}]}""", 2))
+        assertEquals(listOf("Hola"), CaptionProtocol.parseAiLines(
+            """{"content":[{"type":"text","text":"{\"t\":[\"Hola\"]}"}]}""", 1))
+        assertNull("a wrong count never misaligns subtitles", CaptionProtocol.parseAiLines(
+            """{"content":[{"type":"text","text":"{\"t\":[\"Hola\",\"extra\"]}"}]}""", 1))
+    }
+
+    @Test fun bothModeShowsOriginalUnderTranslation() {
+        val text = CaptionText()
+        val segment = text.onTranscript(CaptionProtocol.Transcript("Good morning.", isFinal = true, speechFinal = true))!!
+        text.setTranslation(segment.id, "Buenos días.")
+        assertEquals(CaptionDisplay("Buenos días.", "", "Good morning."), text.view("both", translating = true))
+        assertEquals(CaptionDisplay("Buenos días.", "", ""), text.view("translated", translating = true))
+        assertEquals(listOf("Good morning."), text.context())
+    }
 }

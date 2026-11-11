@@ -152,6 +152,8 @@ class ScreenshotTest {
         val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
         activity.setContentView(FrameLayout(activity))
         BrowserPrefs.setCaptionTranslateTo(activity, "es")
+        BrowserPrefs.setTranslationProvider(activity, BrowserPrefs.TRANSLATE_AI)
+        BrowserPrefs.setAiTranslateProvider(activity, "claude")
         CaptionsUi.showSheet(activity)
         dialogShot(null, "captions-sheet-dark")
     }
@@ -175,7 +177,8 @@ class ScreenshotTest {
         mini.visibility = View.VISIBLE
         CaptionsUi.styleChip(activity, mini, false)
         CaptionsUi.render(activity, root.findViewById(R.id.captionView), frame.width, frame.height, rect,
-            "Hoy vamos a ver cómo funciona el motor de un navegador." to "And the rendering", false)
+            CaptionDisplay("Hoy vamos a ver cómo funciona el motor de un navegador.", "And the rendering",
+                "Today we will see how a browser engine works."), false)
         org.robolectric.shadows.ShadowLooper.idleMainLooper()
         save(activity.window.decorView, "captions-overlay")
     }

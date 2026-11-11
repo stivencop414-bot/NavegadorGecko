@@ -62,10 +62,10 @@ object CaptionsUi {
         frameWidth: Int,
         frameHeight: Int,
         videoRect: Rect?,
-        display: Pair<String, String>?,
+        display: CaptionDisplay?,
         pip: Boolean
     ) {
-        if (display == null || (display.first.isBlank() && display.second.isBlank()) || frameWidth <= 0 || frameHeight <= 0) {
+        if (display == null || display.isEmpty || frameWidth <= 0 || frameHeight <= 0) {
             view.visibility = View.GONE
             return
         }
@@ -79,14 +79,23 @@ object CaptionsUi {
             cornerRadius = dp(activity, 10f).toFloat()
         }
         val text = SpannableStringBuilder()
-        if (display.first.isNotBlank()) text.append(display.first)
-        if (display.second.isNotBlank()) {
+        if (display.primary.isNotBlank()) text.append(display.primary)
+        if (display.pending.isNotBlank()) {
             if (text.isNotEmpty()) text.append(' ')
             val start = text.length
-            text.append(display.second)
+            text.append(display.pending)
             // Lo que aún se está transcribiendo o traduciendo, algo más tenue.
             text.setSpan(ForegroundColorSpan(0xC8E5E7EB.toInt()), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
+        if (display.secondary.isNotBlank() && !pip) {
+            // Modo "ambos": el original debajo, más pequeño.
+            text.append('\n')
+            val start = text.length
+            text.append(display.secondary)
+            text.setSpan(ForegroundColorSpan(0xB3CBD5E1.toInt()), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            text.setSpan(android.text.style.RelativeSizeSpan(0.8f), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        view.maxLines = if (display.secondary.isNotBlank()) 5 else 3
         view.text = text
 
         val margin = dp(activity, 8f)
@@ -116,12 +125,14 @@ object CaptionsUi {
         var target = BrowserPrefs.captionTranslateTo(activity)
         var provider = BrowserPrefs.translationProvider(activity)
         var size = BrowserPrefs.captionSize(activity)
+        var mode = BrowserPrefs.captionMode(activity)
+        var limit = BrowserPrefs.captionDailyLimit(activity)
 
         body.addView(NexoUi.section(activity, "Deepgram"))
         val (keyView, keyField) = NexoUi.field(activity, "Clave API de Deepgram", "Pega tu clave", BrowserPrefs.deepgramKey(activity))
         keyField.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         body.addView(keyView)
-        body.addView(NexoUi.note(activity, "Transcribe el audio del video en la nube. Usa los minutos de tu cuenta de Deepgram."))
+        body.addView(NexoUi.note(activity, "Si el video trae subtítulos propios se usan esos (sin clave). Si no, Deepgram transcribe el audio en la nube con tu cuenta."))
         body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_link, "Crear una clave en deepgram.com", "Se abre en una pestaña nueva") {
             sheet.dismiss()
             TabManager.createTab("https://console.deepgram.com/signup", false, true)
@@ -141,27 +152,58 @@ object CaptionsUi {
 
         body.addView(NexoUi.section(activity, "Traducir a"))
         val targetRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        val providerBox = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val translateBox = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val modeRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val providerRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val (deeplView, deeplField) = NexoUi.field(activity, "Clave API de DeepL", "Termina en :fx si es gratuita", BrowserPrefs.deeplKey(activity))
         deeplField.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        // Traducción con un modelo de IA: lotes grandes y pocas peticiones.
+        val aiBox = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val aiProviderRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        var aiProvider = BrowserPrefs.aiTranslateProvider(activity)
+        val (aiModelView, aiModelField) = NexoUi.field(activity, "Modelo", CaptionProtocol.AI_MODELS[aiProvider] ?: "Nombre del modelo", BrowserPrefs.aiTranslateModel(activity))
+        val (aiEndpointView, aiEndpointField) = NexoUi.field(activity, "Dirección de la API (compatible con OpenAI)", "https://servidor/v1", BrowserPrefs.aiTranslateEndpoint(activity))
+        val (aiKeyView, aiKeyField) = NexoUi.field(activity, "Clave API del modelo", "Se guarda cifrada en el teléfono", BrowserPrefs.aiTranslateKey(activity))
+        aiKeyField.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        aiBox.addView(NexoUi.section(activity, "Modelo de IA"))
+        aiBox.addView(aiProviderRow)
+        aiBox.addView(aiModelView); aiBox.addView(aiEndpointView); aiBox.addView(aiKeyView)
+        aiBox.addView(NexoUi.note(activity, "Traduce varias frases en una sola petición, con el contexto anterior. Con subtítulos propios del video, traduce todo por adelantado."))
         fun refreshProvider() {
-            providerBox.visibility = if (target.isBlank()) View.GONE else View.VISIBLE
+            translateBox.visibility = if (target.isBlank()) View.GONE else View.VISIBLE
             deeplView.visibility = if (provider == BrowserPrefs.TRANSLATE_DEEPL) View.VISIBLE else View.GONE
+            aiBox.visibility = if (provider == BrowserPrefs.TRANSLATE_AI) View.VISIBLE else View.GONE
+            aiEndpointView.visibility = if (aiProvider == "custom") View.VISIBLE else View.GONE
+            aiModelField.hint = CaptionProtocol.AI_MODELS[aiProvider] ?: "Nombre del modelo"
         }
         chips(targetRow, TARGETS, { target }) { target = it; refreshProvider() }
         body.addView(targetRow)
-        chips(providerRow, listOf(BrowserPrefs.TRANSLATE_GOOGLE to "Google (sin clave)", BrowserPrefs.TRANSLATE_DEEPL to "DeepL"), { provider }) {
-            provider = it; refreshProvider()
-        }
-        providerBox.addView(NexoUi.section(activity, "Servicio de traducción"))
-        providerBox.addView(providerRow)
-        providerBox.addView(deeplView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+        translateBox.addView(NexoUi.section(activity, "Mostrar"))
+        chips(modeRow, listOf("translated" to "Traducido", "both" to "Ambos", "original" to "Original"), { mode }) { mode = it }
+        translateBox.addView(modeRow)
+        translateBox.addView(NexoUi.section(activity, "Servicio de traducción"))
+        chips(providerRow, listOf(
+            BrowserPrefs.TRANSLATE_GOOGLE to "Google (sin clave)",
+            BrowserPrefs.TRANSLATE_DEEPL to "DeepL",
+            BrowserPrefs.TRANSLATE_AI to "Modelo de IA"
+        ), { provider }) { provider = it; refreshProvider() }
+        translateBox.addView(providerRow)
+        translateBox.addView(deeplView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(activity, 8f)
         })
-        providerBox.addView(NexoUi.note(activity, "Se traducen las frases terminadas, al momento y sin descargar idiomas."))
-        body.addView(providerBox)
+        chips(aiProviderRow, listOf("openai" to "OpenAI", "claude" to "Claude", "openrouter" to "OpenRouter", "custom" to "Propio"), { aiProvider }) {
+            aiProvider = it; refreshProvider()
+        }
+        translateBox.addView(aiBox)
+        translateBox.addView(NexoUi.note(activity, "Se traducen frases completas, agrupadas, al momento y sin descargar idiomas."))
+        body.addView(translateBox)
         refreshProvider()
+
+        body.addView(NexoUi.section(activity, "Límite diario de Deepgram"))
+        val limitRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        chips(limitRow, listOf("30" to "30 min", "60" to "1 h", "120" to "2 h", "240" to "4 h", "0" to "Sin límite"), { limit.toString() }) { limit = it.toInt() }
+        body.addView(limitRow)
+        body.addView(NexoUi.note(activity, LiveCaptions.usageText(activity) + ". Los videos con subtítulos propios no lo consumen."))
 
         body.addView(NexoUi.section(activity, "Tamaño del texto"))
         val sizeRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
@@ -180,12 +222,27 @@ object CaptionsUi {
             if (target.isNotBlank() && provider == BrowserPrefs.TRANSLATE_DEEPL && deeplField.text.isBlank()) {
                 error.text = "Escribe la clave de DeepL o elige Google."; error.visibility = View.VISIBLE; return@button
             }
+            if (target.isNotBlank() && provider == BrowserPrefs.TRANSLATE_AI) {
+                val endpoint = aiEndpointField.text.toString().trim()
+                if (aiProvider == "custom" && !endpoint.startsWith("https://")) {
+                    error.text = "La dirección de la API debe empezar por https://."; error.visibility = View.VISIBLE; return@button
+                }
+                if (aiProvider != "custom" && aiKeyField.text.isBlank()) {
+                    error.text = "Escribe la clave del modelo de IA."; error.visibility = View.VISIBLE; return@button
+                }
+            }
             BrowserPrefs.setDeepgramKey(activity, key)
             BrowserPrefs.setCaptionLanguage(activity, language)
             BrowserPrefs.setCaptionTranslateTo(activity, target)
             BrowserPrefs.setTranslationProvider(activity, provider)
             BrowserPrefs.setDeeplKey(activity, deeplField.text.toString())
             BrowserPrefs.setCaptionSize(activity, size)
+            BrowserPrefs.setCaptionMode(activity, mode)
+            BrowserPrefs.setCaptionDailyLimit(activity, limit)
+            BrowserPrefs.setAiTranslateProvider(activity, aiProvider)
+            BrowserPrefs.setAiTranslateModel(activity, aiModelField.text.toString())
+            BrowserPrefs.setAiTranslateEndpoint(activity, if (aiProvider == "custom") aiEndpointField.text.toString() else "")
+            BrowserPrefs.setAiTranslateKey(activity, aiKeyField.text.toString())
             sheet.dismiss()
             onSaved()
         }, NexoUi.buttonParams(activity, 14f))

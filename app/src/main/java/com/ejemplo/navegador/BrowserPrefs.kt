@@ -135,16 +135,49 @@ object BrowserPrefs {
     const val TRANSLATE_DEEPL = "deepl"
     fun captionsEnabled(c: Context) = p(c).getBoolean("captions_enabled", true)
     fun setCaptionsEnabled(c: Context, v: Boolean) = p(c).edit().putBoolean("captions_enabled", v).apply()
-    fun deepgramKey(c: Context) = p(c).getString("deepgram_key", "").orEmpty()
-    fun setDeepgramKey(c: Context, v: String) = p(c).edit().putString("deepgram_key", v.trim()).apply()
+    /** Las claves viven cifradas en [SecretStore]; las de 0.22.0 (en claro) se migran al leerlas. */
+    private fun secret(c: Context, name: String): String {
+        val legacy = p(c).getString(name, null)
+        if (legacy != null) {
+            SecretStore.put(c, name, legacy)
+            p(c).edit().remove(name).apply()
+        }
+        return SecretStore.get(c, name)
+    }
+    fun deepgramKey(c: Context) = secret(c, "deepgram_key")
+    fun setDeepgramKey(c: Context, v: String) = SecretStore.put(c, "deepgram_key", v)
     fun captionLanguage(c: Context) = p(c).getString("caption_language", "multi") ?: "multi"
     fun setCaptionLanguage(c: Context, v: String) = p(c).edit().putString("caption_language", v).apply()
     fun captionTranslateTo(c: Context) = p(c).getString("caption_translate", "") ?: ""
     fun setCaptionTranslateTo(c: Context, v: String) = p(c).edit().putString("caption_translate", v).apply()
     fun translationProvider(c: Context) = p(c).getString("translation_provider", TRANSLATE_GOOGLE) ?: TRANSLATE_GOOGLE
     fun setTranslationProvider(c: Context, v: String) = p(c).edit().putString("translation_provider", v).apply()
-    fun deeplKey(c: Context) = p(c).getString("deepl_key", "").orEmpty()
-    fun setDeeplKey(c: Context, v: String) = p(c).edit().putString("deepl_key", v.trim()).apply()
+    fun deeplKey(c: Context) = secret(c, "deepl_key")
+    fun setDeeplKey(c: Context, v: String) = SecretStore.put(c, "deepl_key", v)
+    // Traducción con un modelo de IA (por lotes, con contexto).
+    const val TRANSLATE_AI = "ai"
+    fun aiTranslateProvider(c: Context) = p(c).getString("ai_translate_provider", "openai") ?: "openai"
+    fun setAiTranslateProvider(c: Context, v: String) = p(c).edit().putString("ai_translate_provider", v).apply()
+    fun aiTranslateModel(c: Context) = p(c).getString("ai_translate_model", "") ?: ""
+    fun setAiTranslateModel(c: Context, v: String) = p(c).edit().putString("ai_translate_model", v.trim()).apply()
+    fun aiTranslateEndpoint(c: Context) = p(c).getString("ai_translate_endpoint", "") ?: ""
+    fun setAiTranslateEndpoint(c: Context, v: String) = p(c).edit().putString("ai_translate_endpoint", v.trim()).apply()
+    fun aiTranslateKey(c: Context) = secret(c, "ai_translate_key")
+    fun setAiTranslateKey(c: Context, v: String) = SecretStore.put(c, "ai_translate_key", v)
+    // Original, traducido o ambos.
+    fun captionMode(c: Context) = p(c).getString("caption_mode", "translated") ?: "translated"
+    fun setCaptionMode(c: Context, v: String) = p(c).edit().putString("caption_mode", v).apply()
+    // Límite diario de audio enviado a Deepgram (minutos; 0 = sin límite) y consumo de hoy.
+    fun captionDailyLimit(c: Context) = p(c).getInt("caption_daily_limit", 120).coerceIn(0, 1440)
+    fun setCaptionDailyLimit(c: Context, v: Int) = p(c).edit().putInt("caption_daily_limit", v.coerceIn(0, 1440)).apply()
+    private fun today(): String = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
+    fun captionSecondsToday(c: Context): Int =
+        if (p(c).getString("caption_usage_day", "") == today()) p(c).getInt("caption_usage_seconds", 0) else 0
+    fun addCaptionSeconds(c: Context, seconds: Int) {
+        if (seconds <= 0) return
+        val total = captionSecondsToday(c) + seconds
+        p(c).edit().putString("caption_usage_day", today()).putInt("caption_usage_seconds", total).apply()
+    }
     fun captionSize(c: Context) = p(c).getInt("caption_size", 16).coerceIn(12, 26)
     fun setCaptionSize(c: Context, v: Int) = p(c).edit().putInt("caption_size", v.coerceIn(12, 26)).apply()
 

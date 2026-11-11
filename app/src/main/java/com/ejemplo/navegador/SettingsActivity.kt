@@ -309,8 +309,8 @@ class SettingsActivity : Activity() {
         val language = CaptionsUi.LANGUAGES.firstOrNull { it.first == BrowserPrefs.captionLanguage(this) }?.second ?: "Automático"
         val target = CaptionsUi.TARGETS.firstOrNull { it.first == BrowserPrefs.captionTranslateTo(this) }?.second ?: "No traducir"
         findViewById<TextView>(R.id.captionsSummary).text =
-            if (BrowserPrefs.deepgramKey(this).isBlank()) "Necesita una clave de Deepgram."
-            else "Audio: $language · Traducción: $target"
+            (if (BrowserPrefs.deepgramKey(this).isBlank()) "Sin clave de Deepgram: solo videos con subtítulos propios."
+            else "Audio: $language · ${LiveCaptions.usageText(this)}") + "\nTraducción: $target"
     }
 
     private fun aboutText(): String {

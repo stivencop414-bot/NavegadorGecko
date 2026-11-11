@@ -527,7 +527,9 @@
    */
   const CAPTION_SLICE_MS = 250;
   const audioGraphs = new WeakMap();
-  const captions = { active: false, video: null, recorder: null, silentTimer: 0 };
+  const captions = { active: false, live: false, video: null, recorder: null, silentTimer: 0,
+    track: null, trackMode: "", trackTimer: 0 };
+  const MAX_CUES = 3000;
 
   function sendToNexo(message) {
     if (!port) return false;
@@ -568,15 +570,24 @@
       throw new Error("suspended");
     }
     const source = context.createMediaElementSource(video);
+    // La salida normal se conserva para siempre: el video sigue sonando igual.
     source.connect(context.destination);
     const destination = context.createMediaStreamDestination();
-    source.connect(destination);
     const analyser = context.createAnalyser();
     analyser.fftSize = 512;
-    source.connect(analyser);
-    const graph = { context, destination, analyser };
+    const graph = { context, source, destination, analyser, tapped: false };
     audioGraphs.set(video, graph);
     return graph;
+  }
+
+  /** Rama de captura conectada solo mientras se graba; fuera de eso no hay trabajo extra. */
+  function tap(graph, on) {
+    if (!graph || graph.tapped === on) return;
+    try {
+      if (on) { graph.source.connect(graph.destination); graph.source.connect(graph.analyser); }
+      else { graph.source.disconnect(graph.destination); graph.source.disconnect(graph.analyser); }
+      graph.tapped = on;
+    } catch (_) {}
   }
 
   function stopRecording(notify) {
@@ -584,6 +595,7 @@
     captions.recorder = null;
     clearTimeout(captions.silentTimer);
     captions.silentTimer = 0;
+    if (captions.video) tap(audioGraphs.get(captions.video), false);
     if (recorder) {
       try { if (recorder.state !== "inactive") recorder.stop(); } catch (_) {}
       if (notify) sendToNexo({ type: "captions_stop" });
@@ -608,7 +620,7 @@
   }
 
   async function startRecording() {
-    if (!captions.active || captions.recorder) return;
+    if (!captions.active || !captions.live || captions.track || captions.recorder) return;
     const video = captions.video && captions.video.isConnected ? captions.video : captionVideo();
     if (!video) { captionError("no_video"); return; }
     captions.video = video;
@@ -621,6 +633,7 @@
       return;
     }
     if (!captions.active || captions.recorder || video.paused) return;
+    tap(graph, true);
     const mimeType = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus"]
       .find(type => MediaRecorder.isTypeSupported(type)) || "";
     let recorder;
@@ -648,14 +661,85 @@
     watchSilence(graph, recorder);
   }
 
-  function setCaptions(active) {
+  // --- Pista de subtítulos del propio video: sin Deepgram ---------------
+
+  function cueText(cue) {
+    return String(cue.text || "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim().slice(0, 300);
+  }
+
+  function sendCues(track) {
+    const cues = track.cues;
+    if (!cues || !cues.length) return false;
+    const list = [];
+    for (let i = 0; i < cues.length && i < MAX_CUES; i++) {
+      const text = cueText(cues[i]);
+      if (text) list.push({ i, s: cues[i].startTime, e: cues[i].endTime, t: text });
+    }
+    // Todas las líneas por adelantado, en bloques: Nexo las traduce en lotes grandes.
+    for (let i = 0; i < list.length; i += 200) sendToNexo({ type: "captions_cues", cues: list.slice(i, i + 200) });
+    sendActiveCues();
+    return list.length > 0;
+  }
+
+  function sendActiveCues() {
+    const track = captions.track;
+    if (!track) return;
+    const cues = Array.from(track.cues || []);
+    const ids = Array.from(track.activeCues || []).map(cue => cues.indexOf(cue)).filter(i => i >= 0);
+    sendToNexo({ type: "captions_active", ids });
+  }
+
+  function releaseTrack() {
+    clearTimeout(captions.trackTimer);
+    captions.trackTimer = 0;
+    const track = captions.track;
+    captions.track = null;
+    if (!track) return;
+    track.removeEventListener("cuechange", sendActiveCues);
+    try { track.mode = captions.trackMode || "disabled"; } catch (_) {}
+  }
+
+  /** Usa la pista de subtítulos o capítulos del video si existe y se puede leer. */
+  function useTextTrack(video) {
+    const tracks = Array.from(video.textTracks || [])
+      .filter(track => track.kind === "subtitles" || track.kind === "captions");
+    if (!tracks.length) return false;
+    const track = tracks.find(item => item.mode === "showing") || tracks[0];
+    captions.track = track;
+    captions.trackMode = track.mode;
+    // "hidden" carga las líneas sin dibujarlas: Nexo muestra las suyas (traducidas).
+    try { track.mode = "hidden"; } catch (_) {}
+    track.addEventListener("cuechange", sendActiveCues);
+    sendToNexo({ type: "captions_track", lang: track.language || "" });
+    let attempts = 0;
+    const load = () => {
+      if (captions.track !== track) return;
+      if (sendCues(track)) return;
+      // Pista vacía o de otro origen sin permiso: se recurre al audio si hay clave.
+      if (++attempts >= 10) {
+        releaseTrack();
+        if (captions.live) startRecording(); else captionError("need_key");
+        return;
+      }
+      captions.trackTimer = setTimeout(load, 500);
+    };
+    load();
+    return true;
+  }
+
+  function setCaptions(active, live) {
     captions.active = active === true;
+    captions.live = live === true;
     if (!captions.active) {
       stopRecording(false);
+      releaseTrack();
       captions.video = null;
       return;
     }
     captions.video = captionVideo();
+    if (!captions.video) { captionError("no_video"); return; }
+    if (useTextTrack(captions.video)) return;
+    if (!captions.live) { captionError("need_key"); return; }
     startRecording();
   }
 
@@ -809,7 +893,12 @@
     }
 
     if (message.type === "captions") {
-      setCaptions(message.active === true);
+      setCaptions(message.active === true, message.live === true);
+    }
+
+    if (message.type === "captions_restart" && captions.active && !captions.track) {
+      stopRecording(false);
+      startRecording();
     }
   }
 

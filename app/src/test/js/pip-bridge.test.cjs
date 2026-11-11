@@ -72,7 +72,8 @@ function harness(extra = {}) {
     leave: () => onMessage({ type: 'pip_mode', active: false }),
     command: command => onMessage({ type: 'pip_command', command }),
     lifecycle: state => onMessage({ type: 'lifecycle', state }),
-    captions: active => onMessage({ type: 'captions', active }),
+    captions: (active, live = true) => onMessage({ type: 'captions', active, live }),
+    message: value => onMessage(value),
     fire: (type, target) => { const event = new Event(type); Object.defineProperty(event, 'target', { value: target }); document.dispatchEvent(event); },
     changed: () => document.dispatchEvent(new Event('loadedmetadata')) };
 }
@@ -224,7 +225,7 @@ function audioMocks(state = 'running') {
     constructor() { this.state = state; }
     resume() { return Promise.resolve(); }
     close() { this.closed = true; }
-    createMediaElementSource(video) { const node = { video, connect() {} }; sources.push(node); return node; }
+    createMediaElementSource(video) { const node = { video, links: 0, connect() { this.links++; }, disconnect() { this.links--; } }; sources.push(node); return node; }
     createMediaStreamDestination() { return { stream: {}, connect() {} }; }
     createAnalyser() { return { fftSize: 512, connect() {}, getByteTimeDomainData: data => data.fill(150) }; }
     get destination() { return {}; }
@@ -281,4 +282,44 @@ test('going to the background stops captions recording and returning resumes it'
   assert.equal(audio.recorders[0].state, 'inactive');
   h.lifecycle('foreground'); h.tick(1000); await flush(); await flush();
   assert.equal(audio.recorders.length, 2);
+});
+
+test('a video with its own subtitle track is translated from the track, without audio capture', async () => {
+  const audio = audioMocks();
+  const h = harness(audio.extra), v = h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  const listeners = {};
+  const cue = { text: '<i>Hello</i>  there', startTime: 1, endTime: 3 };
+  v.textTracks = [{ kind: 'subtitles', mode: 'showing', language: 'en', cues: [cue], activeCues: [cue],
+    addEventListener: (type, fn) => { listeners[type] = fn; }, removeEventListener: type => { delete listeners[type]; } }];
+  h.captions(true, false); await flush();
+  assert.equal(v.textTracks[0].mode, 'hidden', 'native rendering hidden while Nexo shows its own');
+  assert.ok(h.reports.some(x => x.type === 'captions_track'));
+  const sent = h.reports.find(x => x.type === 'captions_cues');
+  assert.deepEqual(JSON.parse(JSON.stringify(sent.cues)), [{ i: 0, s: 1, e: 3, t: 'Hello there' }]);
+  assert.ok(h.reports.some(x => x.type === 'captions_active' && x.ids[0] === 0));
+  assert.equal(audio.recorders.length, 0, 'no Deepgram audio for tracked videos');
+  h.captions(false);
+  assert.equal(v.textTracks[0].mode, 'showing', 'original mode restored');
+});
+
+test('without a track and without a Deepgram key the page asks for a key', async () => {
+  const audio = audioMocks();
+  const h = harness(audio.extra); h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  h.captions(true, false); await flush();
+  assert.ok(h.reports.some(x => x.type === 'captions_error' && x.code === 'need_key'));
+  assert.equal(audio.recorders.length, 0);
+});
+
+test('a restart after a network drop starts a fresh recording and stopping detaches the capture branch', async () => {
+  const audio = audioMocks();
+  const h = harness(audio.extra); h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  h.captions(true); await flush(); await flush();
+  assert.equal(audio.sources[0].links, 3, 'speakers + recorder + level meter');
+  h.message({ type: 'captions_restart' }); await flush(); await flush();
+  assert.equal(audio.recorders.length, 2);
+  h.captions(false);
+  assert.equal(audio.sources[0].links, 1, 'only the speaker output stays connected');
 });

@@ -1097,17 +1097,17 @@ class MainActivity :
         if (LiveCaptions.state(session) == LiveCaptions.State.ERROR && message != null && message != lastCaptionMessage) {
             lastCaptionMessage = message
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            // Sin clave y sin subtítulos propios: abrir la configuración directamente.
+            if (BrowserPrefs.deepgramKey(this).isBlank() && message.contains("Deepgram")) {
+                LiveCaptions.stop(session)
+                CaptionsUi.showSheet(this, askKey = true) { refreshCaptionsUi() }
+            }
         }
     }
 
     private fun toggleCaptions() {
         val session = attachedSession ?: return
-        if (!LiveCaptions.isActive(session) && BrowserPrefs.deepgramKey(this).isBlank()) {
-            CaptionsUi.showSheet(this, askKey = true) {
-                if (BrowserPrefs.deepgramKey(this).isNotBlank()) toggleCaptions()
-            }
-            return
-        }
+        // Sin clave también funciona con videos que traen subtítulos propios; si no, la página lo avisa.
         lastCaptionMessage = null
         val on = LiveCaptions.toggle(this, session)
         Toast.makeText(this, if (on) "Subtítulos activados" else "Subtítulos desactivados", Toast.LENGTH_SHORT).show()
