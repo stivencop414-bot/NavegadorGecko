@@ -17,7 +17,8 @@ object CaptionProtocol {
 
     fun listenUrl(language: String, model: String = modelFor(language)): String {
         val lang = language.takeIf { it.matches(Regex("[a-z]{2,5}(-[A-Za-z]{2,4})?|multi")) } ?: "multi"
-        return "$LISTEN_ENDPOINT?model=$model&language=$lang&smart_format=true&punctuate=true" +
+        // Sin smart_format: añade espera a las frases finales; la puntuación basta para subtítulos.
+        return "$LISTEN_ENDPOINT?model=$model&language=$lang&punctuate=true" +
             "&interim_results=true&endpointing=300&utterance_end_ms=1000"
     }
 
@@ -56,7 +57,7 @@ object CaptionProtocol {
 
     fun googleUrl(text: String, target: String): String =
         "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=" +
-            URLEncoder.encode(target, "UTF-8") + "&dt=t&q=" + URLEncoder.encode(text, "UTF-8")
+            URLEncoder.encode(googleTarget(target), "UTF-8") + "&dt=t&q=" + URLEncoder.encode(text, "UTF-8")
 
     /** [[["traducido","original",...],...],null,"en",...] */
     fun parseGoogle(body: String): String? = runCatching {
@@ -76,7 +77,24 @@ object CaptionProtocol {
         "en" -> "EN-US"
         "pt" -> "PT-BR"
         "zh" -> "ZH-HANS"
+        "zh-TW" -> "ZH-HANT"
+        "no" -> "NB"
         else -> code.uppercase()
+    }
+
+    /** Idiomas de destino que DeepL admite; el resto se traduce con Google. */
+    private val DEEPL_TARGETS = setOf(
+        "ar", "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hu", "id", "it", "ja", "ko",
+        "lt", "lv", "no", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "tr", "uk", "zh", "zh-TW"
+    )
+
+    fun deeplSupports(code: String): Boolean = code in DEEPL_TARGETS
+
+    /** Código que entiende el traductor de Google. */
+    fun googleTarget(code: String): String = when (code) {
+        "zh" -> "zh-CN"
+        "he" -> "iw"
+        else -> code
     }
 
     fun deeplBody(text: String, target: String): String =
@@ -94,7 +112,7 @@ object CaptionProtocol {
     const val GOOGLE_BATCH_URL = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&dt=t"
 
     fun googleBatchBody(lines: List<String>, target: String): String =
-        "tl=" + URLEncoder.encode(target, "UTF-8") + "&q=" + URLEncoder.encode(lines.joinToString("\n") { it.replace('\n', ' ') }, "UTF-8")
+        "tl=" + URLEncoder.encode(googleTarget(target), "UTF-8") + "&q=" + URLEncoder.encode(lines.joinToString("\n") { it.replace('\n', ' ') }, "UTF-8")
 
     /** Devuelve una traducción por línea, o null si no se pueden alinear. */
     fun parseGoogleLines(body: String, count: Int): List<String>? {
@@ -187,10 +205,34 @@ object CaptionProtocol {
         (0 until list.length()).map { list.optString(it).trim() }.takeIf { it.size == count }
     }.getOrNull()
 
-    val LANGUAGE_NAMES = mapOf(
-        "es" to "Spanish", "en" to "English", "pt" to "Portuguese", "fr" to "French", "de" to "German",
-        "it" to "Italian", "ja" to "Japanese", "ko" to "Korean", "zh" to "Simplified Chinese"
+    /** Idiomas de destino: código, nombre propio y nombre en inglés (para el modelo de IA). */
+    data class Language(val code: String, val label: String, val english: String)
+
+    val TARGET_LANGUAGES = listOf(
+        Language("es", "Español", "Spanish"), Language("en", "English", "English"),
+        Language("pt", "Português", "Portuguese"), Language("fr", "Français", "French"),
+        Language("de", "Deutsch", "German"), Language("it", "Italiano", "Italian"),
+        Language("nl", "Nederlands", "Dutch"), Language("pl", "Polski", "Polish"),
+        Language("ru", "Русский", "Russian"), Language("uk", "Українська", "Ukrainian"),
+        Language("tr", "Türkçe", "Turkish"), Language("ar", "العربية", "Arabic"),
+        Language("he", "עברית", "Hebrew"), Language("fa", "فارسی", "Persian"),
+        Language("hi", "हिन्दी", "Hindi"), Language("bn", "বাংলা", "Bengali"),
+        Language("ja", "日本語", "Japanese"), Language("ko", "한국어", "Korean"),
+        Language("zh", "中文 (简体)", "Simplified Chinese"), Language("zh-TW", "中文 (繁體)", "Traditional Chinese"),
+        Language("vi", "Tiếng Việt", "Vietnamese"), Language("th", "ไทย", "Thai"),
+        Language("id", "Bahasa Indonesia", "Indonesian"), Language("ms", "Bahasa Melayu", "Malay"),
+        Language("tl", "Filipino", "Filipino"), Language("el", "Ελληνικά", "Greek"),
+        Language("sv", "Svenska", "Swedish"), Language("no", "Norsk", "Norwegian"),
+        Language("da", "Dansk", "Danish"), Language("fi", "Suomi", "Finnish"),
+        Language("cs", "Čeština", "Czech"), Language("ro", "Română", "Romanian"),
+        Language("hu", "Magyar", "Hungarian"), Language("bg", "Български", "Bulgarian"),
+        Language("ca", "Català", "Catalan"), Language("gl", "Galego", "Galician"),
+        Language("eu", "Euskara", "Basque")
     )
+
+    val LANGUAGE_NAMES: Map<String, String> = TARGET_LANGUAGES.associate { it.code to it.english }
+
+    fun languageLabel(code: String): String = TARGET_LANGUAGES.firstOrNull { it.code == code }?.label ?: code
 }
 
 /**
@@ -244,19 +286,34 @@ data class CaptionDisplay(val primary: String, val pending: String, val secondar
  * más la frase en curso. Se limita a unas dos líneas.
  */
 class CaptionText(private val maxChars: Int = 150) {
-    data class Segment(val id: Long, val original: String, var translated: String? = null)
+    data class Segment(val id: Long, val original: String, var translated: String? = null, var provisional: Boolean = false)
 
     private val segments = ArrayDeque<Segment>()
     private var interim = ""
+    // Traducción anticipada del texto provisional (se muestra mientras llega la frase final).
+    private var interimSource = ""
+    private var interimTranslated = ""
     private var nextId = 1L
+
+    /** Texto provisional actual (para traducirlo por anticipado). */
+    val interimText: String get() = interim
+
+    fun setInterimTranslation(source: String, text: String) {
+        if (!interim.startsWith(source)) return
+        interimSource = source
+        interimTranslated = text
+    }
 
     /** Devuelve el segmento finalizado nuevo (para traducirlo), si lo hay. */
     fun onTranscript(transcript: CaptionProtocol.Transcript): Segment? {
         if (!transcript.isFinal) {
             interim = transcript.text
+            if (!interim.startsWith(interimSource)) { interimSource = ""; interimTranslated = "" }
             return null
         }
         interim = ""
+        interimSource = ""
+        interimTranslated = ""
         if (transcript.text.isBlank()) return null
         val segment = Segment(nextId++, transcript.text)
         segments.addLast(segment)
@@ -264,8 +321,20 @@ class CaptionText(private val maxChars: Int = 150) {
         return segment
     }
 
-    fun setTranslation(id: Long, text: String) {
-        segments.firstOrNull { it.id == id }?.translated = text
+    /** Una traducción provisional (respaldo rápido) nunca sustituye a la definitiva. */
+    fun setTranslation(id: Long, text: String, provisional: Boolean = false) {
+        val segment = segments.firstOrNull { it.id == id } ?: return
+        if (provisional && segment.translated != null && !segment.provisional) return
+        segment.translated = text
+        segment.provisional = provisional
+    }
+
+    /** Frases visibles, para volver a traducirlas al cambiar de idioma. */
+    fun resetTranslations(): List<Segment> {
+        segments.forEach { it.translated = null; it.provisional = false }
+        interimSource = ""
+        interimTranslated = ""
+        return segments.toList()
     }
 
     /** Originales recientes ya traducidos: contexto para el siguiente lote. */
@@ -274,6 +343,8 @@ class CaptionText(private val maxChars: Int = 150) {
     fun clear() {
         segments.clear()
         interim = ""
+        interimSource = ""
+        interimTranslated = ""
     }
 
     val isEmpty: Boolean get() = segments.isEmpty() && interim.isBlank()
@@ -298,7 +369,15 @@ class CaptionText(private val maxChars: Int = 150) {
                 pending.append(segment.original).append(' ')
             }
         }
-        if (interim.isNotBlank()) pending.append(interim)
+        if (interim.isNotBlank()) {
+            if (translating && interimTranslated.isNotBlank() && interim.startsWith(interimSource)) {
+                pending.append(interimTranslated)
+                val tail = interim.substring(interimSource.length).trim()
+                if (tail.isNotEmpty()) pending.append(' ').append(tail)
+            } else {
+                pending.append(interim)
+            }
+        }
         val (primary, rest) = trimStart(done.toString().trim(), pending.toString().trim())
         val secondary = if (translating && mode == "both") tail(originals.toString().trim(), maxChars) else ""
         return CaptionDisplay(primary, rest, secondary)

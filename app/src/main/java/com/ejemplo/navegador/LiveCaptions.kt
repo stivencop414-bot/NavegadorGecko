@@ -59,10 +59,17 @@ object LiveCaptions {
         // Traducción.
         lateinit var batcher: TranslationBatcher
         val pendingCueIds = ArrayDeque<Int>()
+        // Traducción anticipada del texto provisional.
+        var lastSpeculation = 0L
+        var speculating = false
+        // Cambia al cambiar de idioma o servicio: invalida traducciones en vuelo (no el audio).
+        var translationGeneration = 0
     }
 
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
+    // Peticiones rápidas (Google): anticipadas y respaldo mientras responde el modelo de IA.
+    private val fast = Executors.newSingleThreadExecutor()
     private val active = WeakHashMap<GeckoSession, Stream>()
     private var listener: Listener? = null
     private val cache = object : LinkedHashMap<String, String>(256, 0.75f, true) {
@@ -142,6 +149,7 @@ object LiveCaptions {
         active[session] = stream
         main.removeCallbacks(tick)
         main.postDelayed(tick, 4000L)
+        warmUp(app)
         // Con clave, la página puede usar Deepgram si el video no trae subtítulos propios.
         ExtensionManager.setCaptions(session, true, live = BrowserPrefs.deepgramKey(app).isNotBlank())
         notifyChanged(session)
@@ -161,13 +169,83 @@ object LiveCaptions {
         active.keys.toList().forEach { stop(it) }
     }
 
+    /**
+     * Sin espera artificial: si no hay ninguna petición en curso, la frase sale
+     * al momento (solo se agrupan las que llegan juntas en ~0,1 s). Mientras una
+     * petición está en curso, lo nuevo se acumula y viaja en la siguiente: así
+     * hay pocas peticiones sin añadir retraso.
+     */
     private fun newBatcher(context: Context): TranslationBatcher =
-        when (BrowserPrefs.translationProvider(context)) {
-            // Un modelo de IA tarda más por llamada: lotes más grandes y menos frecuentes.
-            BrowserPrefs.TRANSLATE_AI -> TranslationBatcher(delayMs = 2200, maxChars = 1200, maxLines = 24)
-            BrowserPrefs.TRANSLATE_DEEPL -> TranslationBatcher(delayMs = 900, maxChars = 1500, maxLines = 30)
-            else -> TranslationBatcher(delayMs = 800, maxChars = 900, maxLines = 20)
+        when (effectiveProvider(context)) {
+            BrowserPrefs.TRANSLATE_AI -> TranslationBatcher(delayMs = 120, maxChars = 1200, maxLines = 24)
+            BrowserPrefs.TRANSLATE_DEEPL -> TranslationBatcher(delayMs = 60, maxChars = 1500, maxLines = 30)
+            else -> TranslationBatcher(delayMs = 40, maxChars = 900, maxLines = 20)
         }
+
+    /** DeepL sin clave o sin ese idioma, o IA sin configurar: se usa Google. */
+    private fun effectiveProvider(context: Context): String {
+        val provider = BrowserPrefs.translationProvider(context)
+        val target = BrowserPrefs.captionTranslateTo(context)
+        return when {
+            provider == BrowserPrefs.TRANSLATE_DEEPL &&
+                (BrowserPrefs.deeplKey(context).isBlank() || !CaptionProtocol.deeplSupports(target)) -> BrowserPrefs.TRANSLATE_GOOGLE
+            provider == BrowserPrefs.TRANSLATE_AI && BrowserPrefs.aiTranslateKey(context).isBlank() &&
+                BrowserPrefs.aiTranslateProvider(context) != "custom" -> BrowserPrefs.TRANSLATE_GOOGLE
+            else -> provider
+        }
+    }
+
+    private fun cacheKey(provider: String, target: String, text: String) = provider + "\u0000" + target + "\u0000" + text
+
+    /** Abre de antemano la conexión TLS con el traductor: la primera frase no paga el saludo. */
+    private fun warmUp(context: Context) {
+        if (!translating(context)) return
+        val target = BrowserPrefs.captionTranslateTo(context)
+        val provider = effectiveProvider(context)
+        fast.execute {
+            runCatching {
+                val url = when (provider) {
+                    BrowserPrefs.TRANSLATE_DEEPL -> CaptionProtocol.deeplEndpoint(BrowserPrefs.deeplKey(context))
+                    BrowserPrefs.TRANSLATE_AI -> BrowserPrefs.aiTranslateEndpoint(context)
+                        .ifBlank { CaptionProtocol.AI_ENDPOINTS[BrowserPrefs.aiTranslateProvider(context)].orEmpty() }
+                    else -> CaptionProtocol.googleUrl("ok", target)
+                }
+                if (url.startsWith("https://")) {
+                    val request = Request.Builder().url(url).head().build()
+                    translateClient.newCall(request).execute().close()
+                }
+                // La IA usa Google como respaldo rápido: calentar también esa conexión.
+                if (provider == BrowserPrefs.TRANSLATE_AI) {
+                    translateClient.newCall(Request.Builder().url(CaptionProtocol.googleUrl("ok", target)).head().build()).execute().close()
+                }
+            }
+        }
+    }
+
+    /** Cambia el idioma de destino o el servicio sin cortar el audio: se retraduce lo visible. */
+    fun retarget(context: Context, session: GeckoSession?) {
+        val stream = session?.let { active[it] } ?: return
+        val app = context.applicationContext
+        stream.translationGeneration++
+        stream.batcher.clear()
+        stream.batcher = newBatcher(app)
+        warmUp(app)
+        if (stream.trackMode) {
+            stream.cues.values.forEach { it.translated = null }
+            stream.bulkQueued.clear()
+            queueAhead(app, stream)
+        } else {
+            stream.text.resetTranslations().forEach { enqueueLive(app, stream, it) }
+        }
+        notifyChanged(stream.session)
+    }
+
+    /** Cambia el idioma del audio: nueva conexión con Deepgram (grabación nueva). */
+    fun relisten(context: Context, session: GeckoSession?) {
+        val stream = session?.let { active[it] } ?: return
+        stream.language = BrowserPrefs.captionLanguage(context)
+        if (!stream.trackMode) ExtensionManager.restartCaptions(stream.session)
+    }
 
     // --- Mensajes del puente de la página --------------------------------
 
@@ -319,6 +397,7 @@ object LiveCaptions {
                     stream.retries = 0
                     val segment = stream.text.onTranscript(transcript)
                     if (segment != null) enqueueLive(context, stream, segment)
+                    else if (!transcript.isFinal) speculate(context, stream)
                     main.removeCallbacksAndMessages(stream)
                     notifyChanged(stream.session)
                 }
@@ -397,12 +476,51 @@ object LiveCaptions {
     private fun enqueueLive(context: Context, stream: Stream, segment: CaptionText.Segment) {
         if (!translating(context)) return
         val target = BrowserPrefs.captionTranslateTo(context)
-        cache[target + "\u0000" + segment.original]?.let {
+        val provider = effectiveProvider(context)
+        cache[cacheKey(provider, target, segment.original)]?.let {
             stream.text.setTranslation(segment.id, it)
             return
         }
+        // Con IA: lo que Google ya tradujo por anticipado se muestra mientras responde el modelo.
+        if (provider == BrowserPrefs.TRANSLATE_AI) {
+            cache[cacheKey(BrowserPrefs.TRANSLATE_GOOGLE, target, segment.original)]?.let {
+                stream.text.setTranslation(segment.id, it, provisional = true)
+            }
+        }
         stream.batcher.add(TranslationBatcher.Item(segment.id, segment.original), SystemClock.uptimeMillis())
         pump(context, stream)
+    }
+
+    /**
+     * Traducción anticipada del texto provisional con Google (rápido y sin
+     * clave): casi siempre coincide con la frase final, que entonces aparece
+     * traducida al instante. Como mucho una petición cada 0,7 s.
+     */
+    private fun speculate(context: Context, stream: Stream) {
+        if (!translating(context) || stream.speculating) return
+        val provider = effectiveProvider(context)
+        if (provider == BrowserPrefs.TRANSLATE_DEEPL) return
+        val interim = stream.text.interimText
+        val now = SystemClock.uptimeMillis()
+        if (interim.length < 24 || now - stream.lastSpeculation < 700) return
+        val target = BrowserPrefs.captionTranslateTo(context)
+        cache[cacheKey(BrowserPrefs.TRANSLATE_GOOGLE, target, interim)]?.let {
+            stream.text.setInterimTranslation(interim, it)
+            return
+        }
+        stream.speculating = true
+        stream.lastSpeculation = now
+        val generation = stream.translationGeneration
+        fast.execute {
+            val translated = runCatching { googleLines(listOf(interim), target)?.firstOrNull() }.getOrNull()
+            main.post {
+                stream.speculating = false
+                if (translated.isNullOrBlank() || active[stream.session] !== stream || stream.translationGeneration != generation) return@post
+                cache[cacheKey(BrowserPrefs.TRANSLATE_GOOGLE, target, interim)] = translated
+                stream.text.setInterimTranslation(interim, translated)
+                notifyChanged(stream.session)
+            }
+        }
     }
 
     /**
@@ -417,8 +535,9 @@ object LiveCaptions {
             .filter { it.value.translated == null && it.key !in stream.bulkQueued && it.value.end >= current - 1 }
             .sortedBy { it.value.start }
             .take(120)
+        val provider = effectiveProvider(context)
         for ((id, cue) in ordered) {
-            cache[target + "\u0000" + cue.text]?.let { cue.translated = it } ?: run {
+            cache[cacheKey(provider, target, cue.text)]?.let { cue.translated = it } ?: run {
                 stream.bulkQueued += id
                 stream.batcher.add(TranslationBatcher.Item(id.toLong(), cue.text), 0L)
             }
@@ -435,20 +554,38 @@ object LiveCaptions {
         }
         val batch = stream.batcher.take(now) ?: return
         val target = BrowserPrefs.captionTranslateTo(context)
+        val provider = effectiveProvider(context)
         val textContext = if (stream.trackMode) emptyList() else stream.text.context()
-        val generation = stream.generation
+        val generation = stream.translationGeneration
+        val lines = batch.map { it.text }
+        // Respaldo rápido: con IA en vivo, Google muestra una traducción mientras el modelo responde.
+        if (provider == BrowserPrefs.TRANSLATE_AI && !stream.trackMode) {
+            fast.execute {
+                val quick = runCatching { googleLines(lines, target) }.getOrNull() ?: return@execute
+                main.post {
+                    if (active[stream.session] !== stream || stream.translationGeneration != generation) return@post
+                    batch.forEachIndexed { index, item ->
+                        val text = quick.getOrNull(index)?.takeIf { it.isNotBlank() } ?: return@forEachIndexed
+                        cache[cacheKey(BrowserPrefs.TRANSLATE_GOOGLE, target, item.text)] = text
+                        stream.text.setTranslation(item.id, text, provisional = true)
+                    }
+                    notifyChanged(stream.session)
+                }
+            }
+        }
         io.execute {
-            val lines = batch.map { it.text }
-            val result = runCatching { translateBatch(context, lines, target, textContext) }.getOrNull()
+            val result = runCatching { translateBatch(context, provider, lines, target, textContext) }.getOrNull()
             main.post {
-                stream.batcher.done()
-                if (active[stream.session] !== stream || stream.generation != generation) return@post
+                if (stream.translationGeneration == generation) stream.batcher.done()
+                if (active[stream.session] !== stream || stream.translationGeneration != generation) return@post
                 batch.forEachIndexed { index, item ->
                     // Si el traductor falla, se queda el texto original (sin bloquear los siguientes).
-                    val translated = result?.getOrNull(index)?.takeIf { it.isNotBlank() } ?: item.text
-                    if (result != null) cache[target + "\u0000" + item.text] = translated
-                    if (stream.trackMode) stream.cues[item.id.toInt()]?.translated = translated
-                    else stream.text.setTranslation(item.id, translated)
+                    val translated = result?.getOrNull(index)?.takeIf { it.isNotBlank() }
+                    if (translated == null && provider == BrowserPrefs.TRANSLATE_AI && !stream.trackMode) return@forEachIndexed
+                    if (translated != null) cache[cacheKey(provider, target, item.text)] = translated
+                    val shown = translated ?: item.text
+                    if (stream.trackMode) stream.cues[item.id.toInt()]?.translated = shown
+                    else stream.text.setTranslation(item.id, shown)
                 }
                 notifyChanged(stream.session)
                 if (stream.trackMode) queueAhead(context, stream) else pump(context, stream)
@@ -457,8 +594,21 @@ object LiveCaptions {
     }
 
     /** Una petición por lote; si las líneas no se pueden alinear, se traducen unidas. */
-    private fun translateBatch(context: Context, lines: List<String>, target: String, textContext: List<String>): List<String>? {
-        val provider = BrowserPrefs.translationProvider(context)
+    private fun googleLines(lines: List<String>, target: String): List<String>? {
+        val form = "application/x-www-form-urlencoded".toMediaType()
+        val body = CaptionProtocol.googleBatchBody(lines, target)
+        // GET para lo habitual (frases cortas); POST solo si la dirección quedaría demasiado larga.
+        val request = if (body.length < 1800) Request.Builder().url(CaptionProtocol.GOOGLE_BATCH_URL + "&" + body).build()
+        else Request.Builder().url(CaptionProtocol.GOOGLE_BATCH_URL).post(body.toRequestBody(form)).build()
+        return translateClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val body = response.body?.string().orEmpty()
+            CaptionProtocol.parseGoogleLines(body, lines.size)
+                ?: if (lines.size == 1) CaptionProtocol.parseGoogle(body)?.let { listOf(it) } else null
+        }
+    }
+
+    private fun translateBatch(context: Context, provider: String, lines: List<String>, target: String, textContext: List<String>): List<String>? {
         val form = "application/x-www-form-urlencoded".toMediaType()
         return when (provider) {
             BrowserPrefs.TRANSLATE_AI -> {
@@ -487,17 +637,7 @@ object LiveCaptions {
                     if (response.isSuccessful) CaptionProtocol.parseDeeplLines(response.body?.string().orEmpty(), lines.size) else null
                 }
             }
-            else -> {
-                val request = Request.Builder().url(CaptionProtocol.GOOGLE_BATCH_URL)
-                    .post(CaptionProtocol.googleBatchBody(lines, target).toRequestBody(form))
-                    .build()
-                translateClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return null
-                    val body = response.body?.string().orEmpty()
-                    CaptionProtocol.parseGoogleLines(body, lines.size)
-                        ?: if (lines.size == 1) CaptionProtocol.parseGoogle(body)?.let { listOf(it) } else null
-                }
-            }
+            else -> googleLines(lines, target)
         }
     }
 

@@ -1107,10 +1107,23 @@ class MainActivity :
 
     private fun toggleCaptions() {
         val session = attachedSession ?: return
+        // Activos: la hoja rápida permite elegir idioma y modo, o apagarlos.
+        if (LiveCaptions.isActive(session)) {
+            CaptionsUi.showQuick(this, session, onChange = { refreshCaptionsUi() }) {
+                LiveCaptions.stop(session)
+                Toast.makeText(this, "Subtítulos desactivados", Toast.LENGTH_SHORT).show()
+                refreshCaptionsUi()
+            }
+            return
+        }
         // Sin clave también funciona con videos que traen subtítulos propios; si no, la página lo avisa.
         lastCaptionMessage = null
-        val on = LiveCaptions.toggle(this, session)
-        Toast.makeText(this, if (on) "Subtítulos activados" else "Subtítulos desactivados", Toast.LENGTH_SHORT).show()
+        LiveCaptions.toggle(this, session)
+        val target = BrowserPrefs.captionTranslateTo(this)
+        Toast.makeText(this,
+            if (target.isBlank()) "Subtítulos activados · toca CC para traducir"
+            else "Subtítulos activados · traducción: ${CaptionProtocol.languageLabel(target)}",
+            Toast.LENGTH_SHORT).show()
         refreshCaptionsUi()
     }
 

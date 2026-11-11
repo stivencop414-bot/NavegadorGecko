@@ -182,4 +182,15 @@ class ScreenshotTest {
         org.robolectric.shadows.ShadowLooper.idleMainLooper()
         save(activity.window.decorView, "captions-overlay")
     }
+
+    @Test fun captionsQuick() {
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        activity.setContentView(FrameLayout(activity))
+        BrowserPrefs.setCaptionTranslateTo(activity, "ko")
+        val session = org.mozilla.geckoview.GeckoSession()
+        CaptionsUi.showQuick(activity, session, onChange = {}) {}
+        dialogShot(null, "captions-quick-dark")
+        CaptionsUi.pickLanguage(activity, "ko") {}
+        dialogShot(null, "captions-languages-dark")
+    }
 }

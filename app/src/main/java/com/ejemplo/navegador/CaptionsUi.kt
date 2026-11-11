@@ -20,13 +20,15 @@ import android.widget.TextView
 object CaptionsUi {
     val LANGUAGES = listOf(
         "multi" to "Automático", "es" to "Español", "en" to "English", "pt" to "Português",
-        "fr" to "Français", "de" to "Deutsch", "it" to "Italiano", "ja" to "日本語",
-        "ko" to "한국어", "zh" to "中文", "ru" to "Русский", "hi" to "हिन्दी"
+        "fr" to "Français", "de" to "Deutsch", "it" to "Italiano", "nl" to "Nederlands", "pl" to "Polski",
+        "ru" to "Русский", "uk" to "Українська", "tr" to "Türkçe", "hi" to "हिन्दी", "ja" to "日本語",
+        "ko" to "한국어", "zh" to "中文", "id" to "Bahasa Indonesia", "vi" to "Tiếng Việt", "sv" to "Svenska"
     )
-    val TARGETS = listOf(
-        "" to "No traducir", "es" to "Español", "en" to "English", "pt" to "Português",
-        "fr" to "Français", "de" to "Deutsch", "it" to "Italiano", "ja" to "日本語", "ko" to "한국어", "zh" to "中文"
-    )
+    /** Destino: "No traducir" y los 37 idiomas del traductor. */
+    val TARGETS: List<Pair<String, String>> =
+        listOf("" to "No traducir") + CaptionProtocol.TARGET_LANGUAGES.map { it.code to it.label }
+    /** Los primeros que se ven como píldoras; el resto en "Más idiomas". */
+    private val QUICK_TARGETS = listOf("es", "en", "pt", "fr", "de", "it", "ja", "zh")
     private val SIZES = listOf(14 to "Pequeño", 16 to "Normal", 19 to "Grande", 22 to "Muy grande")
 
     private fun dp(activity: Activity, value: Float) = (value * activity.resources.displayMetrics.density).toInt()
@@ -117,6 +119,112 @@ object CaptionsUi {
         view.visibility = View.VISIBLE
     }
 
+    /** Píldoras de idioma de destino: los habituales, el elegido y "Más idiomas…". */
+    private fun targetChips(activity: Activity, selected: String, onPick: (String) -> Unit): View {
+        // El idioma elegido siempre a la vista, al principio de la fila.
+        val codes = (listOf(selected) + listOf("") + QUICK_TARGETS).distinct()
+        val chips = codes.map { code ->
+            NexoUi.chip(activity, if (code.isBlank()) "No traducir" else CaptionProtocol.languageLabel(code), code == selected) { onPick(code) }
+        } + NexoUi.chip(activity, "Más idiomas…", false) { pickLanguage(activity, selected, onPick) }
+        return NexoUi.chipRow(activity, chips)
+    }
+
+    /** Lista completa de idiomas de destino, con el elegido marcado. */
+    fun pickLanguage(activity: Activity, selected: String, onPick: (String) -> Unit) {
+        val p = ThemeManager.palette(activity)
+        lateinit var sheet: Dialog
+        val list = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(activity, 12f), 0, dp(activity, 12f), dp(activity, 8f))
+        }
+        for ((code, label) in TARGETS) {
+            val chosen = code == selected
+            list.addView(TextView(activity).apply {
+                text = (if (chosen) "✓  " else "") + label
+                textSize = 15.5f
+                setTextColor(if (chosen) (if (p.isDark) p.text else p.accent) else p.text)
+                typeface = if (chosen) Typeface.create("sans-serif-medium", Typeface.NORMAL) else Typeface.DEFAULT
+                minHeight = dp(activity, 48f)
+                gravity = android.view.Gravity.CENTER_VERTICAL or android.view.Gravity.START
+                // Árabe o hebreo también alineados con el resto de la lista.
+                textDirection = View.TEXT_DIRECTION_LOCALE
+                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                setPadding(dp(activity, 14f), 0, dp(activity, 14f), 0)
+                background = ThemeManager.ripple(activity, if (chosen) ThemeManager.rounded(activity, p.accentSoft, 14f) else null, 14f)
+                isClickable = true
+                setOnClickListener { sheet.dismiss(); onPick(code) }
+            })
+        }
+        sheet = NexoSheets.show(activity, NexoSheets.column(activity, NexoSheets.header(activity, "Traducir a", "${TARGETS.size - 1} idiomas"), list))
+    }
+
+    private fun stateText(activity: Activity, session: org.mozilla.geckoview.GeckoSession): String = when {
+        LiveCaptions.isTrackMode(session) -> "Subtítulos del propio video · sin consumo de Deepgram"
+        LiveCaptions.state(session) == LiveCaptions.State.LISTENING -> "Escuchando · " + LiveCaptions.usageText(activity)
+        LiveCaptions.state(session) == LiveCaptions.State.CONNECTING -> "Conectando con Deepgram…"
+        LiveCaptions.state(session) == LiveCaptions.State.ERROR -> LiveCaptions.message(session) ?: "Error"
+        else -> "En espera: empieza al reproducir el video"
+    }
+
+    /**
+     * Hoja rápida con los subtítulos activos: idioma de destino, qué mostrar
+     * e idioma del video. Los cambios se aplican al momento, sin cortar el audio.
+     */
+    fun showQuick(activity: Activity, session: org.mozilla.geckoview.GeckoSession, onChange: () -> Unit, onOff: () -> Unit) {
+        lateinit var sheet: Dialog
+        val body = NexoUi.column(activity)
+        val targetRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val modeRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val sourceRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        fun renderTarget() {
+            targetRow.removeAllViews()
+            targetRow.addView(targetChips(activity, BrowserPrefs.captionTranslateTo(activity)) { code ->
+                BrowserPrefs.setCaptionTranslateTo(activity, code)
+                if (code.isNotBlank() && BrowserPrefs.captionMode(activity) == "original") BrowserPrefs.setCaptionMode(activity, "translated")
+                LiveCaptions.retarget(activity, session)
+                renderTarget(); onChange()
+            })
+            modeRow.visibility = if (BrowserPrefs.captionTranslateTo(activity).isBlank()) View.GONE else View.VISIBLE
+        }
+        fun renderMode() {
+            modeRow.removeAllViews()
+            modeRow.addView(NexoUi.section(activity, "Mostrar"))
+            modeRow.addView(NexoUi.chipRow(activity, listOf("translated" to "Traducido", "both" to "Ambos", "original" to "Original").map { (value, label) ->
+                NexoUi.chip(activity, label, BrowserPrefs.captionMode(activity) == value) {
+                    BrowserPrefs.setCaptionMode(activity, value)
+                    LiveCaptions.retarget(activity, session)
+                    renderMode(); onChange()
+                }
+            }))
+        }
+        fun renderSource() {
+            sourceRow.removeAllViews()
+            sourceRow.addView(NexoUi.chipRow(activity, LANGUAGES.map { (value, label) ->
+                NexoUi.chip(activity, label, BrowserPrefs.captionLanguage(activity) == value) {
+                    BrowserPrefs.setCaptionLanguage(activity, value)
+                    LiveCaptions.relisten(activity, session)
+                    renderSource(); onChange()
+                }
+            }))
+        }
+        body.addView(NexoUi.section(activity, "Traducir a"))
+        body.addView(targetRow)
+        body.addView(modeRow)
+        renderMode(); renderTarget()
+        if (!LiveCaptions.isTrackMode(session)) {
+            body.addView(NexoUi.section(activity, "Idioma del video"))
+            body.addView(sourceRow)
+            renderSource()
+        }
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Más ajustes", "Claves, servicio de traducción, tamaño y límite") {
+            sheet.dismiss(); showSheet(activity) { onChange() }
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(activity, 10f)
+        })
+        body.addView(NexoUi.button(activity, "Apagar subtítulos", danger = true) { sheet.dismiss(); onOff() }, NexoUi.buttonParams(activity, 8f))
+        sheet = NexoSheets.show(activity, NexoSheets.column(activity, NexoSheets.header(activity, "Subtítulos en vivo", stateText(activity, session)), body))
+    }
+
     /** Hoja de configuración: clave, idioma, traducción y tamaño. */
     fun showSheet(activity: Activity, askKey: Boolean = false, onSaved: () -> Unit = {}) {
         lateinit var sheet: Dialog
@@ -176,7 +284,11 @@ object CaptionsUi {
             aiEndpointView.visibility = if (aiProvider == "custom") View.VISIBLE else View.GONE
             aiModelField.hint = CaptionProtocol.AI_MODELS[aiProvider] ?: "Nombre del modelo"
         }
-        chips(targetRow, TARGETS, { target }) { target = it; refreshProvider() }
+        fun renderTargets() {
+            targetRow.removeAllViews()
+            targetRow.addView(targetChips(activity, target, { target = it; renderTargets(); refreshProvider() }))
+        }
+        renderTargets()
         body.addView(targetRow)
         translateBox.addView(NexoUi.section(activity, "Mostrar"))
         chips(modeRow, listOf("translated" to "Traducido", "both" to "Ambos", "original" to "Original"), { mode }) { mode = it }

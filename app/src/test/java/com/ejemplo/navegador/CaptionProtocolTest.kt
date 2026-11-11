@@ -103,4 +103,32 @@ class CaptionProtocolTest {
         assertEquals(CaptionDisplay("Buenos días.", "", ""), text.view("translated", translating = true))
         assertEquals(listOf("Good morning."), text.context())
     }
+
+    @Test fun speculativeInterimAndProvisionalTranslations() {
+        val text = CaptionText()
+        text.onTranscript(CaptionProtocol.Transcript("I think that we should", isFinal = false, speechFinal = false))
+        text.setInterimTranslation("I think that we should", "Creo que deberíamos")
+        text.onTranscript(CaptionProtocol.Transcript("I think that we should go now", isFinal = false, speechFinal = false))
+        assertEquals("Creo que deberíamos go now", text.view("translated", translating = true).pending)
+        val segment = text.onTranscript(CaptionProtocol.Transcript("I think that we should go now.", isFinal = true, speechFinal = true))!!
+        text.setTranslation(segment.id, "Creo que deberíamos irnos ya.", provisional = true)
+        assertEquals("Creo que deberíamos irnos ya.", text.view("translated", translating = true).primary)
+        text.setTranslation(segment.id, "Creo que deberíamos irnos ahora.")
+        text.setTranslation(segment.id, "respaldo tardío", provisional = true)
+        assertEquals("a late fallback never replaces the final translation",
+            "Creo que deberíamos irnos ahora.", text.view("translated", translating = true).primary)
+        assertEquals(1, text.resetTranslations().size)
+        assertEquals("I think that we should go now.", text.view("translated", translating = true).pending)
+    }
+
+    @Test fun languageCodesPerService() {
+        assertEquals("zh-CN", CaptionProtocol.googleTarget("zh"))
+        assertEquals("iw", CaptionProtocol.googleTarget("he"))
+        assertTrue(CaptionProtocol.deeplSupports("es"))
+        assertFalse(CaptionProtocol.deeplSupports("hi"))
+        assertEquals("ZH-HANT", CaptionProtocol.deeplTarget("zh-TW"))
+        assertEquals(37, CaptionProtocol.TARGET_LANGUAGES.size)
+        assertEquals("Japanese", CaptionProtocol.LANGUAGE_NAMES["ja"])
+        assertFalse(CaptionProtocol.listenUrl("multi").contains("smart_format"))
+    }
 }

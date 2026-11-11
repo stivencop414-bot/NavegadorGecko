@@ -20,8 +20,13 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
     por adelantado en lotes grandes.
   - Si no, el audio se comprime en la página (Opus, ~24 kbps) y Deepgram lo transcribe en streaming desde el
     proceso nativo; la clave nunca llega a la página.
-  - Traducción por lotes (una petición en curso, con caché) con Google sin clave, DeepL o un modelo de IA
-    (OpenAI, Claude, OpenRouter o propio) que recibe el contexto anterior. Modos: traducido, ambos u original.
+  - Traducción a 37 idiomas sin esperas artificiales: cada frase sale al momento si no hay otra petición en
+    curso (lo que llega mientras tanto viaja junto en la siguiente), el texto provisional se traduce por
+    anticipado y la frase final suele aparecer ya traducida. Google sin clave, DeepL o un modelo de IA
+    (OpenAI, Claude, OpenRouter o propio) con contexto; con IA, Google muestra un respaldo rápido mientras
+    responde el modelo. Modos: traducido, ambos u original.
+  - Tocar CC con los subtítulos activos abre el selector: idioma de destino, modo e idioma del video; los
+    cambios se aplican al instante sin cortar el audio.
   - Claves cifradas con el Android Keystore. Reconexión con espera creciente (máx. 3), control de flujo,
     contador de minutos y límite diario. Solo transcribe mientras el video suena en primer plano.
 - Bloqueo de ventanas emergentes y "popunders" (reglas $popup de las listas y toques robados), con interruptor.
