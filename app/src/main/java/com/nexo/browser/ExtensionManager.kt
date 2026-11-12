@@ -29,7 +29,7 @@ object ExtensionManager {
     private const val PHANTOMSHIELD_URI = "resource://android/assets/extensions/phantomshield/"
     private var phantomInstallation: GeckoResult<WebExtension>? = null
 
-    const val BRIDGE_ID = "nexo_bridge@com.nexo.browser"
+    const val BRIDGE_ID = "nexo_bridge@com.ejemplo.navegador"
     private const val BRIDGE_URI =
         "resource://android/assets/extensions/nexo_bridge/"
     private const val NATIVE_APP = "browser"
@@ -43,6 +43,8 @@ object ExtensionManager {
     private var promptActivity = WeakReference<Activity>(null)
     private var extensionPopup: Dialog? = null
     private var bridge: WebExtension? = null
+    private val captionOffers = java.util.WeakHashMap<GeckoSession, MutableMap<WebExtension.Port, Int>>()
+    private val captionOwners = java.util.WeakHashMap<GeckoSession, WebExtension.Port>()
     private val ports = mutableSetOf<WebExtension.Port>()
     private data class PipState(val resume: Boolean, val isolate: Boolean = true)
     private val pipStates = java.util.WeakHashMap<GeckoSession, PipState>()
@@ -1033,7 +1035,7 @@ object ExtensionManager {
 
     /** Pide al puente que empiece o deje de captar el audio del video (subtítulos en vivo). */
     fun setCaptions(session: GeckoSession?, active: Boolean, live: Boolean = false): Boolean =
-        postToTopLevel(session, JSONObject().apply {
+        postCaptions(session, JSONObject().apply {
             put("type", "captions")
             put("active", active)
             // live: hay clave de Deepgram; sin ella solo se usan las pistas de subtítulos del video.
@@ -1042,11 +1044,31 @@ object ExtensionManager {
 
     /** Tras un corte de red: grabación nueva (con cabecera) para la conexión nueva. */
     fun restartCaptions(session: GeckoSession?): Boolean =
-        postToTopLevel(session, JSONObject().put("type", "captions_restart"))
+        session?.let { captionOwners[it] }?.let {
+            runCatching { it.postMessage(JSONObject().put("type", "captions_restart")) }.isSuccess
+        } ?: false
+
+    private fun postCaptions(session: GeckoSession?, message: JSONObject): Boolean {
+        if (session == null) return false
+        if (message.optString("type") == "captions" && !message.optBoolean("active")) {
+            captionOwners.remove(session)
+            captionOffers.remove(session)
+        }
+        var delivered = false
+        ports.filter { it.sender.session === session }.toList().forEach {
+            if (runCatching { it.postMessage(message) }.isSuccess) delivered = true
+        }
+        return delivered
+    }
+
+    fun restoreCaptions(session: GeckoSession) {
+        if (LiveCaptions.isActive(session)) setCaptions(session, true,
+            BrowserPrefs.deepgramKey(AppContext.get()).isNotBlank())
+    }
 
     /** Avisa al puente de que la app pasa a segundo plano o vuelve (recuperación de video). */
     fun sendLifecycle(session: GeckoSession?, foreground: Boolean) {
-        postToTopLevel(session, JSONObject().apply {
+        postCaptions(session, JSONObject().apply {
             put("type", "lifecycle")
             put("state", if (foreground) "foreground" else "background")
         })
@@ -1055,7 +1077,9 @@ object ExtensionManager {
     private fun captionErrorText(code: String): String = when (code) {
         "no_video" -> "No hay un video en esta página."
         "suspended" -> "Toca el video una vez y vuelve a activar los subtítulos."
-        "unsupported" -> "Esta página no permite captar el audio."
+        "unsupported", "mime", "capture", "SecurityError" -> "Este reproductor no permite capturar audio Opus. Prueba una pista de subtítulos propia."
+        "no_audio" -> "No hay pistas de audio capturables; puede ser CORS o contenido protegido."
+        "paused" -> "Esperando a que el video se reproduzca."
         "silent" -> "El video no deja captar su audio (puede estar protegido)."
         "need_key" -> "Hace falta una clave de Deepgram para este video."
         else -> "No se pudo captar el audio del video."
@@ -1473,7 +1497,6 @@ object ExtensionManager {
      */
     private fun isBridgeSender(sender: WebExtension.MessageSender): Boolean =
         sender.webExtension.id == BRIDGE_ID &&
-            sender.isTopLevel() &&
             sender.session != null
 
     private val bridgeMessageDelegate =
@@ -1535,10 +1558,37 @@ object ExtensionManager {
                                 return
                             }
                             val session = port.sender.session
-                            if (json != null && session != null && port.sender.isTopLevel()) {
+                            if (json != null && session != null && LiveCaptions.isActive(session)) {
+                                val type = json.optString("type")
+                                if (type == "captions_offer" && captionOwners[session] == null) {
+                                    val pending = captionOffers[session]
+                                    if (pending != null) pending[port] = json.optInt("score").coerceIn(0, 100_000_000)
+                                    else {
+                                        val offers = mutableMapOf(port to json.optInt("score").coerceIn(0, 100_000_000))
+                                        captionOffers[session] = offers
+                                        Handler(Looper.getMainLooper()).postDelayed({
+                                            if (captionOffers[session] !== offers) return@postDelayed
+                                            captionOffers.remove(session)
+                                            if (!LiveCaptions.isActive(session) || captionOwners[session] != null) return@postDelayed
+                                            val selected = offers.filterKeys { it in ports && it.sender.session === session }.maxByOrNull { it.value }?.key
+                                            if (selected != null) {
+                                                captionOwners[session] = selected
+                                                runCatching { selected.postMessage(JSONObject().put("type", "captions_grant")) }
+                                                    .onFailure { captionOwners.remove(session) }
+                                            }
+                                        }, 200L)
+                                    }
+                                }
+                                if (captionOwners[session] !== port) return
+                                if (type == "captions_release") {
+                                    captionOwners.remove(session)
+                                    LiveCaptions.onRecordingStopped(session)
+                                    return
+                                }
                                 when (json.optString("type")) {
-                                    "captions_start" -> LiveCaptions.onRecordingStarted(AppContext.get(), session)
+                                    "captions_start" -> LiveCaptions.onRecordingStarted(AppContext.get(), session, json.optString("mime"))
                                     "captions_audio" -> LiveCaptions.onAudio(session, json.optString("data"))
+                                    "captions_status" -> LiveCaptions.onStatus(session, json.optString("code"))
                                     "captions_stop" -> LiveCaptions.onRecordingStopped(session)
                                     "captions_error" -> json.optString("code").let { code ->
                                         LiveCaptions.onPageError(AppContext.get(), session, code, captionErrorText(code))
@@ -1555,11 +1605,18 @@ object ExtensionManager {
 
                         override fun onDisconnect(port: WebExtension.Port) {
                             ports -= port
+                            port.sender.session?.let { session ->
+                                if (captionOwners[session] === port) {
+                                    captionOwners.remove(session)
+                                    LiveCaptions.onRecordingStopped(session)
+                                }
+                            }
                         }
                     }
                 )
 
                 sendBrowserState(AppContext.get())
+                port.sender.session?.let { restoreCaptions(it) }
                 port.sender.session?.let { session ->
                     pipStates[session]?.let { state ->
                         runCatching {

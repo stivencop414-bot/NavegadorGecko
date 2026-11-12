@@ -11,8 +11,20 @@ object GeckoRuntimeHolder {
     @Volatile private var executor: GeckoWebExecutor? = null
 
 
-    fun get(context: Context): GeckoRuntime =
-        runtime ?: synchronized(this) {
+    fun shutdownForTransfer(done: () -> Unit) {
+        val current = runtime
+        if (current == null) { done(); return }
+        current.setDelegate(object : GeckoRuntime.Delegate {
+            override fun onShutdown() { runtime = null; executor = null; done() }
+        })
+        current.shutdown()
+    }
+
+    fun started(): Boolean = runtime != null
+
+    fun get(context: Context): GeckoRuntime {
+        check(!MigrationMode.enabled(context)) { "Gecko no puede arrancar durante la transferencia" }
+        return runtime ?: synchronized(this) {
             runtime ?: run {
                 val builder = GeckoRuntimeSettings.Builder()
                     .remoteDebuggingEnabled(false)
@@ -39,6 +51,8 @@ object GeckoRuntimeHolder {
                 }
             }
         }
+
+    }
 
     /**
      * Executor de red de Gecko: comparte cookies, caché y política de

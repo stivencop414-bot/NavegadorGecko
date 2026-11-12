@@ -9,7 +9,7 @@ import org.mozilla.geckoview.WebExtension
 
 /** A local extension page binds the native session before any target network request. */
 object TabRouting {
-    const val ID = "nexo_network@com.nexo.browser"
+    const val ID = "nexo_network@com.ejemplo.navegador"
     private val main = Handler(Looper.getMainLooper())
     private var extension: GeckoResult<WebExtension>? = null
     private val pending = java.util.WeakHashMap<GeckoSession, Boolean>()

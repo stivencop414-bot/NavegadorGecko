@@ -22,6 +22,8 @@ object HistoryStore {
     /** Copia en memoria: la página de inicio y cada carga no vuelven a leer el JSON. */
     @Volatile private var cache: List<HistoryEntry>? = null
 
+    fun flush() { io.submit {}.get() }
+
     /** Se llama al terminar cada carga: no bloquear el hilo principal. */
     fun add(context: Context, rawUrl: String, title: String) {
         val app = context.applicationContext

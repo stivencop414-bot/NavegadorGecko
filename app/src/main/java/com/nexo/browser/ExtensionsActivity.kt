@@ -87,6 +87,14 @@ class ExtensionsActivity : Activity() {
             setPadding(0, dp(4f), 0, dp(10f))
         }
 
+        val transferred = java.io.File(filesDir, "transferred-addons").listFiles().orEmpty().filter { it.extension == "xpi" }
+        if (transferred.isNotEmpty()) {
+            header.addView(sectionLabel("Reinstalar extensiones transferidas"))
+            transferred.forEach { file -> header.addView(Button(this).apply {
+                text = "Revisar XPI ${file.name.take(12)}…"
+                setOnClickListener { inspect(Uri.fromFile(file)) }
+            }) }
+        }
         header.addView(sectionLabel("Agregar extensiones"))
         val tiles = listOf(
             Triple(R.drawable.ic_menu_store, "Tienda") {

@@ -129,6 +129,12 @@ class MainActivity :
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (MigrationMode.enabled(this)) {
+            super.onCreate(savedInstanceState)
+            startActivity(Intent(this, MigrationActivity::class.java))
+            finish()
+            return
+        }
         ThemeManager.applyWindow(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -769,6 +775,7 @@ class MainActivity :
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
+        if (MigrationMode.enabled(this)) return
         setIntent(intent)
         handleNavigationIntent(intent)
     }
@@ -967,6 +974,7 @@ class MainActivity :
     }
 
     override fun onStart() {
+        if (MigrationMode.enabled(this)) { super.onStart(); return }
         super.onStart()
         activityStopped = false
         val tab = TabManager.activeTab()
@@ -981,6 +989,7 @@ class MainActivity :
     }
 
     override fun onResume() {
+        if (MigrationMode.enabled(this)) { super.onResume(); return }
         suppressAutoPipOnce = false
         backgroundPlaybackWasActive = false
 
@@ -992,6 +1001,7 @@ class MainActivity :
 
         super.onResume()
         BrowserHosts.attach(this)
+        LiveCaptions.reapply(this)
         ExtensionManager.attachPromptActivity(this)
         TabManager.activeTab()?.takeIf { BrowserPrefs.isNexoHome(it.url) }?.let { startPage.render(it.isPrivate) }
         ExtensionManager.consumePendingAction { ok, message ->
@@ -1015,6 +1025,7 @@ class MainActivity :
     }
 
     override fun onStop() {
+        if (MigrationMode.enabled(this)) { super.onStop(); return }
         captureCurrentTabPreview()
 
         if (!isInPictureInPictureMode) {
@@ -1132,7 +1143,7 @@ class MainActivity :
         val tab = TabManager.activeTab()
         val session = attachedSession
         val active = LiveCaptions.isActive(session)
-        val available = tab != null && (active || (BrowserPrefs.captionsEnabled(this) && hasMiniVideo(tab)))
+        val available = tab != null && (active || BrowserPrefs.captionsEnabled(this))
         captionsButton.visibility = if (available && !immersive && !isInPictureInPictureMode) View.VISIBLE else View.GONE
         CaptionsUi.styleChip(this, captionsButton, active)
         val display = if (active) LiveCaptions.display(this, session) else null
@@ -1421,6 +1432,7 @@ class MainActivity :
     }
 
     override fun onUserLeaveHint() {
+        if (MigrationMode.enabled(this)) { super.onUserLeaveHint(); return }
         val tab = TabManager.activeTab()
 
         /*
@@ -1590,12 +1602,14 @@ class MainActivity :
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (MigrationMode.enabled(this)) return
         // La Activity gestiona la rotación: Gecko debe enterarse para
         // actualizar screen.orientation y las media queries.
         runCatching { GeckoRuntimeHolder.get(this).configurationChanged(newConfig) }
     }
 
     override fun onDestroy() {
+        if (MigrationMode.enabled(this)) { super.onDestroy(); return }
         pendingPipEntry?.let { geckoView.removeCallbacks(it) }
         if (!isInPictureInPictureMode) ExtensionManager.setPipMode(attachedSession, false)
         runCatching { unregisterReceiver(pipControlReceiver) }
