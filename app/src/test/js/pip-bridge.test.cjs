@@ -43,7 +43,7 @@ function harness(extra = {}) {
     MutationObserver: class { observe() { observed++; } },
     browser: { runtime: { connectNative: () => port, sendNativeMessage: () => Promise.resolve({}) } },
     setTimeout: (callback, delay) => schedule(callback, delay), clearTimeout: id => timers.delete(id),
-    setInterval: (callback, delay) => schedule(callback, delay, delay),
+    setInterval: (callback, delay) => schedule(callback, delay, delay), clearInterval: id => timers.delete(id),
     btoa, ...extra
   });
   function tick(ms) {
@@ -66,13 +66,13 @@ function harness(extra = {}) {
     v.play = () => { v.plays++; v.paused = false; return Promise.resolve(); };
     videos.push(v); return v;
   }
-  return { video, tick, reports, wrapper, body, html, Element, window: win, observed: () => observed,
+  return { video, tick, reports, wrapper, body, html, Element, document, window: win, observed: () => observed,
     enter: resume => onMessage({ type: 'pip_mode', active: true, resume }),
     enterNative: resume => onMessage({ type: 'pip_mode', active: true, resume, isolate: false }),
     leave: () => onMessage({ type: 'pip_mode', active: false }),
     command: command => onMessage({ type: 'pip_command', command }),
     lifecycle: state => onMessage({ type: 'lifecycle', state }),
-    captions: (active, live = true) => onMessage({ type: 'captions', active, live }),
+    captions: (active, live = true, lang) => onMessage({ type: 'captions', active, live, lang }),
     message: value => onMessage(value),
     fire: (type, target) => { const event = new Event(type); Object.defineProperty(event, 'target', { value: target }); document.dispatchEvent(event); },
     changed: () => document.dispatchEvent(new Event('loadedmetadata')) };
@@ -322,4 +322,100 @@ test('a restart after a network drop starts a fresh recording and stopping detac
   assert.equal(audio.recorders.length, 2);
   h.captions(false);
   assert.equal(audio.sources[0].links, 1, 'only the speaker output stays connected');
+});
+
+// --- Subtítulos: líneas HLS que llegan tarde y texto dibujado por el reproductor ---
+
+function fakeTrack(cues, active = []) {
+  const listeners = {};
+  return { kind: 'subtitles', mode: 'disabled', language: 'en', cues, activeCues: active,
+    fire: () => listeners.cuechange && listeners.cuechange(),
+    addEventListener: (type, fn) => { listeners[type] = fn; }, removeEventListener: type => { delete listeners[type]; } };
+}
+
+test('subtitle lines appended later by HLS are sent and shown with stable ids', async () => {
+  const h = harness(), v = h.video();
+  const first = { text: 'One', startTime: 10, endTime: 12 };
+  const track = fakeTrack([first], [first]);
+  v.textTracks = [track];
+  h.captions(true, false); await flush();
+  const earlier = { text: 'Zero', startTime: 2, endTime: 4 }, later = { text: 'Two', startTime: 14, endTime: 16 };
+  // Las nuevas líneas se insertan ordenadas: los índices antiguos se desplazan.
+  track.cues = [earlier, first, later];
+  track.activeCues = [later];
+  track.fire();
+  const sent = h.reports.filter(x => x.type === 'captions_cues').flatMap(x => x.cues).map(c => [c.i, c.t]);
+  assert.deepEqual(sent, [[0, 'One'], [1, 'Zero'], [2, 'Two']]);
+  const active = h.reports.filter(x => x.type === 'captions_active').pop();
+  assert.deepEqual(Array.from(active.ids), [2]);
+});
+
+function youtubeHarness(tracks, currentTrack = null) {
+  const h = harness(), v = h.video();
+  const calls = [];
+  const api = {
+    loadModule: name => calls.push(['load', name]),
+    unloadModule: name => calls.push(['unload', name]),
+    getOption: (module, option) => option === 'tracklist' ? tracks : currentTrack,
+    setOption: (module, option, value) => { calls.push(['set', value.languageCode]); currentTrack = value; }
+  };
+  const player = new h.Element(h.body);
+  player.wrappedJSObject = api;
+  let segments = [];
+  const box = new h.Element(player);
+  h.document.getElementById = id => id === 'movie_player' ? player : null;
+  h.document.querySelectorAll = selector => {
+    if (selector.includes('.ytp-caption-segment')) return segments;
+    if (selector.includes('.ytp-caption-window-container')) return segments.length ? [box] : [];
+    return [];
+  };
+  h.document.head = h.html;
+  return { h, v, calls, box, say: text => { segments = text === null ? [] : text.split('|').map(t => ({ textContent: t })); } };
+}
+
+test('YouTube captions are read from the player without Deepgram and the site copy is hidden', async () => {
+  const y = youtubeHarness([{ languageCode: 'en', kind: 'asr' }, { languageCode: 'es', kind: '' }]);
+  y.h.captions(true, false, 'en'); await flush();
+  assert.deepEqual(y.calls.slice(0, 2), [['load', 'captions'], ['set', 'en']]);
+  assert.ok(y.h.reports.some(x => x.type === 'captions_track' && x.source === 'dom'));
+  assert.equal(y.h.reports.some(x => x.type === 'captions_error'), false);
+  y.say('Hello|there'); y.h.tick(260);
+  assert.equal(y.h.reports.filter(x => x.type === 'captions_text').pop().text, 'Hello there');
+  assert.equal(y.box.styles.opacity, '0', 'YouTube text hidden while Nexo draws it');
+  y.h.tick(1000);
+  assert.equal(y.h.reports.filter(x => x.type === 'captions_text').length, 1, 'unchanged text is not resent');
+  y.say(null); y.h.tick(260);
+  assert.equal(y.h.reports.filter(x => x.type === 'captions_text').pop().text, '');
+  y.h.captions(false);
+  assert.deepEqual(y.calls.pop(), ['unload', 'captions'], 'Nexo turns off only what it turned on');
+});
+
+test('a YouTube track the user already chose is kept', async () => {
+  const y = youtubeHarness([{ languageCode: 'en' }, { languageCode: 'fr' }], { languageCode: 'fr' });
+  y.h.captions(true, false); await flush();
+  assert.equal(y.calls.some(call => call[0] === 'set'), false);
+  y.h.captions(false);
+  assert.equal(y.calls.some(call => call[0] === 'unload'), false);
+});
+
+test('without any captions the page asks for a key, then picks up the site captions once enabled', async () => {
+  const h = harness(); h.video();
+  let segments = [];
+  h.document.querySelectorAll = selector => selector.includes('.ytp-caption-segment') ? segments : [];
+  h.captions(true, false); await flush();
+  assert.ok(h.reports.some(x => x.type === 'captions_error' && x.code === 'need_key'));
+  segments = [{ textContent: 'Bonjour' }];
+  h.tick(1100);
+  assert.ok(h.reports.some(x => x.type === 'captions_track' && x.source === 'dom'));
+  assert.equal(h.reports.filter(x => x.type === 'captions_text').pop().text, 'Bonjour');
+});
+
+test('a new video in the same player chooses the caption source again', async () => {
+  const h = harness(), v = h.video();
+  h.captions(true, false); await flush();
+  const cue = { text: 'Hola', startTime: 0, endTime: 2 };
+  v.textTracks = [fakeTrack([cue], [cue])];
+  h.fire('loadedmetadata', v); h.tick(1300); await flush();
+  assert.ok(h.reports.some(x => x.type === 'captions_track' && x.source === 'track'));
+  assert.ok(h.reports.some(x => x.type === 'captions_cues'));
 });

@@ -405,3 +405,86 @@ class CaptionText(private val maxChars: Int = 150) {
     }
 }
 
+
+/**
+ * Texto que dibuja el reproductor de la página (YouTube, Netflix…) convertido
+ * en frases terminadas y texto en curso, igual que la transcripción en vivo.
+ * Las líneas que suben al aparecer otra (subtítulos "en rollo") no se repiten
+ * y las correcciones del reconocimiento automático sustituyen al texto previo.
+ */
+class DomCaptionTracker {
+    private var shown = ""
+    // Caracteres de [shown] ya entregados como frase terminada.
+    private var committed = 0
+
+    fun update(raw: String): List<CaptionProtocol.Transcript> {
+        val text = raw.replace(WHITESPACE, " ").trim().take(400)
+        if (text == shown) return emptyList()
+        val out = mutableListOf<CaptionProtocol.Transcript>()
+        val start = committed.coerceAtMost(shown.length)
+        val shared = commonWordPrefix(shown, text)
+        when {
+            text.isEmpty() -> {
+                rest()?.let { out += final(it) }
+                shown = ""
+                committed = 0
+            }
+            // Crece (palabra a palabra) o se corrige sin tocar lo ya terminado.
+            text.startsWith(shown) || (shared >= start && shared * 2 >= shown.length && shared > 0) -> {
+                shown = text
+                text.substring(start).trim().takeIf { it.isNotEmpty() }?.let { out += interim(it) }
+            }
+            else -> {
+                rest()?.let { out += final(it) }
+                val overlap = overlap(shown, text)
+                shown = text
+                committed = overlap
+                text.substring(overlap).trim().takeIf { it.isNotEmpty() }?.let { out += interim(it) }
+            }
+        }
+        return out
+    }
+
+    /** Lo visible lleva un momento sin cambiar: se da por terminado. */
+    fun settle(): CaptionProtocol.Transcript? {
+        val rest = rest() ?: return null
+        committed = shown.length
+        return final(rest)
+    }
+
+    fun reset() {
+        shown = ""
+        committed = 0
+    }
+
+    private fun rest(): String? =
+        shown.substring(committed.coerceAtMost(shown.length)).trim().takeIf { it.isNotEmpty() }
+
+    private fun final(text: String) = CaptionProtocol.Transcript(text, isFinal = true, speechFinal = true)
+    private fun interim(text: String) = CaptionProtocol.Transcript(text, isFinal = false, speechFinal = false)
+
+    companion object {
+        private val WHITESPACE = Regex("\\s+")
+
+        /** Longitud del final de [previous] con que empieza [next], en palabras completas. */
+        fun overlap(previous: String, next: String): Int {
+            val max = minOf(previous.length, next.length)
+            for (length in max downTo 4) {
+                if (length < next.length && next[length] != ' ') continue
+                if (length < previous.length && previous[previous.length - length - 1] != ' ') continue
+                if (previous.regionMatches(previous.length - length, next, 0, length)) return length
+            }
+            return 0
+        }
+
+        /** Prefijo común que acaba en un límite de palabra. */
+        fun commonWordPrefix(a: String, b: String): Int {
+            var i = 0
+            val max = minOf(a.length, b.length)
+            while (i < max && a[i] == b[i]) i++
+            if (i == max && (a.length == b.length || (a.length > i && a[i] == ' ') || (b.length > i && b[i] == ' '))) return i
+            val space = a.lastIndexOf(' ', (i - 1).coerceAtLeast(0))
+            return if (space < 0) 0 else space
+        }
+    }
+}

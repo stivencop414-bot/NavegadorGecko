@@ -21,12 +21,13 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * Subtítulos en vivo de una pestaña. Dos fuentes:
- *  - Pista de subtítulos del propio video (WebVTT): no usa Deepgram; todas
- *    las líneas se traducen por adelantado en lotes grandes.
- *  - Sin pista: la página envía el audio comprimido (Opus, ~24 kbps) y
- *    Deepgram lo transcribe en streaming; las frases terminadas se
- *    traducen en lotes cortos, con una sola petición en curso.
+ * Subtítulos en vivo de una pestaña. Tres fuentes, por orden:
+ *  - Pista de subtítulos del propio video (WebVTT/HLS): no usa Deepgram; las
+ *    líneas se traducen por adelantado en lotes grandes.
+ *  - Texto que dibuja el reproductor (YouTube, Netflix, Prime Video…): no usa
+ *    Deepgram; se trata como una transcripción en vivo.
+ *  - Sin ninguna de las dos: la página envía el audio comprimido (Opus,
+ *    ~24 kbps) y Deepgram lo transcribe en streaming.
  * Las claves solo se usan aquí (proceso nativo); nunca llegan a la página.
  */
 object LiveCaptions {
@@ -36,7 +37,13 @@ object LiveCaptions {
         fun onCaptionsChanged(session: GeckoSession)
     }
 
-    private data class Cue(val start: Double, val end: Double, val text: String, var translated: String? = null)
+    private data class Cue(
+        val start: Double,
+        val end: Double,
+        val text: String,
+        var translated: String? = null,
+        var failures: Int = 0
+    )
 
     private class Stream(val session: GeckoSession) {
         var socket: WebSocket? = null
@@ -64,6 +71,12 @@ object LiveCaptions {
         var speculating = false
         // Cambia al cambiar de idioma o servicio: invalida traducciones en vuelo (no el audio).
         var translationGeneration = 0
+        // Texto dibujado por el reproductor de la página (YouTube, Netflix…).
+        var domMode = false
+        val dom = DomCaptionTracker()
+        // false mientras la página no confirma la orden (puente aún sin conectar).
+        var delivered = false
+        var stateChangedAt = SystemClock.uptimeMillis()
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -87,6 +100,9 @@ object LiveCaptions {
 
     private const val MAX_SOCKET_QUEUE = 256L * 1024L
     private const val MAX_CUES = 3000
+    /** Tiempo que se muestra el aviso de estado cuando aún no hay texto. */
+    const val HINT_MS = 6000L
+    private const val DOM_SETTLE_MS = 900L
 
     private val tick = object : Runnable {
         override fun run() {
@@ -109,6 +125,34 @@ object LiveCaptions {
     fun message(session: GeckoSession?): String? = session?.let { active[it]?.message }
 
     fun isTrackMode(session: GeckoSession?): Boolean = session?.let { active[it]?.trackMode } == true
+
+    /** Subtítulos leídos del reproductor de la página (sin Deepgram). */
+    fun isDomMode(session: GeckoSession?): Boolean = session?.let { active[it]?.domMode } == true
+
+    /**
+     * Aviso breve cuando aún no hay texto que mostrar: así se sabe que los
+     * subtítulos están activos y qué esperan. null pasado [HINT_MS] tras el
+     * último cambio de estado (los errores se muestran en un aviso aparte).
+     */
+    fun statusHint(session: GeckoSession?): String? {
+        val stream = session?.let { active[it] } ?: return null
+        if (SystemClock.uptimeMillis() - stream.stateChangedAt > HINT_MS) return null
+        return when {
+            stream.state == State.ERROR -> null
+            !stream.delivered -> "CC · esperando a que cargue la página…"
+            stream.state == State.CONNECTING -> "CC · conectando con Deepgram…"
+            stream.trackMode -> "CC · subtítulos del video listos"
+            stream.domMode -> "CC · leyendo los subtítulos del reproductor"
+            stream.state == State.LISTENING -> "CC · escuchando el video…"
+            else -> "CC · buscando subtítulos…"
+        }
+    }
+
+    private fun setState(stream: Stream, state: State, message: String? = stream.message) {
+        if (stream.state != state || stream.message != message) stream.stateChangedAt = SystemClock.uptimeMillis()
+        stream.state = state
+        stream.message = message
+    }
 
     /** Qué mostrar ahora según el modo elegido (original, traducido o ambos). */
     fun display(context: Context, session: GeckoSession?): CaptionDisplay? {
@@ -150,14 +194,57 @@ object LiveCaptions {
         main.removeCallbacks(tick)
         main.postDelayed(tick, 4000L)
         warmUp(app)
-        // Con clave, la página puede usar Deepgram si el video no trae subtítulos propios.
-        ExtensionManager.setCaptions(session, true, live = BrowserPrefs.deepgramKey(app).isNotBlank())
+        deliver(app, stream)
         notifyChanged(session)
+        // Si la página no respondió, avisar en vez de quedarse en silencio.
+        main.postDelayed({
+            if (active[session] === stream && !stream.delivered) {
+                setState(stream, State.ERROR, "La página aún no está lista para los subtítulos. Recárgala y vuelve a tocar CC.")
+                notifyChanged(session)
+            }
+        }, 8000L)
         return true
+    }
+
+    /** Envía la orden a la página; si el puente aún no conecta, se reenvía al conectar. */
+    private fun deliver(context: Context, stream: Stream) {
+        // Con clave, la página puede usar Deepgram si el video no trae subtítulos propios.
+        stream.delivered = ExtensionManager.setCaptions(
+            stream.session,
+            true,
+            live = BrowserPrefs.deepgramKey(context).isNotBlank(),
+            language = stream.language
+        )
+        stream.stateChangedAt = SystemClock.uptimeMillis()
+    }
+
+    /** El puente de la página (re)conectó: si los subtítulos seguían activos, reanudarlos allí. */
+    fun onBridgeConnected(session: GeckoSession) {
+        val stream = active[session] ?: return
+        close(stream)
+        resetSource(stream)
+        setState(stream, State.WAITING, null)
+        deliver(AppContext.get(), stream)
+        notifyChanged(session)
+    }
+
+    private fun resetSource(stream: Stream) {
+        main.removeCallbacksAndMessages(stream)
+        stream.trackMode = false
+        stream.domMode = false
+        stream.dom.reset()
+        stream.text.clear()
+        stream.cues.clear()
+        stream.activeCues = emptyList()
+        stream.bulkQueued.clear()
+        stream.pendingCueIds.clear()
+        stream.batcher.clear()
+        stream.translationGeneration++
     }
 
     fun stop(session: GeckoSession) {
         val stream = active.remove(session) ?: return
+        main.removeCallbacksAndMessages(stream)
         close(stream)
         flushUsage(stream, force = true)
         stream.batcher.clear()
@@ -244,7 +331,7 @@ object LiveCaptions {
     fun relisten(context: Context, session: GeckoSession?) {
         val stream = session?.let { active[it] } ?: return
         stream.language = BrowserPrefs.captionLanguage(context)
-        if (!stream.trackMode) ExtensionManager.restartCaptions(stream.session)
+        if (!stream.trackMode && !stream.domMode) ExtensionManager.restartCaptions(stream.session)
     }
 
     // --- Mensajes del puente de la página --------------------------------
@@ -252,15 +339,16 @@ object LiveCaptions {
     fun onRecordingStarted(context: Context, session: GeckoSession) {
         val stream = active[session] ?: return
         val app = context.applicationContext
+        stream.delivered = true
         if (limitReached(app)) {
-            stream.state = State.ERROR
-            stream.message = "Límite diario de subtítulos alcanzado (${BrowserPrefs.captionDailyLimit(app)} min). Puedes cambiarlo en Ajustes."
+            setState(stream, State.ERROR, "Límite diario de subtítulos alcanzado (${BrowserPrefs.captionDailyLimit(app)} min). Puedes cambiarlo en Ajustes.")
             notifyChanged(session)
             stop(session)
             return
         }
         close(stream)
         stream.trackMode = false
+        stream.domMode = false
         stream.generation++
         stream.triedFallback = false
         stream.message = null
@@ -289,31 +377,60 @@ object LiveCaptions {
         close(stream)
         flushUsage(stream, force = true)
         stream.lastAudioAt = 0
-        stream.state = State.WAITING
+        if (!stream.domMode && !stream.trackMode) setState(stream, State.WAITING)
         notifyChanged(session)
     }
 
     fun onPageError(context: Context, session: GeckoSession, code: String, message: String) {
         val stream = active[session] ?: return
-        stream.state = State.ERROR
-        stream.message = if (code == "need_key")
-            "Este video no trae subtítulos propios: añade tu clave de Deepgram para transcribirlo." else message
+        stream.delivered = true
+        setState(stream, State.ERROR, if (code == "need_key")
+            "Este video no trae subtítulos que Nexo pueda leer. Activa los subtítulos del reproductor " +
+                "(Nexo los tomará solo) o añade una clave de Deepgram para transcribir el audio." else message)
         notifyChanged(session)
     }
 
-    /** El video trae su propia pista de subtítulos: se usa en lugar de Deepgram. */
-    fun onTrack(session: GeckoSession) {
+    /**
+     * El video trae su propia pista ("track") o el reproductor dibuja el texto
+     * en la página ("dom"): se usa eso en lugar de Deepgram.
+     */
+    fun onTrack(session: GeckoSession, source: String = "track") {
         val stream = active[session] ?: return
+        stream.delivered = true
         close(stream)
-        stream.trackMode = true
-        stream.cues.clear()
-        stream.activeCues = emptyList()
-        stream.bulkQueued.clear()
-        stream.pendingCueIds.clear()
-        stream.batcher.clear()
-        stream.state = State.LISTENING
-        stream.message = null
+        resetSource(stream)
+        stream.trackMode = source != "dom"
+        stream.domMode = source == "dom"
+        setState(stream, State.LISTENING, null)
         notifyChanged(session)
+    }
+
+    /** Texto visible en el reproductor de la página (vacío cuando desaparece). */
+    fun onDomText(context: Context, session: GeckoSession, raw: String) {
+        val stream = active[session] ?: return
+        if (!stream.domMode) return
+        val app = context.applicationContext
+        main.removeCallbacksAndMessages(stream)
+        applyTranscripts(app, stream, stream.dom.update(raw.take(400)))
+        if (raw.isBlank()) {
+            // El sitio quitó su subtítulo: el de Nexo también se va, un poco después.
+            scheduleClear(stream, 2500L)
+        } else {
+            // Sin cambios durante un momento: frase terminada (traducción definitiva).
+            main.postAtTime({
+                stream.dom.settle()?.let { applyTranscripts(app, stream, listOf(it)) }
+                notifyChanged(stream.session)
+            }, stream, SystemClock.uptimeMillis() + DOM_SETTLE_MS)
+        }
+        notifyChanged(session)
+    }
+
+    private fun applyTranscripts(context: Context, stream: Stream, updates: List<CaptionProtocol.Transcript>) {
+        for (transcript in updates) {
+            val segment = stream.text.onTranscript(transcript)
+            if (segment != null) enqueueLive(context, stream, segment)
+            else if (!transcript.isFinal) speculate(context, stream)
+        }
     }
 
     fun onCues(context: Context, session: GeckoSession, cues: JSONArray) {
@@ -351,8 +468,7 @@ object LiveCaptions {
         BrowserPrefs.addCaptionSeconds(context, (stream.unsavedMs / 1000).toInt())
         stream.unsavedMs %= 1000
         if (limitReached(context) && !stream.trackMode && active[stream.session] === stream) {
-            stream.message = "Límite diario de subtítulos alcanzado (${BrowserPrefs.captionDailyLimit(context)} min)."
-            stream.state = State.ERROR
+            setState(stream, State.ERROR, "Límite diario de subtítulos alcanzado (${BrowserPrefs.captionDailyLimit(context)} min).")
             notifyChanged(stream.session)
             stop(stream.session)
         }
@@ -361,12 +477,11 @@ object LiveCaptions {
     private fun connect(context: Context, stream: Stream, model: String) {
         val key = BrowserPrefs.deepgramKey(context)
         if (key.isBlank()) {
-            stream.state = State.ERROR
-            stream.message = "Añade tu clave de Deepgram en Ajustes › Subtítulos."
+            setState(stream, State.ERROR, "Añade tu clave de Deepgram en Ajustes › Subtítulos.")
             notifyChanged(stream.session)
             return
         }
-        stream.state = State.CONNECTING
+        setState(stream, State.CONNECTING)
         notifyChanged(stream.session)
         val generation = stream.generation
         val request = Request.Builder()
@@ -380,7 +495,7 @@ object LiveCaptions {
                         webSocket.close(1000, null); return@post
                     }
                     stream.opened = true
-                    stream.state = State.LISTENING
+                    setState(stream, State.LISTENING)
                     while (stream.queue.isNotEmpty()) webSocket.send(stream.queue.removeFirst())
                     notifyChanged(stream.session)
                 }
@@ -421,8 +536,7 @@ object LiveCaptions {
                     if (transient && stream.retries < 3) {
                         val delay = 1000L * (1 shl stream.retries) + (0..400).random()
                         stream.retries++
-                        stream.state = State.CONNECTING
-                        stream.message = null
+                        setState(stream, State.CONNECTING, null)
                         notifyChanged(stream.session)
                         main.postDelayed({
                             if (active[stream.session] === stream && stream.generation == generation) {
@@ -431,8 +545,7 @@ object LiveCaptions {
                         }, delay)
                         return@post
                     }
-                    stream.state = State.ERROR
-                    stream.message = CaptionProtocol.errorFor(code) + " Toca CC para reintentar."
+                    setState(stream, State.ERROR, CaptionProtocol.errorFor(code) + " Toca CC para reintentar.")
                     notifyChanged(stream.session)
                 }
             }
@@ -460,12 +573,12 @@ object LiveCaptions {
     }
 
     /** Tras una pausa larga en el habla, el texto se borra para no tapar el video. */
-    private fun scheduleClear(stream: Stream) {
+    private fun scheduleClear(stream: Stream, delayMs: Long = 3500L) {
         main.removeCallbacksAndMessages(stream)
         main.postAtTime({
             stream.text.clear()
             notifyChanged(stream.session)
-        }, stream, SystemClock.uptimeMillis() + 3500L)
+        }, stream, SystemClock.uptimeMillis() + delayMs)
     }
 
     // --- Traducción por lotes ---------------------------------------------------
@@ -502,7 +615,10 @@ object LiveCaptions {
         if (provider == BrowserPrefs.TRANSLATE_DEEPL) return
         val interim = stream.text.interimText
         val now = SystemClock.uptimeMillis()
-        if (interim.length < 24 || now - stream.lastSpeculation < 700) return
+        // El texto del reproductor ya es definitivo: vale la pena traducirlo antes y aunque sea corto.
+        val minLength = if (stream.domMode) 2 else 24
+        val interval = if (stream.domMode) 300L else 700L
+        if (interim.length < minLength || now - stream.lastSpeculation < interval) return
         val target = BrowserPrefs.captionTranslateTo(context)
         cache[cacheKey(BrowserPrefs.TRANSLATE_GOOGLE, target, interim)]?.let {
             stream.text.setInterimTranslation(interim, it)
@@ -528,7 +644,7 @@ object LiveCaptions {
      * delante, en lotes grandes. Sin una petición por línea.
      */
     private fun queueAhead(context: Context, stream: Stream) {
-        if (!translating(context) || stream.cues.isEmpty()) return
+        if (!stream.trackMode || !translating(context) || stream.cues.isEmpty()) return
         val target = BrowserPrefs.captionTranslateTo(context)
         val current = stream.activeCues.minOrNull()?.let { stream.cues[it]?.start } ?: 0.0
         val ordered = stream.cues.entries
@@ -578,34 +694,59 @@ object LiveCaptions {
             main.post {
                 if (stream.translationGeneration == generation) stream.batcher.done()
                 if (active[stream.session] !== stream || stream.translationGeneration != generation) return@post
+                var retry = false
                 batch.forEachIndexed { index, item ->
-                    // Si el traductor falla, se queda el texto original (sin bloquear los siguientes).
                     val translated = result?.getOrNull(index)?.takeIf { it.isNotBlank() }
-                    if (translated == null && provider == BrowserPrefs.TRANSLATE_AI && !stream.trackMode) return@forEachIndexed
                     if (translated != null) cache[cacheKey(provider, target, item.text)] = translated
-                    val shown = translated ?: item.text
-                    if (stream.trackMode) stream.cues[item.id.toInt()]?.translated = shown
-                    else stream.text.setTranslation(item.id, shown)
+                    if (stream.trackMode) {
+                        val cue = stream.cues[item.id.toInt()] ?: return@forEachIndexed
+                        if (translated == null && ++cue.failures < 3) {
+                            // Corte de red: se reintenta en unos segundos en vez de quedarse sin traducir.
+                            stream.bulkQueued -= item.id.toInt()
+                            retry = true
+                        } else {
+                            cue.translated = translated ?: cue.text
+                        }
+                    } else {
+                        // Con IA, sin respuesta se conserva el respaldo rápido de Google.
+                        if (translated == null && provider == BrowserPrefs.TRANSLATE_AI) return@forEachIndexed
+                        // Si el traductor falla, se queda el texto original (sin bloquear los siguientes).
+                        stream.text.setTranslation(item.id, translated ?: item.text)
+                    }
                 }
                 notifyChanged(stream.session)
-                if (stream.trackMode) queueAhead(context, stream) else pump(context, stream)
+                when {
+                    !stream.trackMode -> pump(context, stream)
+                    retry -> main.postDelayed({ if (active[stream.session] === stream) queueAhead(context, stream) }, 2500L)
+                    else -> queueAhead(context, stream)
+                }
             }
         }
     }
 
-    /** Una petición por lote; si las líneas no se pueden alinear, se traducen unidas. */
-    private fun googleLines(lines: List<String>, target: String): List<String>? {
+    /**
+     * Una petición por lote. Si Google une o parte líneas y no se pueden
+     * alinear, el lote se divide en dos (solo unas pocas peticiones más) en
+     * vez de dejar todas esas líneas sin traducir.
+     */
+    private fun googleLines(lines: List<String>, target: String, depth: Int = 0): List<String>? {
         val form = "application/x-www-form-urlencoded".toMediaType()
         val body = CaptionProtocol.googleBatchBody(lines, target)
         // GET para lo habitual (frases cortas); POST solo si la dirección quedaría demasiado larga.
         val request = if (body.length < 1800) Request.Builder().url(CaptionProtocol.GOOGLE_BATCH_URL + "&" + body).build()
         else Request.Builder().url(CaptionProtocol.GOOGLE_BATCH_URL).post(body.toRequestBody(form)).build()
-        return translateClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return null
-            val body = response.body?.string().orEmpty()
-            CaptionProtocol.parseGoogleLines(body, lines.size)
-                ?: if (lines.size == 1) CaptionProtocol.parseGoogle(body)?.let { listOf(it) } else null
+        val aligned = translateClient.newCall(request).execute().use { response ->
+            // Error de red o del servicio: no multiplicar peticiones.
+            if (!response.isSuccessful) throw java.io.IOException("HTTP ${response.code}")
+            val text = response.body?.string().orEmpty()
+            CaptionProtocol.parseGoogleLines(text, lines.size)
+                ?: if (lines.size == 1) CaptionProtocol.parseGoogle(text)?.let { listOf(it) } else null
         }
+        if (aligned != null || lines.size < 2 || depth >= 3) return aligned
+        val half = lines.size / 2
+        val first = googleLines(lines.subList(0, half), target, depth + 1) ?: return null
+        val second = googleLines(lines.subList(half, lines.size), target, depth + 1) ?: return null
+        return first + second
     }
 
     private fun translateBatch(context: Context, provider: String, lines: List<String>, target: String, textContext: List<String>): List<String>? {

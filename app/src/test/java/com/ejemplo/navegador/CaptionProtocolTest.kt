@@ -131,4 +131,39 @@ class CaptionProtocolTest {
         assertEquals("Japanese", CaptionProtocol.LANGUAGE_NAMES["ja"])
         assertFalse(CaptionProtocol.listenUrl("multi").contains("smart_format"))
     }
+
+    private fun texts(list: List<CaptionProtocol.Transcript>) = list.map { (if (it.isFinal) "F:" else "I:") + it.text }
+
+    @Test fun domTrackerTurnsGrowingLinesIntoInterimText() {
+        val tracker = DomCaptionTracker()
+        assertEquals(listOf("I:Hello"), texts(tracker.update("Hello")))
+        assertEquals(listOf("I:Hello there"), texts(tracker.update("Hello  there")))
+        assertTrue(tracker.update("Hello there").isEmpty())
+        assertEquals("Hello there", tracker.settle()?.text)
+        assertNull(tracker.settle())
+        // Tras darlo por terminado solo se envía lo nuevo.
+        assertEquals(listOf("I:friend"), texts(tracker.update("Hello there friend")))
+    }
+
+    @Test fun domTrackerDoesNotRepeatLinesThatScrollUp() {
+        val tracker = DomCaptionTracker()
+        tracker.update("line one text line two text")
+        assertEquals(
+            listOf("F:line one text line two text", "I:line three"),
+            texts(tracker.update("line two text line three"))
+        )
+        assertEquals(listOf("F:line three"), texts(tracker.update("")))
+    }
+
+    @Test fun domTrackerReplacesWholeSentences() {
+        val tracker = DomCaptionTracker()
+        tracker.update("Where are you going?")
+        assertEquals(listOf("F:Where are you going?", "I:Home."), texts(tracker.update("Home.")))
+    }
+
+    @Test fun domOverlapRespectsWordBoundaries() {
+        assertEquals(9, DomCaptionTracker.overlap("we went home", "went home now"))
+        assertEquals(0, DomCaptionTracker.overlap("the cathedral", "dral is old"))
+        assertEquals(0, DomCaptionTracker.overlap("abc", "xyz"))
+    }
 }

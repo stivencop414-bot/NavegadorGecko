@@ -1096,14 +1096,13 @@ class MainActivity :
         val message = LiveCaptions.message(session)
         if (LiveCaptions.state(session) == LiveCaptions.State.ERROR && message != null && message != lastCaptionMessage) {
             lastCaptionMessage = message
+            // Los subtítulos siguen activos: si el usuario enciende los del reproductor,
+            // Nexo los toma solo. Mantener pulsado CC abre la configuración (clave).
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-            // Sin clave y sin subtítulos propios: abrir la configuración directamente.
-            if (BrowserPrefs.deepgramKey(this).isBlank() && message.contains("Deepgram")) {
-                LiveCaptions.stop(session)
-                CaptionsUi.showSheet(this, askKey = true) { refreshCaptionsUi() }
-            }
         }
     }
+
+    private val captionHintExpiry = Runnable { refreshCaptionsUi() }
 
     private fun toggleCaptions() {
         val session = attachedSession ?: return
@@ -1136,11 +1135,19 @@ class MainActivity :
         captionsButton.visibility = if (available && !immersive && !isInPictureInPictureMode) View.VISIBLE else View.GONE
         CaptionsUi.styleChip(this, captionsButton, active)
         val display = if (active) LiveCaptions.display(this, session) else null
+        // Sin texto todavía: un aviso breve indica que CC está activo y qué espera.
+        val hint = if (active && (display == null || display.isEmpty) && !isInPictureInPictureMode) {
+            LiveCaptions.statusHint(session)
+        } else null
         CaptionsUi.render(
             this, captionView, browserFrame.width, browserFrame.height,
             if (pipCrop != null || isInPictureInPictureMode) null else tab?.let { BrowserMediaController.videoRect(it.id) },
-            display, isInPictureInPictureMode
+            display?.takeUnless { it.isEmpty } ?: hint?.let { CaptionDisplay("", it) },
+            isInPictureInPictureMode,
+            hint = hint != null
         )
+        captionView.removeCallbacks(captionHintExpiry)
+        if (hint != null) captionView.postDelayed(captionHintExpiry, LiveCaptions.HINT_MS + 150L)
     }
 
     /**
@@ -1609,6 +1616,7 @@ class MainActivity :
         permissionCallbacks.values.forEach { it(false) }
         permissionCallbacks.clear()
         geckoView.removeCallbacks(idlePreview)
+        captionView.removeCallbacks(captionHintExpiry)
         TabManager.attach(null)
         if (attachedSession != null) {
             geckoView.releaseSession()

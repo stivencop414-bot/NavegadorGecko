@@ -89,6 +89,16 @@ object ExtensionManager {
                 if (extension != null) {
                     bridge = extension
                     configureBridge(extension)
+                    // Mini video y subtítulos también en pestañas privadas y Burner. El puente
+                    // no guarda nada ni envía URL o contenido de la página.
+                    if (!extension.metaData.allowedInPrivateBrowsing) {
+                        runCatching {
+                            controller.setAllowedInPrivateBrowsing(extension, true).accept(
+                                { allowed -> if (allowed != null) bridge = allowed },
+                                { error -> android.util.Log.w("NexoExtensions", "Puente en privado", error) }
+                            )
+                        }
+                    }
 
                     // ensureBuiltIn es asíncrono: si las pestañas ya existen,
                     // enlaza el puente también a esas sesiones.
@@ -1031,13 +1041,18 @@ object ExtensionManager {
         })
     }
 
-    /** Pide al puente que empiece o deje de captar el audio del video (subtítulos en vivo). */
-    fun setCaptions(session: GeckoSession?, active: Boolean, live: Boolean = false): Boolean =
+    /**
+     * Pide al puente que empiece o deje de leer los subtítulos del video.
+     * Devuelve false si la página aún no tiene el puente conectado.
+     */
+    fun setCaptions(session: GeckoSession?, active: Boolean, live: Boolean = false, language: String = "multi"): Boolean =
         postToTopLevel(session, JSONObject().apply {
             put("type", "captions")
             put("active", active)
-            // live: hay clave de Deepgram; sin ella solo se usan las pistas de subtítulos del video.
+            // live: hay clave de Deepgram; sin ella se usan la pista del video o el texto del reproductor.
             put("live", live)
+            // Idioma preferido al elegir entre las pistas del reproductor (p. ej. YouTube).
+            put("lang", language.takeIf { it.matches(Regex("[a-zA-Z]{2,3}(-[A-Za-z]{2,4})?|multi")) } ?: "multi")
         })
 
     /** Tras un corte de red: grabación nueva (con cabecera) para la conexión nueva. */
@@ -1543,7 +1558,8 @@ object ExtensionManager {
                                     "captions_error" -> json.optString("code").let { code ->
                                         LiveCaptions.onPageError(AppContext.get(), session, code, captionErrorText(code))
                                     }
-                                    "captions_track" -> LiveCaptions.onTrack(session)
+                                    "captions_track" -> LiveCaptions.onTrack(session, json.optString("source", "track"))
+                                    "captions_text" -> LiveCaptions.onDomText(AppContext.get(), session, json.optString("text").take(400))
                                     "captions_cues" -> json.optJSONArray("cues")?.let { LiveCaptions.onCues(AppContext.get(), session, it) }
                                     "captions_active" -> json.optJSONArray("ids")?.let { LiveCaptions.onActiveCues(AppContext.get(), session, it) }
                                 }
@@ -1561,6 +1577,8 @@ object ExtensionManager {
 
                 sendBrowserState(AppContext.get())
                 port.sender.session?.let { session ->
+                    // La orden de subtítulos pudo llegar antes de que la página conectara.
+                    LiveCaptions.onBridgeConnected(session)
                     pipStates[session]?.let { state ->
                         runCatching {
                             port.postMessage(pipModeMessage(true, state.resume, state.isolate))
