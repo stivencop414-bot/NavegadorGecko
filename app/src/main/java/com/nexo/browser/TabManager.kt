@@ -161,6 +161,19 @@ object TabManager {
         return tab
     }
 
+    /** Pestaña normal traída de la app anterior: se añade al final, sin abrirla hasta que se use. */
+    fun importTab(url: String, title: String, groupName: String?, desktopMode: Boolean) {
+        if (!UrlSafety.isWebUrl(url)) return
+        tabs += BrowserTab(
+            url = url,
+            title = title.ifBlank { url },
+            groupName = TabGroupRules.name(groupName),
+            desktopMode = desktopMode
+        )
+        listener?.onTabCountChanged(tabs.size)
+        persist()
+    }
+
     fun applyNetwork(id: String, profile: TabNetworkProfile?) {
         val tab = tabs.firstOrNull { it.id == id } ?: return
         tab.networkProfile = profile?.validated(); tab.networkState = "Preparando ruta"

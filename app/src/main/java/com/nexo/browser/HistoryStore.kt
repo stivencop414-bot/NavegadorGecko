@@ -69,6 +69,18 @@ object HistoryStore {
             .also { cache = it }
     }
 
+    /** Sustituye el historial completo (al traer los datos de la app anterior). */
+    @Synchronized
+    fun replaceAll(context: Context, entries: JSONArray) {
+        val items = (0 until entries.length()).mapNotNull { i ->
+            entries.optJSONObject(i)?.let { HistoryEntry(it.optString("url"), it.optString("title"), it.optLong("timestamp")) }
+        }.filter { UrlSafety.isWebUrl(it.url) }.take(MAX)
+        cache = items
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(KEY, JSONArray().apply {
+            items.forEach { put(JSONObject().put("url", it.url).put("title", it.title).put("timestamp", it.timestamp)) }
+        }.toString()).commit()
+    }
+
     @Synchronized
     fun clear(context: Context) {
         cache = emptyList()

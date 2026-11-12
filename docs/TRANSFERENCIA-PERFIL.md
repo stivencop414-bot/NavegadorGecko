@@ -1,10 +1,37 @@
 # Transferencia entre los paquetes de Nexo
 
+## Paso automático (0.26.1)
+
+Desde 0.26.1 los datos nativos pasan solos de la app anterior (`com.ejemplo.navegador`) a Nexo nuevo
+(`com.nexo.browser`), sin archivos ni contraseñas:
+
+1. Instala `Nexo-anterior-actualizacion-v0.26.1-…apk` encima de la app anterior. Es una actualización del
+   mismo paquete y con la misma firma: conserva todos sus datos. Al abrirla avisa de la mudanza.
+2. Instala `Nexo-v0.26.1-…apk` y ábrelo. Ofrece **Traer datos** (también en Ajustes › Traer datos de Nexo anterior).
+3. Se traen historial (se combina, una entrada por dirección), accesos rápidos fijados y ocultos, pestañas
+   normales que no estén ya abiertas, ajustes conocidos y claves Deepgram/DeepL/IA. Una clave que ya
+   tengas puesta en la app nueva no se sobrescribe. La app anterior no se modifica.
+4. Comprueba los datos y solo entonces desinstala la app anterior.
+
+Cómo se protege: la app anterior expone `LegacyProfileProvider` (autoridad `com.ejemplo.navegador.profile`)
+solo en la compilación de transición. Su `call()` comprueba que quien llama es `com.nexo.browser`, que
+está firmado con la misma clave (`checkSignatures`) y que tiene el permiso de nivel `signature`
+`com.nexo.browser.permission.TRANSFER_PROFILE`. Las claves viajan por Binder entre esas dos apps,
+descifradas con el Keystore del origen y cifradas de nuevo con el del destino; nunca se escriben en un
+archivo intermedio. El destino valida todo (versión, origen, tipos, URL web) antes de aplicar nada.
+`tools/check_apk_identity.py` comprueba en la CI que el proveedor solo está activo en el paquete anterior.
+
+No incluye pestañas privadas, Burner, cookies, descargas, miniaturas ni datos de extensiones
+(configuración y memoria de PhantomShield, storage de otras extensiones). Para eso sigue disponible la
+copia cifrada manual descrita abajo (Ajustes › Copia cifrada del perfil).
+
+## Copia cifrada manual (incluye datos de extensiones)
+
 ## Estado y preparación
 
 Este flujo requiere una comprobación en Android antes de distribuir una actualización de transición. Las pruebas JVM de archivo y recuperación no demuestran que Gecko pueda abrir los almacenes copiados en un dispositivo. No desinstales ninguna de las dos aplicaciones hasta verificar los datos y conservar una copia cifrada externa.
 
-La compilación normal usa `com.nexo.browser`; `-PnexoTransition` usa `com.ejemplo.navegador`. Ambas comparten las fuentes/namespace `com.nexo.browser` y versión 0.25.1 (44). El APK de transición **debe firmarse por el responsable de distribución con la misma clave de la aplicación antigua** para actualizarla. Un debug APK o una firma distinta no puede actualizar una instalación release; no desinstales para sortearlo. Este PR no firma ni publica actualizaciones.
+La compilación normal usa `com.nexo.browser`; `-PnexoTransition` usa `com.ejemplo.navegador`. Ambas comparten las fuentes/namespace `com.nexo.browser` y la misma versión. El APK de transición **debe firmarse por el responsable de distribución con la misma clave de la aplicación antigua** para actualizarla. Un debug APK o una firma distinta no puede actualizar una instalación release; no desinstales para sortearlo. Este PR no firma ni publica actualizaciones.
 
 Los nombres completos de componentes apuntan a las fuentes nuevas. FileProvider usa `${applicationId}.files`. Los IDs `nexo_bridge@com.ejemplo.navegador`, `nexo_network@com.ejemplo.navegador` y `phantomshield@geckoview.internal` son identidades de extensiones, independientes del paquete Android; se conservan para no perder sus almacenes.
 
