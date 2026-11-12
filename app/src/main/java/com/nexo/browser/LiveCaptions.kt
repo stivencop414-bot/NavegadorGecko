@@ -49,6 +49,9 @@ object LiveCaptions {
         @Volatile var stopped = false
         val calls = java.util.concurrent.ConcurrentHashMap.newKeySet<okhttp3.Call>()
         var deviceAudio = false
+        // Motivo del último fallo de la captura en la página y si ya se ofreció la de Android.
+        var pageFailure: String? = null
+        var offeredDevice = false
         var socket: WebSocket? = null
         var opened = false
         val queue = ArrayDeque<ByteString>()
@@ -461,9 +464,24 @@ object LiveCaptions {
         notifyChanged(session)
     }
 
+    /** Fallos de la página que la captura de Android puede resolver (no claves, límites ni red). */
+    private val DEVICE_FIXABLE = setOf("no_audio", "silent", "capture", "unsupported", "mime", "SecurityError", "NotSupportedError", "suspended")
+
+    /**
+     * true una sola vez por activación cuando la página no pudo dar su audio:
+     * la interfaz ofrece entonces la captura de Android en un toque.
+     */
+    fun takeDeviceSuggestion(session: GeckoSession?): Boolean {
+        val stream = session?.let { active[it] } ?: return false
+        if (stream.offeredDevice || stream.deviceAudio || stream.pageFailure !in DEVICE_FIXABLE) return false
+        stream.offeredDevice = true
+        return true
+    }
+
     fun onPageError(context: Context, session: GeckoSession, code: String, message: String) {
         val stream = active[session] ?: return
         stream.delivered = true
+        stream.pageFailure = code
         PlaybackAudioCapture.cancel(session)
         stream.deviceAudio = false
         if (code == "need_key") {
@@ -669,6 +687,8 @@ object LiveCaptions {
             "signal" -> "Audio con señal detectada · esperando transcripción…"
             "meter_unavailable" -> "Audio capturado; medidor no disponible. Esperando transcripción…"
             "paused" -> "Esperando reproducción…"
+            "muted" -> "El video está en silencio: activa su sonido y Nexo empezará a transcribir."
+            "device_quiet" -> "Android aún no recibe sonido: comprueba que el video suene (sin silenciar)."
             else -> stream.message
         }
         notifyChanged(session)

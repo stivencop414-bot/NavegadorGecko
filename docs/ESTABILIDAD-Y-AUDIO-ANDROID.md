@@ -34,6 +34,23 @@ Apagar CC, cambiar de página/pestaña o salir de Nexo detiene esta captura (PiP
 
 Android puede devolver silencio por DRM, política de captura del productor, procesos de Gecko con UID diferente, o ausencia de reproducción. Si no se detecta señal durante los primeros 15 s, se explica y se detiene la captura; una pausa/silencio inicial prolongado puede requerir autorizar otra vez. No es una solución universal ni un mecanismo para eludir DRM. Android 8/9 conserva solo el método web/texto existente.
 
+## Cuando no se detecta el audio (0.26.2)
+
+- **Ofrecimiento automático:** si la página no puede dar su audio (sin pistas, otro origen, grabación
+  rechazada o solo silencio), Nexo explica el motivo y propone en un toque **Usar captura de Android**
+  (Android 10+, con clave de Deepgram). Se ofrece una vez por activación de CC; sigue disponible en CC.
+- **Video silenciado:** si el reproductor está en silencio (autoplay sin sonido o volumen 0) no se graba ni
+  se da por fallido: se avisa y la transcripción empieza sola al activar el sonido (`volumechange`).
+- **Silencio real:** en la página, el silencio solo cuenta mientras el video avanza con sonido (~15 s); una
+  pausa o una intro muda ya no detienen CC. El medidor usa muestras float (detecta voz baja, ~-50 dB).
+- **Captura de Android:** el silencio solo cuenta con el video reproduciéndose; a los 6 s sin sonido se avisa
+  y a los 25 s se detiene con la explicación. Una ganancia automática suave (1×–8×, sin amplificar el ruido
+  de fondo ni saturar) mejora el reconocimiento de videos con poco volumen.
+- **Servicio de captura:** pasa a primer plano antes de cualquier comprobación. Antes, si la autorización
+  llegaba tarde o se había cambiado de pestaña, se detenía sin `startForeground` y Android cerraba la app.
+- **Procesos de Gecko:** `isolatedProcessEnabled(false)` queda explícito. La captura filtra por el UID de
+  Nexo; con procesos aislados (otro UID) Android solo entregaría silencio.
+
 ## Evidencia y límites
 
 Se revisó únicamente el HTML y los cargadores de reproductor de la página de ejemplo proporcionada por el usuario. Las opciones SB/VO/LU/DD/JK se insertan dinámicamente; la página también carga scripts e iframes de terceros. No se descargó ni se reprodujo el vídeo y no se atribuye un fallo concreto a un servidor solo por sus siglas. La captura de pantalla del usuario confirmó el error de pistas vacías, no un error del traductor.
