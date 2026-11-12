@@ -68,12 +68,19 @@ servidor. Ambas opciones requieren recargar para aplicarse al documento nuevo.
 
 ## Identidades Burner
 
-Una pulsación larga en herramientas crea Burner después del primer consentimiento.
-También se crea desde el diálogo. Cada identidad recibe un `contextId` aleatorio
+Burner se crea desde el menú (tarjeta **Burner**), la pulsación larga en el contador de
+pestañas o Herramientas › Nueva identidad Burner, tras el primer consentimiento. En una
+pestaña Burner, la pulsación larga en herramientas y la franja superior abren su buzón.
+Cada identidad recibe un `contextId` aleatorio
 y sesiones privadas. Sus ventanas hijas comparten contenedor, perfil y semilla.
 Cerrar la última pestaña cierra sus paneles, elimina las credenciales en memoria
 y solicita a Gecko borrar el almacenamiento de ese contexto. **Destruir identidad**
 cierra todas sus pestañas. Las descargas y copias externas permanecen.
+
+Si el componente interno no responde (5 s), un Burner **sin proxy ni simulaciones**
+abre igualmente: el aislamiento de cookies y almacenamiento lo da Gecko con su contexto;
+solo se pierde la variación de huella y se avisa. Con proxy o simulaciones se mantiene
+el bloqueo: nunca se abre por conexión directa.
 
 La variación de huella es experimental: una semilla por identidad y dominio altera
 un bit de lecturas Canvas 2D y varía las cadenas de fabricante/renderizador de
@@ -84,8 +91,11 @@ y no garantiza una huella única, coherente o anónima.
 
 mail.tm crea un correo y su bandeja desde el propio Burner, con consentimiento
 previo que identifica al proveedor. La cuenta y el token viven solo en memoria.
-El buzón lateral se actualiza a petición del usuario; muestra texto plano, sin
-ejecutar HTML, imágenes remotas ni scripts de mensajes. Sus peticiones HTTPS
+El buzón se abre al momento ("Creando…"), reintenta la creación ante cortes y se
+actualiza solo cada 10 s mientras está abierto (como mucho 30 veces); muestra texto
+plano, sin ejecutar HTML, imágenes remotas ni scripts de mensajes, y ofrece copiar
+los códigos de verificación que detecta. Acepta las colecciones de la API en formato
+`hydra:member`, `member` o lista simple. Sus peticiones HTTPS
 usan una conexión propia, fuera del proxy de la pestaña. No se envían credenciales
 a páginas web ni se incluyen en las copias/restauraciones.
 

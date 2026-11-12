@@ -104,8 +104,8 @@ class MainActivity :
     private lateinit var findInput: EditText
     private lateinit var findCount: TextView
 
-    /** Última miniatura automática por pestaña (evita capturar en cada carga). */
-    private val lastAutoPreview = mutableMapOf<String, Long>()
+    /** Última miniatura automática por pestaña: dirección y momento. */
+    private val lastAutoPreview = mutableMapOf<String, Pair<String, Long>>()
     private val idlePreview = Runnable { captureCurrentTabPreview() }
 
     override val hostActivity: Activity get() = this
@@ -193,7 +193,8 @@ class MainActivity :
             onOpen = { url -> TabManager.navigate(url) },
             onPrivate = { viewModel.newTab(true) },
             onShield = { openShieldPanel() },
-            onExtensions = { openScreen(ExtensionStoreActivity::class.java) }
+            onExtensions = { openScreen(ExtensionStoreActivity::class.java) },
+            onAction = { action -> startPageAction(action) }
         ).apply { visibility = View.GONE }
         // Encima de la GeckoView y debajo del botón "Mini video".
         browserFrame.addView(
@@ -230,12 +231,33 @@ class MainActivity :
 
     private fun configureUi() {
         findViewById<TextView>(R.id.brandText).setOnClickListener { viewModel.goHome() }
-        findViewById<ImageButton>(R.id.reloadButton).setOnClickListener { TabManager.reload() }
+        findViewById<ImageButton>(R.id.reloadButton).apply {
+            setOnClickListener { TabManager.reload() }
+            // Mantener pulsado: recarga completa, sin caché.
+            setOnLongClickListener {
+                TabManager.reload(bypassCache = true)
+                Toast.makeText(this@MainActivity, "Recarga completa (sin caché)", Toast.LENGTH_SHORT).show()
+                true
+            }
+        }
         backButton.setOnClickListener { TabManager.goBackOrPrevious() }
         forwardButton.setOnClickListener { TabManager.goForward() }
         findViewById<ImageButton>(R.id.homeButton).setOnClickListener { viewModel.goHome() }
-        findViewById<ImageButton>(R.id.newTabButton).setOnClickListener { viewModel.newTab(false) }
+        findViewById<ImageButton>(R.id.newTabButton).apply {
+            setOnClickListener { viewModel.newTab(false) }
+            // Mantener pulsado: pestaña privada.
+            setOnLongClickListener { viewModel.newTab(true); true }
+        }
         tabButton.setOnClickListener { showTabsDialog() }
+        tabButton.setOnLongClickListener { showTabQuickMenu(); true }
+        // Gestos de la barra: a los lados cambia de pestaña, hacia arriba abre el selector.
+        findViewById<GestureDock>(R.id.browserDock).apply {
+            gesturesEnabled = {
+                BrowserPrefs.dockGestures(this@MainActivity) && !omnibox.hasFocus() && !fullScreenActive && !isInPictureInPictureMode
+            }
+            onSwipeTab = { offset -> switchAdjacentTab(offset) }
+            onSwipeUp = { showTabsDialog() }
+        }
         findViewById<ImageButton>(R.id.tabToolsButton).apply {
             setOnClickListener { TabTools.show(this@MainActivity) }
             // Pulsación larga: el buzón de la identidad actual. Nunca crea una identidad nueva por accidente.
@@ -246,6 +268,9 @@ class MainActivity :
             }
         }
         findViewById<Button>(R.id.menuButton).setOnClickListener { showMenu(it) }
+        privateBanner.setOnClickListener {
+            TabManager.activeTab()?.burnerId?.let { BurnerMailbox.show(this, it) }
+        }
         miniPlayerButton.setOnClickListener { startMiniPlayer() }
         captionsButton.setOnClickListener { toggleCaptions() }
         captionsButton.setOnLongClickListener {
@@ -372,11 +397,16 @@ class MainActivity :
 
         val primaryActions = listOf(
             SheetAction(R.drawable.ic_nav_add, "Nueva pestaña") { viewModel.newTab(false) },
-            SheetAction(R.drawable.ic_menu_private, "Privada") { viewModel.newTab(true) }
+            SheetAction(R.drawable.ic_menu_private, "Privada") { viewModel.newTab(true) },
+            SheetAction(R.drawable.ic_menu_burner, "Burner", subtitle = "Aislada + correo") { BurnerMailbox.open(this) }
         )
+        val onPage = current != null && !BrowserPrefs.isNexoHome(current.url)
+        val reopen = TabManager.lastClosed()
         val actions = listOf(
             SheetAction(R.drawable.ic_menu_history, "Historial") { openScreen(HistoryActivity::class.java) },
-            SheetAction(R.drawable.ic_menu_download, "Descargas") { openScreen(DownloadsActivity::class.java) },
+            SheetAction(R.drawable.ic_menu_download, "Descargas", active = DownloadStore.activeDownloads().isNotEmpty()) {
+                openScreen(DownloadsActivity::class.java)
+            },
             SheetAction(R.drawable.ic_menu_translate, "Traducir") {
                 TranslatorManager.translateActive(this) { _, message ->
                     runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
@@ -388,8 +418,13 @@ class MainActivity :
             SheetAction(R.drawable.ic_menu_copy, "Copiar URL") { current?.let { copyText("Enlace", it.url) } },
             SheetAction(R.drawable.ic_menu_share, "Compartir") { shareCurrent() },
             SheetAction(R.drawable.ic_menu_find, "Buscar") { showFindBar() },
+            SheetAction(R.drawable.ic_menu_pin, "Fijar en inicio") { pinCurrentToHome() },
+            SheetAction(R.drawable.ic_menu_screenshot, "Captura") { saveScreenshot() },
+            SheetAction(R.drawable.ic_menu_pdf, "Guardar PDF") { savePageAsPdf() },
+            if (reopen != null) SheetAction(R.drawable.ic_menu_reopen, "Reabrir cerrada") { TabManager.reopenClosed() }
+            else SheetAction(R.drawable.ic_tab_tools, "Herramientas") { TabTools.show(this) },
             SheetAction(R.drawable.ic_menu_settings, "Ajustes") { openScreen(SettingsActivity::class.java) }
-        )
+        ).filter { onPage || it.icon !in PAGE_ONLY_ACTIONS }
         val menuHeader = LinearLayout(this).apply {
             gravity = android.view.Gravity.CENTER_VERTICAL
             addView(NexoSheets.header(
@@ -413,10 +448,14 @@ class MainActivity :
         sheet = NexoSheets.show(this, content)
     }
 
-    /** Controles de extensiones con insignias publicadas por el propio bloqueador. */
+    /**
+     * Controles de extensiones: PhantomShield con su interruptor y, debajo, una
+     * fila deslizable con todas las demás (icono real e insignia de cada una).
+     */
     private fun extensionShortcuts(dismiss: () -> Unit): View? {
         val phantom = ExtensionManager.installedPhantom()
-        val items = listOfNotNull(phantom) + ExtensionManager.actionableExtensions().filterNot { it.id == ExtensionManager.PHANTOMSHIELD_ID }
+        val others = ExtensionManager.actionableExtensions().filterNot { it.id == ExtensionManager.PHANTOMSHIELD_ID }
+        val items = listOfNotNull(phantom)
         val p = ThemeManager.palette(this)
         val d = resources.displayMetrics.density
         fun dp(value: Float) = (value * d).toInt()
@@ -430,12 +469,12 @@ class MainActivity :
                 isClickable = true; contentDescription = "Administrar extensiones"
                 setOnClickListener { dismiss(); openScreen(ExtensionsActivity::class.java) }
             })
-            if (items.isEmpty()) addView(TextView(this@MainActivity).apply {
+            if (items.isEmpty() && others.isEmpty()) addView(TextView(this@MainActivity).apply {
                 text = "Administrar extensiones"; textSize = 13f; setTextColor(p.muted)
                 minimumHeight = dp(48f); gravity = android.view.Gravity.CENTER_VERTICAL
                 isClickable = true; setOnClickListener { dismiss(); openScreen(ExtensionsActivity::class.java) }
             })
-            items.take(4).forEach { extension ->
+            items.forEach { extension ->
                 val isShield = extension.id == ExtensionManager.PHANTOMSHIELD_ID
                 val badge = if (isShield) ExtensionManager.phantomBadge() else null
                 val icon = ImageView(this@MainActivity).apply {
@@ -497,7 +536,184 @@ class MainActivity :
                 }
                 addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8f) })
             }
+            // Resto de extensiones: todas a mano en una fila, más "Añadir".
+            val strip = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+            others.forEach { extension -> strip.addView(extensionTile(extension, dismiss)) }
+            strip.addView(extensionTile(null, dismiss))
+            addView(android.widget.HorizontalScrollView(this@MainActivity).apply {
+                isHorizontalScrollBarEnabled = false
+                overScrollMode = View.OVER_SCROLL_NEVER
+                addView(strip)
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
+    }
+
+    /** Botón de una extensión en el menú (null = añadir extensiones). */
+    private fun extensionTile(extension: org.mozilla.geckoview.WebExtension?, dismiss: () -> Unit): View {
+        val p = ThemeManager.palette(this)
+        val d = resources.displayMetrics.density
+        fun dp(value: Float) = (value * d).toInt()
+        val name = extension?.metaData?.name ?: "Añadir"
+        val badge = extension?.let { ExtensionManager.badge(it) }
+        val icon = ImageView(this).apply {
+            setImageResource(if (extension == null) R.drawable.ic_nav_add else R.drawable.ic_extension_placeholder)
+            imageTintList = android.content.res.ColorStateList.valueOf(if (extension == null) p.muted else p.accent)
+            setPadding(dp(9f), dp(9f), dp(9f), dp(9f))
+            background = ThemeManager.rounded(this@MainActivity, if (extension == null) p.elevated else p.accentSoft, 14f, p.outline)
+        }
+        if (extension != null) ExtensionManager.loadIcon(extension, dp(44f)) { bitmap ->
+            if (bitmap != null) runOnUiThread { icon.imageTintList = null; icon.setImageBitmap(bitmap) }
+        }
+        val square = android.widget.FrameLayout(this).apply {
+            addView(icon, android.widget.FrameLayout.LayoutParams(dp(46f), dp(46f), android.view.Gravity.CENTER))
+            if (badge != null) addView(TextView(this@MainActivity).apply {
+                text = badge; textSize = 9f; setTextColor(android.graphics.Color.WHITE)
+                typeface = resources.getFont(R.font.jetbrains_mono)
+                setPadding(dp(4f), dp(1f), dp(4f), dp(1f))
+                background = ThemeManager.rounded(this@MainActivity, 0xFFDC2626.toInt(), 8f)
+            }, android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.TOP or android.view.Gravity.END
+            ))
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+            setPadding(dp(4f), dp(6f), dp(4f), dp(6f))
+            background = ThemeManager.ripple(this@MainActivity, null, 16f)
+            isClickable = true; isFocusable = true
+            contentDescription = if (extension == null) "Añadir extensiones" else "Abrir $name" + (badge?.let { " · $it" } ?: "")
+            setOnClickListener {
+                dismiss()
+                if (extension == null) openScreen(ExtensionStoreActivity::class.java)
+                else ExtensionManager.runAction(extension) { ok, message ->
+                    if (!ok) runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
+                }
+            }
+            // Mantener pulsado: administrar (permisos, privado, desinstalar).
+            setOnLongClickListener { dismiss(); openScreen(ExtensionsActivity::class.java); true }
+            addView(square, LinearLayout.LayoutParams(dp(54f), dp(54f)))
+            addView(TextView(this@MainActivity).apply {
+                text = name; textSize = 10.5f; setTextColor(p.text); gravity = android.view.Gravity.CENTER
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; maxWidth = dp(72f)
+                setPadding(0, dp(4f), 0, 0)
+            }, LinearLayout.LayoutParams(dp(72f), LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
+    }
+
+    /** Pestaña siguiente/anterior con el gesto de la barra; el texto de la dirección se desliza. */
+    private fun switchAdjacentTab(offset: Int) {
+        val id = TabManager.adjacentTabId(offset)
+        val shift = 40f * resources.displayMetrics.density * (if (offset > 0) 1 else -1)
+        if (id == null) {
+            // Sin más pestañas en esa dirección: un pequeño rebote.
+            omnibox.animate().cancel()
+            omnibox.animate().translationX(-shift / 3f).setDuration(90L).withEndAction {
+                omnibox.animate().translationX(0f).setDuration(140L).start()
+            }.start()
+            return
+        }
+        TabManager.switchTo(id)
+        omnibox.animate().cancel()
+        omnibox.translationX = shift
+        omnibox.alpha = 0.2f
+        omnibox.animate().translationX(0f).alpha(1f).setDuration(200L).start()
+    }
+
+    /** Pulsación larga en el contador de pestañas: acciones rápidas. */
+    private fun showTabQuickMenu() {
+        val current = TabManager.activeTab()
+        var sheet: android.app.Dialog? = null
+        val dismiss = { sheet?.dismiss(); Unit }
+        val actions = mutableListOf(
+            SheetAction(R.drawable.ic_nav_add, "Nueva pestaña") { viewModel.newTab(false) },
+            SheetAction(R.drawable.ic_menu_private, "Nueva pestaña privada") { viewModel.newTab(true) },
+            SheetAction(R.drawable.ic_menu_burner, "Nueva identidad Burner") { BurnerMailbox.open(this) }
+        )
+        TabManager.lastClosed()?.let { closed ->
+            actions += SheetAction(R.drawable.ic_menu_reopen, "Reabrir: " + closed.title.ifBlank { closed.url }.take(60)) {
+                TabManager.reopenClosed()
+            }
+        }
+        if (current != null) actions += SheetAction(R.drawable.ic_menu_close, "Cerrar esta pestaña", danger = true) {
+            TabManager.closeTab(current.id)
+        }
+        sheet = NexoSheets.show(this, NexoSheets.column(this,
+            NexoSheets.header(this, "Pestañas", "Desliza la barra inferior para cambiar de pestaña"),
+            NexoSheets.list(this, actions, dismiss)))
+    }
+
+    private fun startPageAction(action: String) {
+        when (action) {
+            "downloads" -> openScreen(DownloadsActivity::class.java)
+            "history" -> openScreen(HistoryActivity::class.java)
+            "burner" -> BurnerMailbox.open(this)
+            "settings" -> openScreen(SettingsActivity::class.java)
+        }
+    }
+
+    /** Añade el sitio actual a los accesos rápidos de la página de inicio. */
+    private fun pinCurrentToHome() {
+        val tab = TabManager.activeTab() ?: return
+        if (tab.isPrivate) {
+            Toast.makeText(this, "Los sitios de pestañas privadas no se guardan en inicio", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val title = StartPageView.pin(this, tab.url)
+        Toast.makeText(
+            this,
+            if (title != null) "«$title» fijado en la página de inicio" else "Este sitio ya está en inicio o no se puede fijar",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    /** Captura de la página visible, guardada como PNG en Descargas. */
+    private fun saveScreenshot() {
+        val tab = TabManager.activeTab() ?: return
+        if (BrowserPrefs.isNexoHome(tab.url) || geckoView.width <= 0 || geckoView.height <= 0) {
+            Toast.makeText(this, "Abre una página para capturarla", Toast.LENGTH_SHORT).show()
+            return
+        }
+        runCatching {
+            geckoView.capturePixels().accept(
+                { bitmap ->
+                    if (bitmap == null) {
+                        Toast.makeText(this, "No se pudo capturar la página", Toast.LENGTH_SHORT).show()
+                    } else {
+                        DownloadStore.saveBitmap(this, bitmap, "Captura ${displayUrl(tab.url)}") { _, message ->
+                            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+                { Toast.makeText(this, "No se pudo capturar la página", Toast.LENGTH_SHORT).show() }
+            )
+        }.onFailure { Toast.makeText(this, "No se pudo capturar la página", Toast.LENGTH_SHORT).show() }
+    }
+
+    /** La página completa como PDF (motor de impresión de Gecko), en Descargas. */
+    private fun savePageAsPdf() {
+        val tab = TabManager.activeTab() ?: return
+        val session = tab.session ?: return
+        if (BrowserPrefs.isNexoHome(tab.url)) {
+            Toast.makeText(this, "Abre una página para guardarla", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Toast.makeText(this, "Generando PDF…", Toast.LENGTH_SHORT).show()
+        val name = FileNames.sanitize(tab.title.ifBlank { displayUrl(tab.url) }.take(80), "pagina") + ".pdf"
+        runCatching {
+            session.saveAsPdf().accept(
+                { stream ->
+                    if (stream == null) {
+                        Toast.makeText(this, "No se pudo generar el PDF", Toast.LENGTH_LONG).show()
+                    } else {
+                        DownloadStore.saveStream(this, stream, name, "application/pdf", tab.url) { _, message ->
+                            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+                { error -> Toast.makeText(this, "No se pudo generar el PDF: ${error?.message ?: "error"}", Toast.LENGTH_LONG).show() }
+            )
+        }.onFailure { Toast.makeText(this, "Esta versión de Gecko no puede guardar PDF", Toast.LENGTH_LONG).show() }
     }
 
     private fun openShieldPanel() {
@@ -516,21 +732,36 @@ class MainActivity :
         startActivity(Intent(this, screen))
     }
 
-    private fun captureCurrentTabPreview() {
+    /**
+     * [force]: el usuario abre el selector, se captura aunque suene un video.
+     * La imagen solo se guarda si al llegar sigue a la vista la misma pestaña
+     * con la misma página: antes una captura tardía podía quedar asignada a la
+     * pestaña equivocada o mostrar la página anterior.
+     */
+    private fun captureCurrentTabPreview(force: Boolean = false) {
         val tab = TabManager.activeTab() ?: return
+        val session = attachedSession ?: return
         if (
             tab.isPrivate ||
+            tab.session !== session ||
             BrowserPrefs.isNexoHome(tab.url) ||
             tab.isLoading ||
-            BrowserMediaController.isPlaying(tab.id) ||
+            isInPictureInPictureMode ||
+            startPage.visibility == View.VISIBLE ||
+            (!force && BrowserMediaController.isPlaying(tab.id)) ||
             geckoView.width <= 0 ||
             geckoView.height <= 0
         ) return
+        val url = tab.url
         runCatching {
             geckoView.capturePixels().accept(
                 { bitmap ->
-                    if (bitmap != null) {
+                    if (bitmap == null) return@accept
+                    if (attachedSession === session && tab.session === session && tab.url == url) {
                         TabPreviewStore.save(applicationContext, tab.id, bitmap)
+                        lastAutoPreview[tab.id] = url to android.os.SystemClock.elapsedRealtime()
+                    } else {
+                        bitmap.recycle()
                     }
                 },
                 { _ -> Unit }
@@ -539,21 +770,19 @@ class MainActivity :
     }
 
     /**
-     * Miniatura automática al terminar de cargar: como mucho una cada 30 s
-     * por pestaña y con la página ya asentada. Capturar la vista completa en
-     * cada carga costaba CPU y memoria (un bitmap de varios MB cada vez).
+     * Miniatura automática al terminar de cargar, con la página ya asentada:
+     * siempre que cambia la página y, en la misma, como mucho una cada 30 s.
      */
     private fun scheduleIdlePreview(tab: BrowserTab) {
         geckoView.removeCallbacks(idlePreview)
-        val last = lastAutoPreview[tab.id] ?: 0L
+        val (lastUrl, lastAt) = lastAutoPreview[tab.id] ?: ("" to 0L)
         val now = android.os.SystemClock.elapsedRealtime()
-        if (now - last < 30_000L) return
-        lastAutoPreview[tab.id] = now
-        geckoView.postDelayed(idlePreview, 1_500L)
+        if (lastUrl == tab.url && now - lastAt < 30_000L) return
+        geckoView.postDelayed(idlePreview, 1_200L)
     }
 
     private fun showTabsDialog() {
-        captureCurrentTabPreview()
+        captureCurrentTabPreview(force = true)
         TabSwitcher.show(this) { private -> viewModel.newTab(private) }
     }
 
@@ -645,7 +874,9 @@ class MainActivity :
             this,
             url,
             isPrivate = tab?.isPrivate == true,
-            referrer = tab?.url
+            referrer = tab?.url,
+            parallel = tab?.burnerId == null,
+            split = BrowserPrefs.parallelDownloads(this)
         ) { _, message ->
             runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
         }
@@ -961,7 +1192,12 @@ class MainActivity :
     }
 
     private fun renderTab(tab: BrowserTab) {
-        privateBanner.text = if(tab.burnerId != null) "Burner · identidad efímera" else "Navegación privada"
+        // Burner: la franja muestra el correo temporal y abre su buzón.
+        privateBanner.text = if (tab.burnerId != null) {
+            BurnerMailbox.address(tab.burnerId)?.let { "Burner · $it  ›" } ?: "Burner · identidad efímera · buzón  ›"
+        } else "Navegación privada"
+        privateBanner.isClickable = tab.burnerId != null
+        privateBanner.contentDescription = if (tab.burnerId != null) "Abrir el buzón de esta identidad Burner" else null
         ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),tab.burnerId != null || tab.networkProfile != null)
         if (!omnibox.hasFocus()) renderOmnibox(tab)
         updateStartPage(tab)
@@ -1026,7 +1262,8 @@ class MainActivity :
 
     override fun onStop() {
         if (MigrationMode.enabled(this)) { super.onStop(); return }
-        captureCurrentTabPreview()
+        // Sin captura aquí: al parar la superficie se destruye y la imagen sale en negro.
+        geckoView.removeCallbacks(idlePreview)
 
         if (!isInPictureInPictureMode) {
             val tab = TabManager.activeTab()
@@ -1107,14 +1344,13 @@ class MainActivity :
         val message = LiveCaptions.message(session)
         if (LiveCaptions.state(session) == LiveCaptions.State.ERROR && message != null && message != lastCaptionMessage) {
             lastCaptionMessage = message
+            // Los subtítulos siguen activos: si el usuario enciende los del reproductor,
+            // Nexo los toma solo. Mantener pulsado CC abre la configuración (clave).
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-            // Sin clave y sin subtítulos propios: abrir la configuración directamente.
-            if (BrowserPrefs.deepgramKey(this).isBlank() && message.contains("Deepgram")) {
-                LiveCaptions.stop(session)
-                CaptionsUi.showSheet(this, askKey = true) { refreshCaptionsUi() }
-            }
         }
     }
+
+    private val captionHintExpiry = Runnable { refreshCaptionsUi() }
 
     private fun toggleCaptions() {
         val session = attachedSession ?: return
@@ -1143,15 +1379,25 @@ class MainActivity :
         val tab = TabManager.activeTab()
         val session = attachedSession
         val active = LiveCaptions.isActive(session)
-        val available = tab != null && (active || BrowserPrefs.captionsEnabled(this))
+        // El CC está siempre a mano en páginas web (el video puede estar en un iframe), no en Inicio.
+        val available = tab != null && (active || (BrowserPrefs.captionsEnabled(this) && !BrowserPrefs.isNexoHome(tab.url)))
         captionsButton.visibility = if (available && !immersive && !isInPictureInPictureMode) View.VISIBLE else View.GONE
         CaptionsUi.styleChip(this, captionsButton, active)
-        val display = if (active) LiveCaptions.display(this, session) else null
+        // Las líneas de estado (no subtítulos) no se muestran en la ventana mini.
+        val display = (if (active) LiveCaptions.display(this, session) else null)
+            ?.takeUnless { it.status && isInPictureInPictureMode }
         CaptionsUi.render(
             this, captionView, browserFrame.width, browserFrame.height,
             if (pipCrop != null || isInPictureInPictureMode) null else tab?.let { BrowserMediaController.videoRect(it.id) },
-            display, isInPictureInPictureMode
+            display,
+            isInPictureInPictureMode,
+            hint = display?.status == true
         )
+        // El aviso genérico caduca: volver a dibujar para retirarlo.
+        captionView.removeCallbacks(captionHintExpiry)
+        if (display?.status == true && LiveCaptions.statusExpires(session)) {
+            captionView.postDelayed(captionHintExpiry, LiveCaptions.HINT_MS + 150L)
+        }
     }
 
     /**
@@ -1623,6 +1869,7 @@ class MainActivity :
         permissionCallbacks.values.forEach { it(false) }
         permissionCallbacks.clear()
         geckoView.removeCallbacks(idlePreview)
+        captionView.removeCallbacks(captionHintExpiry)
         TabManager.attach(null)
         if (attachedSession != null) {
             geckoView.releaseSession()
@@ -1653,6 +1900,13 @@ class MainActivity :
         private const val REQUEST_PIP_CONTROL = 913
         private const val REQUEST_FILE_PICKER = 920
         private const val REQUEST_SITE_PERMISSIONS = 2000
+
+        /** Acciones del menú que solo tienen sentido con una página abierta. */
+        private val PAGE_ONLY_ACTIONS = setOf(
+            R.drawable.ic_menu_copy, R.drawable.ic_menu_share, R.drawable.ic_menu_find,
+            R.drawable.ic_menu_pin, R.drawable.ic_menu_screenshot, R.drawable.ic_menu_pdf,
+            R.drawable.ic_menu_translate, R.drawable.ic_menu_desktop
+        )
 
         /** Primer enlace web dentro de un texto compartido. */
         private val SHARED_URL = Regex("""https?://[^\s<>"']+""", RegexOption.IGNORE_CASE)

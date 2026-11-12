@@ -29,13 +29,43 @@ class StartPageView(
     private val onOpen: (String) -> Unit,
     private val onPrivate: () -> Unit,
     private val onShield: () -> Unit,
-    private val onExtensions: () -> Unit
+    private val onExtensions: () -> Unit,
+    /** Accesos de Nexo: "downloads", "history", "burner", "settings". */
+    private val onAction: (String) -> Unit = {}
 ) : ScrollView(activity) {
+    companion object {
+        private const val PREFS = "nexo_quick_access"
+        private const val MAX_TILES = 11
+
+        /** Fija el origen de [url] en los accesos rápidos. Devuelve su nombre o null si ya estaba. */
+        fun pin(context: Context, url: String): String? {
+            val shortcut = BrowserPagePresentation.shortcut(url) ?: return null
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val saved = runCatching { JSONArray(prefs.getString("custom", "[]")) }.getOrDefault(JSONArray())
+            for (index in 0 until saved.length()) {
+                val known = BrowserPagePresentation.shortcut(saved.optJSONObject(index)?.optString("url").orEmpty())
+                if (known?.identity == shortcut.identity) {
+                    // Ya estaba: si se había ocultado, volver a mostrarlo.
+                    val hidden = prefs.getStringSet("hidden", emptySet()).orEmpty()
+                    if (shortcut.origin !in hidden) return null
+                    prefs.edit().putStringSet("hidden", hidden - shortcut.origin).apply()
+                    return shortcut.title
+                }
+            }
+            // Los fijados van delante; como mucho 24.
+            val updated = JSONArray().put(JSONObject().put("url", shortcut.origin))
+            for (index in 0 until minOf(saved.length(), 23)) updated.put(saved.get(index))
+            val hidden = prefs.getStringSet("hidden", emptySet()).orEmpty()
+            prefs.edit().putString("custom", updated.toString()).putStringSet("hidden", hidden - shortcut.origin).apply()
+            return shortcut.title
+        }
+    }
+
     private data class Link(val label: String, val url: String = "", val kind: String = "web") {
         val id get() = if (kind == "web") url else kind
     }
     private val content = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.START }
-    private val prefs get() = activity.getSharedPreferences("nexo_quick_access", Context.MODE_PRIVATE)
+    private val prefs get() = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val emerald = Color.rgb(47, 214, 160)
     private var renderedPrivate = false
     private var renderedShieldToken: String? = null
@@ -131,7 +161,7 @@ class StartPageView(
             })
             content.addView(heading, params())
             val hidden = prefs.getStringSet("hidden", emptySet()).orEmpty()
-            val links = allLinks().filterNot { it.id in hidden }.take(7) + Link("Añadir", kind = "add")
+            val links = allLinks().filterNot { it.id in hidden }.take(MAX_TILES) + Link("Añadir", kind = "add")
             links.chunked(4).forEach { group ->
                 val row = LinearLayout(activity).apply { weightSum = 4f }
                 group.forEach { row.addView(tile(it), params(0).apply { weight = 1f }) }
@@ -148,19 +178,49 @@ class StartPageView(
         return LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, dp(5f), 0, dp(12f))
             background = ThemeManager.ripple(activity, null, 18f); isClickable = true; isFocusable = true; contentDescription = link.label
-            setOnClickListener { when (link.kind) { "shield" -> onShield(); "extensions" -> onExtensions(); "add" -> addLink(); else -> onOpen(link.url) } }
+            setOnClickListener {
+                when (link.kind) {
+                    "shield" -> onShield(); "extensions" -> onExtensions(); "add" -> addLink()
+                    "downloads", "history", "burner", "settings" -> onAction(link.kind)
+                    else -> onOpen(link.url)
+                }
+            }
+            if (link.kind == "web") setOnLongClickListener { tileOptions(link); true }
             val square = FrameLayout(activity).apply { background = bento() }
-            val iconRes = when { link.kind == "shield" -> R.drawable.ic_quick_shield; link.kind == "extensions" -> R.drawable.ic_extension_placeholder; link.kind == "add" -> R.drawable.ic_nav_add; host.startsWith("youtube.com:") -> R.drawable.ic_quick_youtube; host.startsWith("google.com:") -> R.drawable.ic_quick_google; host.startsWith("github.com:") -> R.drawable.ic_quick_github; else -> null }
+            val iconRes = when {
+                link.kind == "shield" -> R.drawable.ic_quick_shield
+                link.kind == "extensions" -> R.drawable.ic_extension_placeholder
+                link.kind == "downloads" -> R.drawable.ic_menu_download
+                link.kind == "history" -> R.drawable.ic_menu_history
+                link.kind == "burner" -> R.drawable.ic_menu_burner
+                link.kind == "add" -> R.drawable.ic_nav_add
+                host.startsWith("youtube.com:") -> R.drawable.ic_quick_youtube
+                host.startsWith("google.com:") -> R.drawable.ic_quick_google
+                host.startsWith("github.com:") -> R.drawable.ic_quick_github
+                else -> null
+            }
+            // Color propio de cada acceso de Nexo (los logos de sitios traen el suyo).
+            val tint = when (link.kind) {
+                "extensions" -> 0xFF22D3EE.toInt()
+                "downloads" -> 0xFF3B82F6.toInt()
+                "history" -> 0xFF8B5CF6.toInt()
+                "burner" -> 0xFFF97316.toInt()
+                "add" -> p.muted
+                else -> null
+            }
             if (iconRes != null) {
                 square.addView(ImageView(activity).apply {
                     setImageResource(iconRes)
-                    if (link.kind == "add" || link.kind == "extensions") imageTintList = ColorStateList.valueOf(if (link.kind == "extensions") 0xFF22D3EE.toInt() else p.muted)
+                    if (tint != null) imageTintList = ColorStateList.valueOf(tint)
                 }, FrameLayout.LayoutParams(dp(25f), dp(25f), Gravity.CENTER))
             } else {
-                square.addView(text(if (host.contains("wikipedia.org")) "W" else link.label.take(1).uppercase(), 22f, p.text, true).apply {
+                // Inicial sobre el color del sitio mientras llega su logo (o si no tiene).
+                val siteHost = runCatching { android.net.Uri.parse(link.url).host }.getOrNull().orEmpty()
+                square.addView(text(if (host.contains("wikipedia.org")) "W" else SiteIconStore.letter(siteHost.ifBlank { link.label }), 20f, Color.WHITE, true).apply {
                     gravity = Gravity.CENTER
                     if (host.contains("wikipedia.org")) typeface = Typeface.create("serif", Typeface.BOLD)
-                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    background = ThemeManager.rounded(activity, SiteIconStore.letterColor(siteHost.ifBlank { link.label }), 12f)
+                }, FrameLayout.LayoutParams(dp(34f), dp(34f), Gravity.CENTER))
             }
             if (link.kind == "web" && iconRes == null && !renderedPrivate) {
                 val origin = BrowserPagePresentation.shortcut(link.url)?.origin
@@ -168,7 +228,7 @@ class StartPageView(
                     square.removeAllViews()
                     square.addView(ImageView(activity).apply {
                         setImageBitmap(bitmap); scaleType = ImageView.ScaleType.FIT_CENTER
-                    }, FrameLayout.LayoutParams(dp(28f), dp(28f), Gravity.CENTER))
+                    }, FrameLayout.LayoutParams(dp(30f), dp(30f), Gravity.CENTER))
                 }
             }
             addView(square, params(dp(56f), dp(56f)))
@@ -223,8 +283,13 @@ class StartPageView(
             Link("Google", "https://www.google.com/"),
             Link("Shield", kind = "shield"),
             Link("Wikipedia", "https://es.wikipedia.org/"),
+            Link("Descargas", kind = "downloads"),
+            Link("Historial", kind = "history"),
+            Link("Burner", kind = "burner"),
+            Link("Extensiones", kind = "extensions"),
             Link("GitHub", "https://github.com/"),
-            Link("Extensiones", kind = "extensions")
+            Link("Gmail", "https://mail.google.com/"),
+            Link("Maps", "https://maps.google.com/")
         ))
         for (entry in HistoryStore.list(activity)) {
             val shortcut = BrowserPagePresentation.shortcut(entry.url)
@@ -258,6 +323,23 @@ class StartPageView(
             dialog.dismiss(); render(false)
         } }
         dialog.show()
+    }
+
+    /** Pulsación larga en un acceso: abrir en otra pestaña o quitarlo de inicio. */
+    private fun tileOptions(link: Link) {
+        var sheet: android.app.Dialog? = null
+        val dismiss = { sheet?.dismiss(); Unit }
+        val actions = listOf(
+            SheetAction(R.drawable.ic_menu_open, "Abrir en pestaña nueva") { TabManager.createTab(link.url) },
+            SheetAction(R.drawable.ic_menu_private, "Abrir en pestaña privada") { TabManager.createTab(link.url, isPrivate = true) },
+            SheetAction(R.drawable.ic_menu_close, "Quitar de inicio", danger = true) {
+                prefs.edit().putStringSet("hidden", prefs.getStringSet("hidden", emptySet()).orEmpty() + link.id).apply()
+                render(renderedPrivate)
+            }
+        )
+        sheet = NexoSheets.show(activity, NexoSheets.column(activity,
+            NexoSheets.header(activity, link.label, link.url),
+            NexoSheets.list(activity, actions, dismiss)))
     }
 
     private fun editLinks() {

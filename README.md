@@ -14,17 +14,34 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Google, DuckDuckGo, Bing, Brave Search y Startpage.
 - Multipestañas, sesiones LRU y pestañas privadas. Grupos con nombre y color, píldoras con
   contador para filtrar, mover pestañas con pulsación larga y renombrar/desagrupar/cerrar un grupo.
+- Selector de pestañas fluido: deslizar una tarjeta hacia un lado la cierra (con **Deshacer**), mantenerla
+  pulsada y arrastrarla la cambia de orden (sin moverla, abre sus opciones de grupo), las
+  tarjetas muestran el logo del sitio y las miniaturas no parpadean ni se recargan al abrirlo.
+  "Reabrir cerrada" en el menú y en la pulsación larga del contador de pestañas.
+- Gestos: deslizar la barra inferior a los lados cambia de pestaña y hacia arriba abre el selector;
+  pulsación larga en Recargar = recarga sin caché, en "+" = pestaña privada, en el contador = acciones
+  rápidas. Todas las hojas y los paneles de extensiones se cierran arrastrándolos hacia abajo.
+  Los gestos de la barra y las descargas en varias conexiones se pueden desactivar en Ajustes.
 - Herramientas en la barra de direcciones (hoja inferior): grupo, proxy SOCKS5/HTTP por pestaña,
   Orbot externo, retardo de solicitudes y geolocalización simulada. DNS DoH configurable para todo el navegador.
-- Burner: contenedor privado aislado, correo temporal de mail.tm con buzón en hoja inferior y
-  limpieza al cerrar la última pestaña de la identidad. Variación experimental de Canvas/WebGL.
+- Burner (menú › Burner): contenedor privado aislado, correo temporal de mail.tm con buzón que se
+  actualiza solo, códigos de verificación copiables y limpieza al cerrar la última pestaña de la
+  identidad. La franja superior muestra la dirección y abre el buzón. Variación experimental de
+  Canvas/WebGL; si ese componente falla, un Burner sin proxy abre igualmente (aislado por Gecko).
 - Modo escritorio: User-Agent + viewport.
 - Temas Midnight, OLED y claro.
 - Siete colores de acento, con cobalto por defecto.
 - Historial con búsqueda en vivo (título, dominio o dirección, sin distinguir tildes), descargas y compartir.
+- Descargas aceleradas: los archivos grandes de servidores que admiten rangos se reparten en 2–4
+  conexiones (misma sesión, nunca con proxy ni Burner), una descarga cortada se reanuda desde el último
+  byte y ya no se guarda incompleta. Notificación con progreso y velocidad; se cancelan desde Descargas.
+- Menú con captura de la página (PNG), guardar como PDF, fijar el sitio en inicio y reabrir pestañas.
 - Subtítulos en vivo para cualquier video (botón CC):
-  - Si el video trae subtítulos propios (WebVTT), se usan esos sin Deepgram ni clave y se traducen todos
-    por adelantado en lotes grandes.
+  - Si el video trae subtítulos propios (WebVTT/HLS), se usan esos sin Deepgram ni clave y se traducen
+    por adelantado en lotes grandes, también las líneas que llegan durante la reproducción.
+  - Si el reproductor dibuja sus propios subtítulos (YouTube, Netflix, Prime Video, video.js, JW Player,
+    Shaka, Plyr, Bitmovin), Nexo los lee sin clave y los muestra con su estilo y traducidos. En YouTube
+    los activa solo; en otros sitios basta con encender el CC del reproductor.
   - Si no, el audio se comprime en la página (Opus, ~24 kbps) y Deepgram lo transcribe en streaming desde el
     proceso nativo; la clave nunca llega a la página.
   - Traducción a 37 idiomas sin esperas artificiales: cada frase sale al momento si no hay otra petición en
@@ -52,8 +69,11 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - IA opcional en sitios elegidos o automática, con exclusiones, presupuestos y apagado rápido.
 - OpenAI, Claude y OpenRouter, direcciones personalizables y contadores acumulados de tokens y decisiones IA.
 - Inicio y menú basados en el prototipo: barra inferior, accesos editables y fuentes locales.
-- Logos en accesos rápidos: recursos locales y favicon HTTPS del propio sitio, sin servicios externos.
-- Paneles de extensiones como hoja inferior redondeada y accesos directos en el menú.
+- Logos en accesos rápidos y pestañas: recursos locales y el icono que declara el propio sitio
+  (`apple-touch-icon`/`icon`, si no `/favicon.ico`), sin servicios externos; si no hay, inicial de color.
+  Accesos de Nexo en inicio (Descargas, Historial, Burner, Extensiones) y pulsación larga en cada acceso.
+- Paneles de extensiones como hoja inferior redondeada y accesos directos en el menú: todas las
+  extensiones con su icono e insignia en una fila deslizable; aviso claro si una no está permitida en privado.
 - Diálogos de páginas: `<select>`, alert/confirm/prompt, fecha y hora, color, subida de
   archivos, inicio de sesión HTTP, "¿salir de la página?" y `navigator.share()`.
 - Enlaces `target=_blank` y `window.open` en pestaña nueva; bloqueo de ventanas emergentes.
@@ -101,11 +121,11 @@ Una extensión privada/sin firma puede integrarse dentro de
   ni incluye Tor. Buzón, IA y listas tienen conexiones propias; las simulaciones no cambian
   la IP. El borrado remoto de mail.tm depende de la conexión y de que siga vivo el proceso.
 
-Los favicons de accesos personalizados se consultan sin cookies en el propio sitio
-(`/favicon.ico`), sin seguir redirecciones, y se guardan en una caché limitada.
-Se admiten imágenes raster compatibles con Android y PNG dentro de ICO; si el
-servidor no ofrece un formato compatible se conserva la inicial. No se solicitan
-en la página de inicio privada.
+Los logos de accesos y pestañas se consultan sin cookies ni referer, solo por HTTPS: la
+cabecera de la página principal del sitio (redirecciones solo dentro del mismo sitio) y los
+iconos que declara, o `/apple-touch-icon.png` y `/favicon.ico`. Se guardan en una caché limitada.
+Se admiten imágenes raster compatibles con Android y PNG dentro de ICO (no SVG); si no hay un
+formato compatible se muestra la inicial. No se solicitan desde pestañas privadas.
 
 ## Desarrollo
 Requisitos: JDK 21, Gradle 9.8.2 y Android SDK con `platforms;android-37.2` y

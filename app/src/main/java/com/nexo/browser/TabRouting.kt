@@ -24,10 +24,25 @@ object TabRouting {
         val controller=GeckoRuntimeHolder.get(AppContext.get()).webExtensionController
         controller.ensureBuiltIn("resource://android/assets/extensions/nexo_network/",ID).accept({ installed ->
             if(installed == null) { extension=null;result.completeExceptionally(IllegalStateException("No se pudo cargar la red interna.")) }
+            else if(installed.metaData.allowedInPrivateBrowsing) result.complete(installed)
+            // Los componentes integrados suelen estar ya permitidos en privado; si Gecko
+            // rechaza el cambio se sigue con el componente tal cual (el arranque de la
+            // pestaña lo comprobará y, si falla, actúa el tiempo límite).
             else controller.setAllowedInPrivateBrowsing(installed,true).accept(
                 { allowed -> result.complete(allowed ?: installed) },
-                { error -> extension=null;result.completeExceptionally(error ?: IllegalStateException("No se pudo habilitar el componente privado.")) })
+                { error -> android.util.Log.w("NexoNetwork", "Permiso en privado", error); result.complete(installed) })
         },{ error -> extension=null;result.completeExceptionally(error ?: IllegalStateException("No se pudo instalar el componente de red.")) })
+    }
+
+    /**
+     * Burner sin proxy ni simulaciones: el aislamiento lo da Gecko (contexto
+     * propio y modo privado). Si el componente interno falla, solo se pierde la
+     * variación experimental de huella; la pestaña no se bloquea.
+     */
+    private fun routeOptional(tab: BrowserTab): Boolean {
+        val profile = tab.networkProfile
+        return tab.burnerId != null &&
+            (profile == null || (profile.type == "direct" && profile.latency == 0 && profile.latitude == null))
     }
     fun preparing(session: GeckoSession) = pending.containsKey(session) || failed.containsKey(session)
     fun synthetic(session: GeckoSession) = preparing(session) || awaiting.containsKey(session)
@@ -41,14 +56,22 @@ object TabRouting {
         initialize(); reserve(session); tab.canGoBack=false;tab.canGoForward=false; purge[session] = !preserveHistory; tab.networkState = "Preparando ruta"
         fun fail() {
             if(pending.remove(session) != null && tab.session === session) {
-                failed[session] = true
                 timeouts.remove(session)?.let { main.removeCallbacks(it) }
+                if (routeOptional(tab)) {
+                    awaiting[session] = true
+                    tab.networkState = "Burner aislado"
+                    TabManager.notifyMessage("Burner abierto con cookies y datos aislados. La variación de huella no se pudo activar.")
+                    ready()
+                    return
+                }
+                failed[session] = true
                 tab.networkState = "Ruta bloqueada"; tab.isLoading = false
                 TabManager.notifyMessage("No se pudo preparar la red. No se abrió la página por conexión directa. Revisa la ruta de la pestaña.")
             }
         }
         val timeout=Runnable { if(pending.containsKey(session)) fail() }
-        timeouts[session]=timeout;main.postDelayed(timeout,15000)
+        // Un Burner sin proxy no espera tanto: su página abre aunque falle el componente.
+        timeouts[session]=timeout;main.postDelayed(timeout,if (routeOptional(tab)) 5000L else 15000L)
         extension?.accept({ ext ->
             if(ext == null || !pending.containsKey(session) || tab.session !== session) return@accept
             val bootstrap = ext.metaData.baseUrl + "bootstrap.html"

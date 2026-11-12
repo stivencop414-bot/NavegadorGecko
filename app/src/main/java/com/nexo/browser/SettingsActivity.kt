@@ -36,6 +36,8 @@ class SettingsActivity : Activity() {
     private lateinit var autoplay: Spinner
     private lateinit var forceZoom: Switch
     private lateinit var pullToRefresh: Switch
+    private lateinit var dockGestures: Switch
+    private lateinit var parallelDownloads: Switch
     private lateinit var desktopDefault: Switch
     private lateinit var javascript: Switch
     private lateinit var strictTracking: Switch
@@ -130,6 +132,8 @@ class SettingsActivity : Activity() {
         autoplay = findViewById(R.id.autoplaySpinner)
         forceZoom = findViewById(R.id.forceZoomSwitch)
         pullToRefresh = findViewById(R.id.pullToRefreshSwitch)
+        dockGestures = findViewById(R.id.dockGesturesSwitch)
+        parallelDownloads = findViewById(R.id.parallelDownloadsSwitch)
         desktopDefault = findViewById(R.id.desktopDefaultSwitch)
         javascript = findViewById(R.id.javascriptSwitch)
         strictTracking = findViewById(R.id.strictTrackingSwitch)
@@ -206,6 +210,8 @@ class SettingsActivity : Activity() {
         autoplay.setSelection(autoplayOptions.indexOfFirst { it.second == BrowserPrefs.autoplay(this) }.coerceAtLeast(0))
         forceZoom.isChecked = BrowserPrefs.forceZoom(this)
         pullToRefresh.isChecked = BrowserPrefs.pullToRefresh(this)
+        dockGestures.isChecked = BrowserPrefs.dockGestures(this)
+        parallelDownloads.isChecked = BrowserPrefs.parallelDownloads(this)
         desktopDefault.isChecked = BrowserPrefs.desktopDefault(this)
         javascript.isChecked = BrowserPrefs.javascript(this)
         strictTracking.isChecked = BrowserPrefs.strictTracking(this)
@@ -264,6 +270,8 @@ class SettingsActivity : Activity() {
         BrowserPrefs.setAutoplay(this, autoplayOptions[autoplay.selectedItemPosition].second)
         BrowserPrefs.setForceZoom(this, forceZoom.isChecked)
         BrowserPrefs.setPullToRefresh(this, pullToRefresh.isChecked)
+        BrowserPrefs.setDockGestures(this, dockGestures.isChecked)
+        BrowserPrefs.setParallelDownloads(this, parallelDownloads.isChecked)
         BrowserPrefs.setDesktopDefault(this, desktopDefault.isChecked)
         BrowserPrefs.setJavascript(this, javascript.isChecked)
         BrowserPrefs.setStrictTracking(this, strictTracking.isChecked)
@@ -346,7 +354,7 @@ class SettingsActivity : Activity() {
         }
         listOf(
             restore, tracking, gpc, httpsOnly, freeSearch, nexoHome, smartPip, backgroundMedia,
-            forceZoom, pullToRefresh, desktopDefault, javascript, strictTracking, safeBrowsing,
+            forceZoom, pullToRefresh, dockGestures, parallelDownloads, desktopDefault, javascript, strictTracking, safeBrowsing,
             fingerprinting, queryStripping, clearOnExit, remoteDebug, captionsEnabled
         ).forEach {
             ThemeManager.styleSwitch(this, it)

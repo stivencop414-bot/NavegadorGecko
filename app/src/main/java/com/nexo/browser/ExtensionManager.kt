@@ -91,6 +91,16 @@ object ExtensionManager {
                 if (extension != null) {
                     bridge = extension
                     configureBridge(extension)
+                    // Mini video y subtítulos también en pestañas privadas y Burner. El puente
+                    // no guarda nada ni envía URL o contenido de la página.
+                    if (!extension.metaData.allowedInPrivateBrowsing) {
+                        runCatching {
+                            controller.setAllowedInPrivateBrowsing(extension, true).accept(
+                                { allowed -> if (allowed != null) bridge = allowed },
+                                { error -> android.util.Log.w("NexoExtensions", "Puente en privado", error) }
+                            )
+                        }
+                    }
 
                     // ensureBuiltIn es asíncrono: si las pestañas ya existen,
                     // enlaza el puente también a esas sesiones.
@@ -165,6 +175,14 @@ object ExtensionManager {
         else TabManager.activeSession()?.let { sessionActions[it]?.get(PHANTOMSHIELD_ID)?.badgeText }
             ?: defaultActions[PHANTOMSHIELD_ID]?.badgeText?.takeIf { it == "OFF" }
         return raw?.takeIf { it == "OFF" || it == "PAUSE" || it.matches(Regex("""[0-9]{1,3}\+?""")) }
+    }
+
+    /** Insignia que la extensión muestra en su botón para la pestaña actual (o la general). */
+    fun badge(extension: WebExtension): String? {
+        val session = TabManager.activeSession()
+        val text = session?.let { sessionActions[it]?.get(extension.id)?.badgeText }
+            ?: defaultActions[extension.id]?.badgeText
+        return text?.trim()?.take(4)?.takeIf { it.isNotEmpty() }
     }
 
     /** Extensiones activas que tienen botón (browser_action/page_action). */
@@ -245,6 +263,16 @@ object ExtensionManager {
             onDone(
                 false,
                 "La extensión no expone una acción para esta pestaña."
+            )
+            return
+        }
+
+        // En una pestaña privada Gecko no ejecuta extensiones sin ese permiso: explicarlo.
+        if (TabManager.activeTab()?.isPrivate == true && !extension.isBuiltIn && !extension.metaData.allowedInPrivateBrowsing) {
+            onDone(
+                false,
+                "${extension.metaData.name ?: "Esta extensión"} no está permitida en pestañas privadas. " +
+                    "Actívalo en Extensiones › la extensión › Permitir en pestañas privadas."
             )
             return
         }
@@ -1033,13 +1061,19 @@ object ExtensionManager {
         })
     }
 
-    /** Pide al puente que empiece o deje de captar el audio del video (subtítulos en vivo). */
-    fun setCaptions(session: GeckoSession?, active: Boolean, live: Boolean = false): Boolean =
+    /**
+     * Pide al puente que empiece o deje de leer los subtítulos del video.
+     * Va a todos los marcos (el video puede estar en un iframe); devuelve
+     * false si la página aún no tiene el puente conectado.
+     */
+    fun setCaptions(session: GeckoSession?, active: Boolean, live: Boolean = false, language: String = "multi"): Boolean =
         postCaptions(session, JSONObject().apply {
             put("type", "captions")
             put("active", active)
-            // live: hay clave de Deepgram; sin ella solo se usan las pistas de subtítulos del video.
+            // live: hay clave de Deepgram; sin ella se usan la pista del video o el texto del reproductor.
             put("live", live)
+            // Idioma preferido al elegir entre las pistas del reproductor (p. ej. YouTube).
+            put("lang", language.takeIf { it.matches(Regex("[a-zA-Z]{2,3}(-[A-Za-z]{2,4})?|multi")) } ?: "multi")
         })
 
     /** Tras un corte de red: grabación nueva (con cabecera) para la conexión nueva. */
@@ -1061,9 +1095,15 @@ object ExtensionManager {
         return delivered
     }
 
+    private fun captionsOn(session: GeckoSession) = JSONObject().apply {
+        put("type", "captions")
+        put("active", true)
+        put("live", BrowserPrefs.deepgramKey(AppContext.get()).isNotBlank())
+        put("lang", LiveCaptions.language(session).takeIf { it.matches(Regex("[a-zA-Z]{2,3}(-[A-Za-z]{2,4})?|multi")) } ?: "multi")
+    }
+
     fun restoreCaptions(session: GeckoSession) {
-        if (LiveCaptions.isActive(session)) setCaptions(session, true,
-            BrowserPrefs.deepgramKey(AppContext.get()).isNotBlank())
+        if (LiveCaptions.isActive(session)) postCaptions(session, captionsOn(session))
     }
 
     /** Avisa al puente de que la app pasa a segundo plano o vuelve (recuperación de video). */
@@ -1361,8 +1401,11 @@ object ExtensionManager {
             setSession(session)
         }
 
-        val sheet = android.widget.LinearLayout(activity).apply {
+        // Se cierra arrastrando hacia abajo desde la parte superior (asa y encabezado);
+        // el resto de gestos son de la página del panel.
+        val sheet = DragDismissLayout(activity).apply {
             orientation = android.widget.LinearLayout.VERTICAL
+            dragZonePx = dp(if (extension?.id == PHANTOMSHIELD_ID) 30f else 58f)
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(p.surface)
                 cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
@@ -1411,6 +1454,8 @@ object ExtensionManager {
         }
         sheet.addView(view, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
+        sheet.dimWindow = dialog.window
+        sheet.onDismiss = { if (dialog.isShowing) runCatching { dialog.dismiss() } }
         dialog.apply {
             requestWindowFeature(Window.FEATURE_NO_TITLE)
             setTitle(extension?.metaData?.name ?: "Extensión")
@@ -1593,7 +1638,8 @@ object ExtensionManager {
                                     "captions_error" -> json.optString("code").let { code ->
                                         LiveCaptions.onPageError(AppContext.get(), session, code, captionErrorText(code))
                                     }
-                                    "captions_track" -> LiveCaptions.onTrack(session)
+                                    "captions_track" -> LiveCaptions.onTrack(session, json.optString("source", "track"))
+                                    "captions_text" -> LiveCaptions.onDomText(AppContext.get(), session, json.optString("text").take(400))
                                     "captions_cues" -> json.optJSONArray("cues")?.let { LiveCaptions.onCues(AppContext.get(), session, it) }
                                     "captions_active" -> json.optJSONArray("ids")?.let { LiveCaptions.onActiveCues(AppContext.get(), session, it) }
                                 }
@@ -1616,8 +1662,13 @@ object ExtensionManager {
                 )
 
                 sendBrowserState(AppContext.get())
-                port.sender.session?.let { restoreCaptions(it) }
                 port.sender.session?.let { session ->
+                    // Solo al marco nuevo: la orden pudo llegar antes de que conectara. Los
+                    // demás marcos siguen como estaban (sin reiniciar a quien tiene los subtítulos).
+                    if (LiveCaptions.isActive(session)) {
+                        runCatching { port.postMessage(captionsOn(session)) }
+                        LiveCaptions.onBridgeConnected(session)
+                    }
                     pipStates[session]?.let { state ->
                         runCatching {
                             port.postMessage(pipModeMessage(true, state.resume, state.isolate))

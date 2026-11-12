@@ -15,6 +15,10 @@ import androidx.core.content.FileProvider
 class DownloadsActivity : Activity() {
     private lateinit var listView: ListView
     private var entries: List<DownloadEntry> = emptyList()
+    // Descargas en curso, mostradas antes que las terminadas.
+    private var running: List<ActiveDownload> = emptyList()
+    private var runningKey = ""
+    private val progressListener: () -> Unit = { refresh() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeManager.applyWindow(this)
@@ -37,10 +41,12 @@ class DownloadsActivity : Activity() {
         }
 
         listView.setOnItemClickListener { _, _, position, _ ->
-            if (position in entries.indices) open(entries[position])
+            running.getOrNull(position)?.let { confirmCancel(it); return@setOnItemClickListener }
+            entries.getOrNull(position - running.size)?.let { open(it) }
         }
 
-        listView.setOnItemLongClickListener { _, _, position, _ ->
+        listView.setOnItemLongClickListener { _, _, raw, _ ->
+            val position = raw - running.size
             if (position !in entries.indices) return@setOnItemLongClickListener true
             val entry = entries[position]
             AlertDialog.Builder(this)
@@ -60,17 +66,49 @@ class DownloadsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        DownloadStore.addListener(progressListener)
         refresh()
+    }
+
+    override fun onPause() {
+        DownloadStore.removeListener(progressListener)
+        super.onPause()
+    }
+
+    private fun confirmCancel(job: ActiveDownload) {
+        AlertDialog.Builder(this)
+            .setTitle("¿Cancelar la descarga?")
+            .setMessage(job.fileName)
+            .setNegativeButton("Seguir", null)
+            .setPositiveButton("Cancelar descarga") { _, _ ->
+                DownloadStore.cancel(job.id)
+                Toast.makeText(this, "Cancelando…", Toast.LENGTH_SHORT).show()
+            }
+            .show()
     }
 
     private fun refresh() {
         val updated = DownloadStore.list(this)
-        if (listView.adapter != null && updated == entries) return
+        val active = DownloadStore.activeDownloads()
+        // Con descargas en curso la lista se redibuja con cada avance.
+        val key = active.joinToString { it.id + ":" + it.received.get() + ":" + it.connections }
+        if (listView.adapter != null && updated == entries && key == runningKey) return
         entries = updated
+        running = active
+        runningKey = key
         findViewById<Button>(R.id.listAction).isEnabled = entries.isNotEmpty()
+        val position = listView.firstVisiblePosition
+        val top = listView.getChildAt(0)?.top ?: 0
         listView.adapter = ThemeManager.rowsAdapter(
             this,
-            entries.map {
+            running.map { job ->
+                ListRow(
+                    title = job.fileName,
+                    subtitle = DownloadStore.progressText(this, job).ifBlank { "Iniciando…" },
+                    meta = "Descargando · toca para cancelar",
+                    badge = if (job.percent >= 0) "${job.percent}%" else "↓"
+                )
+            } + entries.map {
                 val ext = it.fileName.substringAfterLast('.', "").uppercase().take(4)
                 val source = runCatching { android.net.Uri.parse(it.sourceUrl).host }
                     .getOrNull()
@@ -86,6 +124,8 @@ class DownloadsActivity : Activity() {
                 )
             }
         )
+        // Sin saltos de desplazamiento al actualizar el progreso.
+        listView.setSelectionFromTop(position, top)
     }
 
     private fun open(entry: DownloadEntry) {

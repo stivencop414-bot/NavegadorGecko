@@ -24,6 +24,7 @@ data class SheetAction(
     val label: String,
     val active: Boolean = false,
     val danger: Boolean = false,
+    val subtitle: String? = null,
     val onClick: () -> Unit
 )
 
@@ -35,14 +36,17 @@ object NexoSheets {
     private fun dp(activity: Activity, value: Float): Int =
         (value * activity.resources.displayMetrics.density).toInt()
 
-    /** Muestra [content] en una hoja anclada abajo con esquinas superiores de 28dp. */
+    /**
+     * Muestra [content] en una hoja anclada abajo con esquinas superiores de
+     * 28dp. Se cierra tocando fuera, con Atrás o arrastrándola hacia abajo.
+     */
     fun show(activity: Activity, content: View): Dialog {
         val p = ThemeManager.palette(activity)
         val dialog = Dialog(activity)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         val radius = dp(activity, 28f).toFloat()
-        val sheet = LinearLayout(activity).apply {
+        val sheet = DragDismissLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 setColor(p.surface)
@@ -51,10 +55,11 @@ object NexoSheets {
             setPadding(0, dp(activity, 10f), 0, dp(activity, 16f))
         }
 
-        // Asa superior.
+        // Asa superior: indica que la hoja se puede arrastrar.
         sheet.addView(
             View(activity).apply {
                 background = ThemeManager.rounded(activity, p.outline, 3f)
+                contentDescription = "Arrastra hacia abajo para cerrar"
                 layoutParams = LinearLayout.LayoutParams(dp(activity, 36f), dp(activity, 4f)).apply {
                     gravity = Gravity.CENTER_HORIZONTAL
                     bottomMargin = dp(activity, 10f)
@@ -62,14 +67,18 @@ object NexoSheets {
             }
         )
 
+        val scroll = MaxHeightScrollView(activity, (activity.resources.displayMetrics.heightPixels * 0.82f).toInt()).apply {
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            addView(content)
+        }
         sheet.addView(
-            MaxHeightScrollView(activity, (activity.resources.displayMetrics.heightPixels * 0.82f).toInt()).apply {
-                isVerticalScrollBarEnabled = false
-                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-                addView(content)
-            },
+            scroll,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         )
+        sheet.scrollable = scroll
+        sheet.dimWindow = dialog.window
+        sheet.onDismiss = { if (dialog.isShowing) runCatching { dialog.dismiss() } }
 
         dialog.setContentView(sheet)
         dialog.window?.apply {
@@ -121,7 +130,12 @@ object NexoSheets {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(activity, 16f), 0, dp(activity, 16f), dp(activity, 12f))
             actions.forEachIndexed { index, action ->
-                val accent = if (index == 0) p.accent else if (p.isDark) Color.rgb(185, 155, 255) else Color.rgb(116, 70, 221)
+                val accent = when {
+                    index == 0 -> p.accent
+                    action.danger -> if (p.isDark) Color.rgb(251, 146, 60) else Color.rgb(194, 65, 12)
+                    p.isDark -> Color.rgb(185, 155, 255)
+                    else -> Color.rgb(116, 70, 221)
+                }
                 val cell = LinearLayout(activity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
@@ -146,7 +160,7 @@ object NexoSheets {
                             setTextColor(p.text); maxLines = 2
                         })
                         addView(TextView(activity).apply {
-                            text = if (index == 0) "Inicio rápido" else "Sin historial"
+                            text = action.subtitle ?: if (index == 0) "Inicio rápido" else "Sin historial"
                             textSize = 10f; setTextColor(p.muted); setPadding(0, dp(activity, 3f), 0, 0)
                         })
                     }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))

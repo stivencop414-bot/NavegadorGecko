@@ -65,19 +65,25 @@ object CaptionsUi {
         frameHeight: Int,
         videoRect: Rect?,
         display: CaptionDisplay?,
-        pip: Boolean
+        pip: Boolean,
+        hint: Boolean = false
     ) {
         if (display == null || display.isEmpty || frameWidth <= 0 || frameHeight <= 0) {
             view.visibility = View.GONE
             return
         }
         val size = BrowserPrefs.captionSize(activity).toFloat()
-        view.textSize = if (pip) (size * 0.72f).coerceAtLeast(11f) else size
-        view.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        view.textSize = when {
+            hint -> (size * 0.8f).coerceAtLeast(12f)
+            pip -> (size * 0.72f).coerceAtLeast(11f)
+            else -> size
+        }
+        // El aviso de estado se distingue del subtítulo: cursiva y fondo más ligero.
+        view.typeface = Typeface.create("sans-serif-medium", if (hint) Typeface.ITALIC else Typeface.NORMAL)
         view.setTextColor(Color.WHITE)
         view.setShadowLayer(3f, 0f, 1f, 0x99000000.toInt())
         view.background = GradientDrawable().apply {
-            setColor(0xB8000000.toInt())
+            setColor(if (hint) 0x99000000.toInt() else 0xB8000000.toInt())
             cornerRadius = dp(activity, 10f).toFloat()
         }
         val text = SpannableStringBuilder()
@@ -160,6 +166,7 @@ object CaptionsUi {
 
     private fun stateText(activity: Activity, session: org.mozilla.geckoview.GeckoSession): String = when {
         LiveCaptions.isTrackMode(session) -> "Subtítulos del propio video · sin consumo de Deepgram"
+        LiveCaptions.isDomMode(session) -> "Subtítulos del reproductor · sin consumo de Deepgram"
         LiveCaptions.state(session) == LiveCaptions.State.LISTENING -> "Escuchando · " + LiveCaptions.usageText(activity)
         LiveCaptions.state(session) == LiveCaptions.State.CONNECTING -> "Conectando con Deepgram…"
         LiveCaptions.state(session) == LiveCaptions.State.ERROR -> LiveCaptions.message(session) ?: "Error"
@@ -211,7 +218,7 @@ object CaptionsUi {
         body.addView(targetRow)
         body.addView(modeRow)
         renderMode(); renderTarget()
-        if (!LiveCaptions.isTrackMode(session)) {
+        if (!LiveCaptions.isTrackMode(session) && !LiveCaptions.isDomMode(session)) {
             body.addView(NexoUi.section(activity, "Idioma del video"))
             body.addView(sourceRow)
             renderSource()
@@ -240,7 +247,7 @@ object CaptionsUi {
         val (keyView, keyField) = NexoUi.field(activity, "Clave API de Deepgram", "Pega tu clave", BrowserPrefs.deepgramKey(activity))
         keyField.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         body.addView(keyView)
-        body.addView(NexoUi.note(activity, "Si el video trae subtítulos propios se usan esos (sin clave). Si no, Deepgram transcribe el audio en la nube con tu cuenta."))
+        body.addView(NexoUi.note(activity, "Si el video o su reproductor (YouTube, Netflix, Prime Video…) tienen subtítulos, Nexo los usa sin clave. Si no, Deepgram transcribe el audio en la nube con tu cuenta."))
         body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_link, "Crear una clave en deepgram.com", "Se abre en una pestaña nueva") {
             sheet.dismiss()
             TabManager.createTab("https://console.deepgram.com/signup", false, true)

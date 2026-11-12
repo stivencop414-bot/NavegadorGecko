@@ -182,6 +182,12 @@ object BrowserPrefs {
     fun setCaptionSize(c: Context, v: Int) = p(c).edit().putInt("caption_size", v.coerceIn(12, 26)).apply()
 
     fun pullToRefresh(c: Context) = p(c).getBoolean("pull_to_refresh", true)
+    /** Deslizar la barra inferior: a los lados cambia de pestaña, hacia arriba abre el selector. */
+    fun dockGestures(c: Context) = p(c).getBoolean("dock_gestures", true)
+    fun setDockGestures(c: Context, v: Boolean) = p(c).edit().putBoolean("dock_gestures", v).apply()
+    /** Repartir archivos grandes en varias conexiones (si el servidor lo admite). */
+    fun parallelDownloads(c: Context) = p(c).getBoolean("parallel_downloads", true)
+    fun setParallelDownloads(c: Context, v: Boolean) = p(c).edit().putBoolean("parallel_downloads", v).apply()
     fun setPullToRefresh(c: Context, v: Boolean) = p(c).edit().putBoolean("pull_to_refresh", v).apply()
     fun smartPip(c: Context) = p(c).getBoolean("smart_pip", true)
     fun setSmartPip(c: Context, v: Boolean) = p(c).edit().putBoolean("smart_pip", v).apply()

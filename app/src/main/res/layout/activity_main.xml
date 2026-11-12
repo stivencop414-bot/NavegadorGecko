@@ -159,7 +159,7 @@
     </com.nexo.browser.PullRefreshLayout>
 
     <!-- Floating dock adapted from the supplied prototype; web content keeps its full viewport. -->
-    <LinearLayout
+    <com.nexo.browser.GestureDock
         android:id="@+id/browserDock"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -312,5 +312,5 @@
             android:scaleType="center"
             android:src="@drawable/ic_nav_add" />
     </LinearLayout>
-    </LinearLayout>
+    </com.nexo.browser.GestureDock>
 </LinearLayout>

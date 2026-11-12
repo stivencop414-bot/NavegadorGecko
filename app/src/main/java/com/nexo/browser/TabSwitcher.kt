@@ -5,8 +5,10 @@ import android.app.Dialog
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.text.TextUtils
@@ -14,18 +16,26 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
-import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.GridView
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.recyclerview.widget.DefaultItemAnimator
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.ItemTouchHelper
+import androidx.recyclerview.widget.RecyclerView
+import kotlin.math.abs
 
 /**
  * Selector de pestañas a pantalla completa: cuadrícula de tarjetas con
  * miniatura, separado en pestañas normales y privadas.
+ *
+ * Las tarjetas se reciclan y solo se actualiza lo que cambia (sin
+ * reconstruir la cuadrícula ni recargar miniaturas). Una tarjeta se cierra
+ * deslizándola hacia un lado, con opción de deshacer.
  */
 object TabSwitcher {
     private fun dp(context: Context, value: Float): Int =
@@ -120,21 +130,55 @@ object TabSwitcher {
             setTextColor(p.muted)
             setPadding(dp(activity, 32f), dp(activity, 32f), dp(activity, 32f), dp(activity, 32f))
         }
-        val grid = GridView(activity).apply {
-            numColumns = 2
-            horizontalSpacing = dp(activity, 12f)
-            verticalSpacing = dp(activity, 12f)
-            stretchMode = GridView.STRETCH_COLUMN_WIDTH
-            setPadding(dp(activity, 16f), dp(activity, 8f), dp(activity, 16f), dp(activity, 24f))
+        val metrics = activity.resources.displayMetrics
+        val columns = if (metrics.widthPixels / metrics.density >= 600f) 3 else 2
+        val grid = RecyclerView(activity).apply {
+            layoutManager = GridLayoutManager(activity, columns)
+            setPadding(dp(activity, 10f), dp(activity, 2f), dp(activity, 10f), dp(activity, 24f))
             clipToPadding = false
-            selector = ColorDrawable(Color.TRANSPARENT)
             isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            // Sin fundido al actualizar una tarjeta: la miniatura no parpadea.
+            itemAnimator = DefaultItemAnimator().apply { supportsChangeAnimations = false }
+            val gap = dp(activity, 6f)
+            addItemDecoration(object : RecyclerView.ItemDecoration() {
+                override fun getItemOffsets(outRect: Rect, view: View, parent: RecyclerView, state: RecyclerView.State) {
+                    outRect.set(gap, gap, gap, gap)
+                }
+            })
         }
         val body = FrameLayout(activity).apply {
             addView(grid)
             addView(empty)
         }
         root.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // Aviso "Pestaña cerrada · Deshacer" tras cerrar una tarjeta.
+        val undoText = TextView(activity).apply {
+            textSize = 14f; setTextColor(p.text); maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+        }
+        val undoButton = TextView(activity).apply {
+            text = "Deshacer"; textSize = 14f; gravity = Gravity.CENTER
+            setTextColor(if (p.isDark) androidx.core.graphics.ColorUtils.blendARGB(p.accent, Color.WHITE, 0.45f) else p.accent)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setPadding(dp(activity, 16f), 0, dp(activity, 16f), 0)
+            minWidth = dp(activity, 48f)
+            background = ThemeManager.ripple(activity, null, 16f)
+            isClickable = true
+        }
+        val undoBar = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(activity, 18f), 0, dp(activity, 4f), 0)
+            background = ThemeManager.rounded(activity, p.elevated, 16f, p.outline)
+            elevation = dp(activity, 3f).toFloat()
+            visibility = View.GONE
+            addView(undoText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(undoButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 48f)))
+        }
+        root.addView(undoBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 52f)).apply {
+            setMargins(dp(activity, 16f), dp(activity, 4f), dp(activity, 16f), dp(activity, 4f))
+        })
 
         val closeAll = Button(activity).apply {
             text = "Cerrar todas"; contentDescription = "Cerrar todas las pestañas del grupo visible"
@@ -144,28 +188,115 @@ object TabSwitcher {
         root.addView(closeAll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 48f)).apply {
             setMargins(dp(activity, 16f), dp(activity, 4f), dp(activity, 16f), dp(activity, 14f))
         })
+
         lateinit var refresh: () -> Unit
-        val adapter = object : BaseAdapter() {
-            var items: List<BrowserTab> = emptyList()
-            override fun getCount() = items.size
-            override fun getItem(position: Int) = items[position]
-            override fun getItemId(position: Int) = items[position].id.hashCode().toLong()
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
-                tabCard(activity, items[position], onOpen = {
-                    TabManager.switchTo(it.id)
-                    dialog.dismiss()
-                }, onClose = {
-                    val lastNormal = !showPrivate && items.size == 1
-                    TabManager.closeTab(it.id)
-                    if (lastNormal) dialog.dismiss() else refresh()
-                }).apply {
-                    setOnLongClickListener {
-                        moveSheet(activity, items[position]) { refresh() }
-                        true
-                    }
+        val hideUndo = Runnable { undoBar.visibility = View.GONE }
+
+        fun closeWithUndo(tab: BrowserTab) {
+            val lastNormal = !tab.isPrivate && TabManager.allTabs().count { !it.isPrivate } == 1
+            TabManager.closeTab(tab.id)
+            // Cerrar la última pestaña abre una nueva: no hay nada más que elegir aquí.
+            if (lastNormal) { dialog.dismiss(); return }
+            refresh()
+            undoBar.removeCallbacks(hideUndo)
+            if (TabManager.lastClosed()?.id == tab.id) {
+                undoText.text = "Cerrada: " + tab.title.ifBlank { "pestaña" }
+                undoButton.setOnClickListener {
+                    undoBar.removeCallbacks(hideUndo)
+                    undoBar.visibility = View.GONE
+                    TabManager.reopenClosed(tab.id, activate = false)
+                    refresh()
                 }
+                undoBar.visibility = View.VISIBLE
+                undoBar.postDelayed(hideUndo, 5000L)
+            } else {
+                undoBar.visibility = View.GONE
+            }
         }
+
+        val adapter = TabCardAdapter(
+            activity,
+            onOpen = { tab ->
+                TabManager.switchTo(tab.id)
+                dialog.dismiss()
+            },
+            onClose = { tab -> closeWithUndo(tab) },
+            // La pulsación larga la gestiona el arrastre (ver ItemTouchHelper).
+            onLongPress = null
+        )
         grid.adapter = adapter
+
+        /*
+         * Deslizar una tarjeta hacia un lado la cierra (se desvanece al alejarse).
+         * Mantenerla pulsada y moverla la cambia de sitio; si se suelta sin
+         * moverla, se abren sus opciones (grupo, cerrar).
+         */
+        var dragged: RecyclerView.ViewHolder? = null
+        var dragMoved = false
+        ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(
+            ItemTouchHelper.UP or ItemTouchHelper.DOWN or ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT,
+            ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT
+        ) {
+            override fun onMove(rv: RecyclerView, holder: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder): Boolean {
+                val from = holder.bindingAdapterPosition
+                val to = target.bindingAdapterPosition
+                if (from < 0 || to < 0 || from == to) return false
+                val moving = adapter.items[from]
+                val anchor = adapter.items[to]
+                adapter.moveItem(from, to)
+                TabManager.moveTab(moving.id, anchor.id, after = to > from)
+                dragMoved = true
+                return true
+            }
+            override fun onSelectedChanged(holder: RecyclerView.ViewHolder?, actionState: Int) {
+                super.onSelectedChanged(holder, actionState)
+                if (actionState == ItemTouchHelper.ACTION_STATE_DRAG && holder != null) {
+                    dragged = holder
+                    dragMoved = false
+                    holder.itemView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    holder.itemView.animate().scaleX(1.04f).scaleY(1.04f).setDuration(120L).start()
+                    holder.itemView.elevation = dp(activity, 8f).toFloat()
+                }
+            }
+            override fun getSwipeThreshold(holder: RecyclerView.ViewHolder) = 0.35f
+            override fun onSwiped(holder: RecyclerView.ViewHolder, direction: Int) {
+                val tab = adapter.items.getOrNull(holder.bindingAdapterPosition) ?: return
+                closeWithUndo(tab)
+            }
+            override fun onChildDraw(
+                canvas: Canvas, rv: RecyclerView, holder: RecyclerView.ViewHolder,
+                dX: Float, dY: Float, actionState: Int, active: Boolean
+            ) {
+                if (actionState == ItemTouchHelper.ACTION_STATE_SWIPE) {
+                    val width = holder.itemView.width.coerceAtLeast(1)
+                    holder.itemView.alpha = (1f - abs(dX) / width).coerceIn(0.15f, 1f)
+                    holder.itemView.rotation = (dX / width) * 4f
+                }
+                super.onChildDraw(canvas, rv, holder, dX, dY, actionState, active)
+            }
+            override fun clearView(rv: RecyclerView, holder: RecyclerView.ViewHolder) {
+                super.clearView(rv, holder)
+                holder.itemView.alpha = 1f
+                holder.itemView.rotation = 0f
+                if (dragged === holder) {
+                    dragged = null
+                    holder.itemView.animate().scaleX(1f).scaleY(1f).setDuration(120L).start()
+                    holder.itemView.elevation = dp(activity, 1f).toFloat()
+                    // Pulsación larga sin mover: opciones de la pestaña. Con movimiento: refrescar contadores.
+                    if (!dragMoved) adapter.items.getOrNull(holder.bindingAdapterPosition)?.let { tab ->
+                        moveSheet(activity, tab) { refresh() }
+                    } else refresh()
+                }
+            }
+        }).attachToRecyclerView(grid)
+
+        // Una miniatura nueva (p. ej. la de la pestaña actual) se pinta en su tarjeta.
+        val previewListener: (String) -> Unit = { id -> adapter.previewChanged(id) }
+        TabPreviewStore.addListener(previewListener)
+        dialog.setOnDismissListener {
+            TabPreviewStore.removeListener(previewListener)
+            undoBar.removeCallbacks(hideUndo)
+        }
 
         refresh = {
             val all = TabManager.allTabs()
@@ -199,15 +330,16 @@ object TabSwitcher {
             groupBar.removeAllViews()
             groupBar.addView(NexoUi.chipRow(activity, chips, sidePaddingDp = 16f), FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL))
-            adapter.items = all.filter { it.isPrivate == showPrivate && (selectedGroup == null || it.groupName.orEmpty() == selectedGroup) }
+            val items = all.filter { it.isPrivate == showPrivate && (selectedGroup == null || it.groupName.orEmpty() == selectedGroup) }
+            TabPreviewStore.prefetch(activity, items.filterNot { it.isPrivate }.map { it.id })
+            adapter.submit(items, TabManager.activeTab()?.id)
             closeAll.text = when (selectedGroup) { null -> "Cerrar todas"; "" -> "Cerrar pestañas sin grupo"; else -> "Cerrar grupo «$selectedGroup»" }
-            closeAll.isEnabled = adapter.items.isNotEmpty()
-            adapter.notifyDataSetChanged()
-            title.text = if (adapter.items.size == 1) "1 pestaña" else "${adapter.items.size} pestañas"
+            closeAll.isEnabled = items.isNotEmpty()
+            title.text = if (items.size == 1) "1 pestaña" else "${items.size} pestañas"
             empty.text = if (showPrivate) {
                 "No hay pestañas privadas.\nLas pestañas privadas no guardan historial ni cookies."
             } else "No hay pestañas abiertas."
-            empty.visibility = if (adapter.items.isEmpty()) View.VISIBLE else View.GONE
+            empty.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
             styleSegment(activity, normalSeg, !showPrivate)
             styleSegment(activity, privateSeg, showPrivate)
             privateSeg.text = "Privadas (${all.count { it.isPrivate }})"
@@ -222,6 +354,8 @@ object TabSwitcher {
         normalSeg.setOnClickListener { if (showPrivate) { showPrivate = false; selectedGroup = null; refresh() } }
         privateSeg.setOnClickListener { if (!showPrivate) { showPrivate = true; selectedGroup = null; refresh() } }
         refresh()
+        // Abrir con la pestaña actual a la vista.
+        adapter.items.indexOfFirst { it.id == TabManager.activeTab()?.id }.takeIf { it > 0 }?.let { grid.scrollToPosition(it) }
 
         dialog.setContentView(root)
         dialog.window?.apply {
@@ -234,7 +368,6 @@ object TabSwitcher {
         dialog.show()
     }
 
-    /** Hoja para mover una pestaña de grupo (mantener pulsada su tarjeta). */
     private fun moveSheet(activity: Activity, tab: BrowserTab, done: () -> Unit) {
         val names = TabManager.allTabs().filter { it.isPrivate == tab.isPrivate }.mapNotNull { it.groupName }.distinct().sorted()
         lateinit var sheet: Dialog
@@ -307,73 +440,115 @@ object TabSwitcher {
         view.typeface = if (selected) Typeface.create("sans-serif-medium", Typeface.NORMAL) else Typeface.DEFAULT
         view.elevation = if (selected) dp(activity, 1f).toFloat() else 0f
     }
+}
 
-    private fun tabCard(
-        activity: Activity,
-        tab: BrowserTab,
-        onOpen: (BrowserTab) -> Unit,
-        onClose: (BrowserTab) -> Unit
-    ): View {
+/** Datos de una tarjeta: si no cambian, la tarjeta no se vuelve a dibujar. */
+private data class TabCardState(
+    val id: String,
+    val title: String,
+    val url: String,
+    val groupName: String?,
+    val isPrivate: Boolean,
+    val burner: Boolean,
+    val active: Boolean
+)
+
+private class TabCardAdapter(
+    private val activity: Activity,
+    private val onOpen: (BrowserTab) -> Unit,
+    private val onClose: (BrowserTab) -> Unit,
+    private val onLongPress: ((BrowserTab) -> Unit)?
+) : RecyclerView.Adapter<TabCardAdapter.Holder>() {
+    var items: List<BrowserTab> = emptyList()
+        private set
+    private var states: List<TabCardState> = emptyList()
+
+    init { setHasStableIds(true) }
+
+    private fun dp(value: Float) = (value * activity.resources.displayMetrics.density).toInt()
+
+    fun submit(next: List<BrowserTab>, activeId: String?) {
+        val nextStates = next.map {
+            TabCardState(it.id, it.title, it.url, it.groupName, it.isPrivate, it.burnerId != null, it.id == activeId)
+        }
+        val old = states
+        val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+            override fun getOldListSize() = old.size
+            override fun getNewListSize() = nextStates.size
+            override fun areItemsTheSame(a: Int, b: Int) = old[a].id == nextStates[b].id
+            override fun areContentsTheSame(a: Int, b: Int) = old[a] == nextStates[b]
+        })
+        items = next
+        states = nextStates
+        diff.dispatchUpdatesTo(this)
+    }
+
+    /** Movimiento durante el arrastre (el orden real lo guarda TabManager). */
+    fun moveItem(from: Int, to: Int) {
+        items = items.toMutableList().apply { add(to, removeAt(from)) }
+        states = states.toMutableList().apply { add(to, removeAt(from)) }
+        notifyItemMoved(from, to)
+    }
+
+    fun previewChanged(id: String) {
+        val index = items.indexOfFirst { it.id == id }
+        if (index >= 0) notifyItemChanged(index, PREVIEW)
+    }
+
+    override fun getItemCount() = items.size
+    override fun getItemId(position: Int) = items[position].id.hashCode().toLong()
+
+    class Holder(
+        val card: LinearLayout,
+        val icon: ImageView,
+        val title: TextView,
+        val close: ImageButton,
+        val preview: FrameLayout,
+        val placeholderIcon: ImageView,
+        val placeholderLetter: TextView,
+        val placeholderHost: TextView,
+        val image: TopCropImageView
+    ) : RecyclerView.ViewHolder(card) {
+        var boundId: String? = null
+        var shownPreview: Bitmap? = null
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
         val p = ThemeManager.palette(activity)
-        val active = tab.id == TabManager.activeTab()?.id
-
         val card = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             background = ThemeManager.rounded(activity, p.surface, 20f)
-            // El borde va por encima del contenido: la miniatura ya no lo tapa
-            // ni deja esquinas cuadradas en la parte inferior.
-            foreground = ThemeManager.rounded(
-                activity,
-                Color.TRANSPARENT,
-                20f,
-                if (active) p.accent else tab.groupName?.let { androidx.core.graphics.ColorUtils.setAlphaComponent(TabGroupRules.color(it), 150) } ?: p.outline,
-                if (active) 2.5f else 1f
-            )
             clipToOutline = true
-            elevation = dp(activity, 1f).toFloat()
-            setOnClickListener { onOpen(tab) }
+            elevation = dp(1f).toFloat()
+            layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
-
         val header = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(activity, 12f), dp(activity, 4f), dp(activity, 2f), dp(activity, 2f))
+            setPadding(dp(10f), dp(4f), dp(2f), dp(2f))
         }
-        header.addView(TextView(activity).apply {
-            text = (if(tab.burnerId != null) "🔥 " else "") + tab.title.ifBlank { "Nueva pestaña" }
+        val icon = ImageView(activity).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+        header.addView(icon, LinearLayout.LayoutParams(dp(18f), dp(18f)).apply { marginEnd = dp(8f) })
+        val title = TextView(activity).apply {
             textSize = 13f
-            tab.groupName?.let { group ->
-                setCompoundDrawablesRelativeWithIntrinsicBounds(android.graphics.drawable.GradientDrawable().apply {
-                    shape = android.graphics.drawable.GradientDrawable.OVAL
-                    setColor(TabGroupRules.color(group)); setSize(dp(activity, 8f), dp(activity, 8f))
-                }, null, null, null)
-                compoundDrawablePadding = dp(activity, 6f)
-                contentDescription = "${tab.title} · grupo $group"
-            }
             setTextColor(p.text)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(ImageButton(activity).apply {
+        }
+        header.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val close = ImageButton(activity).apply {
             setImageResource(R.drawable.ic_menu_close)
-            contentDescription = "Cerrar pestaña: ${tab.title}"
             scaleType = ImageView.ScaleType.CENTER
-            setPadding(dp(activity, 10f), dp(activity, 10f), dp(activity, 10f), dp(activity, 10f))
+            setPadding(dp(10f), dp(10f), dp(10f), dp(10f))
             ThemeManager.styleIconButton(activity, this)
             imageTintList = ColorStateList.valueOf(p.muted)
-            setOnClickListener { onClose(tab) }
-        }, LinearLayout.LayoutParams(dp(activity, 48f), dp(activity, 48f)))
+        }
+        header.addView(close, LinearLayout.LayoutParams(dp(48f), dp(48f)))
         card.addView(header)
 
-        val previewHeight = dp(activity, 190f)
-        val hasPreview = !tab.isPrivate && !BrowserPrefs.isNexoHome(tab.url)
-        val host = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull()
-            ?.removePrefix("www.").orEmpty()
-
         // Marcador (logo + dominio) debajo; la miniatura lo cubre al cargar.
-        // Esquinas inferiores redondeadas también en el propio fondo de la miniatura.
-        val bottomRadius = dp(activity, 19f).toFloat()
+        val bottomRadius = dp(19f).toFloat()
         val preview = FrameLayout(activity).apply {
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(p.accentSoft)
@@ -381,41 +556,160 @@ object TabSwitcher {
             }
             clipToOutline = true
         }
+        val placeholderIcon = ImageView(activity).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+        val placeholderLetter = TextView(activity).apply {
+            gravity = Gravity.CENTER; textSize = 20f; setTextColor(Color.WHITE)
+            typeface = Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
+        }
+        val placeholderHost = TextView(activity).apply {
+            textSize = 12f
+            setTextColor(p.muted)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER
+            setPadding(dp(8f), dp(8f), dp(8f), 0)
+        }
         preview.addView(LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            addView(ImageView(activity).apply {
-                setImageResource(if (tab.isPrivate) R.drawable.ic_menu_private else R.drawable.ic_nexo_logo)
-                if (tab.isPrivate) imageTintList = ColorStateList.valueOf(p.accent)
-                layoutParams = LinearLayout.LayoutParams(dp(activity, 40f), dp(activity, 40f))
-            })
-            addView(TextView(activity).apply {
-                text = if (BrowserPrefs.isNexoHome(tab.url)) "Página de inicio" else host.ifBlank { tab.url }
-                textSize = 12f
-                setTextColor(p.muted)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                gravity = Gravity.CENTER
-                setPadding(dp(activity, 8f), dp(activity, 8f), dp(activity, 8f), 0)
-            })
+            addView(FrameLayout(activity).apply {
+                addView(placeholderIcon, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                addView(placeholderLetter, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            }, LinearLayout.LayoutParams(dp(44f), dp(44f)))
+            addView(placeholderHost)
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val image = TopCropImageView(activity).apply { visibility = View.GONE }
+        preview.addView(image, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        card.addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(190f)))
 
-        if (hasPreview) {
-            // Decodificación en segundo plano con caché: el hilo principal no
-            // lee JPEG del disco al abrir o desplazar el selector.
-            val image = TopCropImageView(activity).apply { tag = tab.id }
-            fun show(bitmap: android.graphics.Bitmap) {
-                image.setBackgroundColor(p.elevated)
-                image.setImageBitmap(bitmap)
-            }
-            TabPreviewStore.cached(tab.id)?.let { show(it) } ?: TabPreviewStore.loadAsync(activity, tab.id) { bitmap ->
-                if (bitmap != null && image.tag == tab.id) show(bitmap)
-            }
-            preview.addView(image, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        return Holder(card, icon, title, close, preview, placeholderIcon, placeholderLetter, placeholderHost, image)
+    }
+
+    override fun onBindViewHolder(holder: Holder, position: Int, payloads: MutableList<Any>) {
+        if (payloads.isNotEmpty() && payloads.all { it == PREVIEW }) bindPreview(holder, items[position])
+        else onBindViewHolder(holder, position)
+    }
+
+    override fun onBindViewHolder(holder: Holder, position: Int) {
+        val tab = items[position]
+        val p = ThemeManager.palette(activity)
+        val active = states.getOrNull(position)?.active == true
+        val changedTab = holder.boundId != tab.id
+        holder.boundId = tab.id
+
+        holder.card.foreground = ThemeManager.rounded(
+            activity,
+            Color.TRANSPARENT,
+            20f,
+            if (active) p.accent else tab.groupName?.let { androidx.core.graphics.ColorUtils.setAlphaComponent(TabGroupRules.color(it), 150) } ?: p.outline,
+            if (active) 2.5f else 1f
+        )
+        holder.card.setOnClickListener { onOpen(tab) }
+        if (onLongPress != null) holder.card.setOnLongClickListener { onLongPress.invoke(tab); true }
+        else { holder.card.setOnLongClickListener(null); holder.card.isLongClickable = false }
+        holder.card.contentDescription = tab.title + if (active) " · pestaña actual" else ""
+
+        holder.title.text = (if (tab.burnerId != null) "🔥 " else "") + tab.title.ifBlank { "Nueva pestaña" }
+        holder.title.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            tab.groupName?.let { group ->
+                android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(TabGroupRules.color(group)); setSize(dp(8f), dp(8f))
+                }
+            }, null, null, null
+        )
+        holder.title.compoundDrawablePadding = dp(6f)
+        holder.close.contentDescription = "Cerrar pestaña: ${tab.title}"
+        holder.close.setOnClickListener { onClose(tab) }
+
+        val home = BrowserPrefs.isNexoHome(tab.url)
+        val host = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull()?.removePrefix("www.").orEmpty()
+        holder.placeholderHost.text = if (home) "Página de inicio" else host.ifBlank { tab.url }
+
+        if (changedTab) {
+            holder.icon.setImageDrawable(null)
+            holder.placeholderIcon.setImageDrawable(null)
+            holder.placeholderLetter.visibility = View.GONE
         }
-        card.addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, previewHeight))
+        val origin = BrowserPagePresentation.shortcut(tab.url)?.origin
+        when {
+            tab.isPrivate -> {
+                holder.icon.setImageResource(R.drawable.ic_menu_private)
+                holder.icon.imageTintList = ColorStateList.valueOf(p.accent)
+                holder.placeholderIcon.setImageResource(R.drawable.ic_menu_private)
+                holder.placeholderIcon.imageTintList = ColorStateList.valueOf(p.accent)
+                holder.placeholderIcon.background = null
+            }
+            home || origin == null -> {
+                holder.icon.setImageResource(R.drawable.ic_nexo_logo)
+                holder.icon.imageTintList = null
+                holder.placeholderIcon.setImageResource(R.drawable.ic_nexo_logo)
+                holder.placeholderIcon.imageTintList = null
+                holder.placeholderIcon.background = null
+            }
+            else -> {
+                // Inicial con un color propio del sitio mientras llega (o si no hay) su icono.
+                holder.icon.imageTintList = null
+                holder.placeholderIcon.imageTintList = null
+                val cachedIcon = SiteIconStore.cached(origin)
+                if (cachedIcon != null) {
+                    showSiteIcon(holder, cachedIcon)
+                } else {
+                    holder.icon.setImageResource(R.drawable.ic_search)
+                    holder.icon.imageTintList = ColorStateList.valueOf(p.muted)
+                    holder.placeholderIcon.setImageDrawable(null)
+                    holder.placeholderIcon.background = ThemeManager.rounded(activity, SiteIconStore.letterColor(host), 14f)
+                    holder.placeholderLetter.text = SiteIconStore.letter(host)
+                    holder.placeholderLetter.visibility = View.VISIBLE
+                    SiteIconStore.load(activity, origin) { bitmap ->
+                        if (holder.boundId == tab.id) showSiteIcon(holder, bitmap)
+                    }
+                }
+            }
+        }
+        bindPreview(holder, tab)
+    }
 
-        return card
+    private fun showSiteIcon(holder: Holder, bitmap: Bitmap) {
+        holder.icon.imageTintList = null
+        holder.icon.setImageBitmap(bitmap)
+        holder.placeholderLetter.visibility = View.GONE
+        holder.placeholderIcon.background = null
+        holder.placeholderIcon.setImageBitmap(bitmap)
+    }
+
+    private fun bindPreview(holder: Holder, tab: BrowserTab) {
+        val hasPreview = !tab.isPrivate && !BrowserPrefs.isNexoHome(tab.url)
+        if (!hasPreview) {
+            holder.shownPreview = null
+            holder.image.setImageDrawable(null)
+            holder.image.visibility = View.GONE
+            return
+        }
+        fun show(bitmap: Bitmap?) {
+            if (bitmap == null) {
+                holder.shownPreview = null
+                holder.image.setImageDrawable(null)
+                holder.image.visibility = View.GONE
+                return
+            }
+            // Misma imagen: no se toca la vista (sin parpadeo).
+            if (holder.shownPreview === bitmap && holder.image.visibility == View.VISIBLE) return
+            holder.shownPreview = bitmap
+            holder.image.setBackgroundColor(ThemeManager.palette(activity).elevated)
+            holder.image.setImageBitmap(bitmap)
+            holder.image.visibility = View.VISIBLE
+        }
+        val cached = TabPreviewStore.cached(tab.id)
+        if (cached != null) { show(cached); return }
+        if (holder.shownPreview == null) holder.image.visibility = View.GONE
+        TabPreviewStore.loadAsync(activity, tab.id) { bitmap ->
+            if (holder.boundId == tab.id) show(bitmap)
+        }
+    }
+
+    companion object {
+        private const val PREVIEW = "preview"
     }
 }
 

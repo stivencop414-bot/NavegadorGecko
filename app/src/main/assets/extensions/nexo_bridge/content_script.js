@@ -526,10 +526,18 @@
    * graba mientras el video se reproduce en primer plano.
    */
   const CAPTION_SLICE_MS = 250;
-
-  const captions = { active: false, live: false, video: null, recorder: null, silentTimer: 0,
-    track: null, trackMode: "", trackTimer: 0, epoch: 0, granted: false, stream: null, meter: null };
+  const captions = {
+    active: false, live: false, lang: "multi", granted: false, choosing: false, token: 0,
+    video: null, recorder: null, silentTimer: 0, epoch: 0, stream: null, meter: null,
+    track: null, trackMode: "", trackTimer: 0, knownCues: 0,
+    dom: false, domTimer: 0, domText: "", domWatch: 0, domChecks: 0, ytEnabled: false,
+    restartTimer: 0
+  };
   const MAX_CUES = 3000;
+  // Identificador estable por línea: los reproductores HLS añaden líneas
+  // mientras se ve el video y los índices de la lista se desplazan.
+  const cueIds = new WeakMap();
+  let nextCueId = 0;
 
   function sendToNexo(message) {
     if (!port) return false;
@@ -604,7 +612,7 @@
   }
 
   async function startRecording() {
-    if (!captions.active || !captions.granted || !captions.live || captions.track || captions.recorder) return;
+    if (!captions.active || !captions.granted || !captions.live || captions.choosing || captions.track || captions.dom || captions.recorder) return;
     const video = captions.video;
     if (!video || !video.isConnected || video.paused || video.ended || document.visibilityState === "hidden") {
       sendToNexo({ type: "captions_status", code: "paused" }); return;
@@ -662,25 +670,42 @@
     return String(cue.text || "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim().slice(0, 300);
   }
 
-  function sendCues(track) {
+  /**
+   * Envía solo las líneas que Nexo aún no conoce. Con HLS las líneas llegan
+   * por partes durante la reproducción: antes solo se enviaban las primeras y
+   * las siguientes nunca aparecían en pantalla.
+   */
+  function sendNewCues(track) {
     const cues = track.cues;
-    if (!cues || !cues.length) return false;
+    if (!cues || !cues.length) return 0;
+    if (cues.length === captions.knownCues) return cues.length;
+    captions.knownCues = cues.length;
     const list = [];
-    for (let i = 0; i < cues.length && i < MAX_CUES; i++) {
-      const text = cueText(cues[i]);
-      if (text) list.push({ i, s: cues[i].startTime, e: cues[i].endTime, t: text });
+    for (let i = 0; i < cues.length && nextCueId < MAX_CUES; i++) {
+      const cue = cues[i];
+      if (cueIds.has(cue)) continue;
+      const id = nextCueId++;
+      cueIds.set(cue, id);
+      const text = cueText(cue);
+      if (text) list.push({ i: id, s: cue.startTime, e: cue.endTime, t: text });
     }
-    // Todas las líneas por adelantado, en bloques: Nexo las traduce en lotes grandes.
+    // Por bloques: Nexo las traduce por adelantado en lotes grandes.
     for (let i = 0; i < list.length; i += 200) sendToNexo({ type: "captions_cues", cues: list.slice(i, i + 200) });
-    sendActiveCues();
-    return list.length > 0;
+    return cues.length;
   }
 
   function sendActiveCues() {
     const track = captions.track;
     if (!track) return;
-    const cues = Array.from(track.cues || []);
-    const ids = Array.from(track.activeCues || []).map(cue => cues.indexOf(cue)).filter(i => i >= 0);
+    sendNewCues(track);
+    let active = [];
+    try { active = Array.from(track.activeCues || []); } catch (_) {}
+    if (active.some(cue => !cueIds.has(cue))) {
+      // La lista cambió sin cambiar de tamaño: volver a revisarla entera.
+      captions.knownCues = -1;
+      sendNewCues(track);
+    }
+    const ids = active.map(cue => cueIds.get(cue)).filter(id => id !== undefined);
     sendToNexo({ type: "captions_active", ids });
   }
 
@@ -689,31 +714,38 @@
     captions.trackTimer = 0;
     const track = captions.track;
     captions.track = null;
+    captions.knownCues = 0;
     if (!track) return;
     track.removeEventListener("cuechange", sendActiveCues);
     try { track.mode = captions.trackMode || "disabled"; } catch (_) {}
   }
 
-  /** Usa la pista de subtítulos o capítulos del video si existe y se puede leer. */
+  /** Usa la pista de subtítulos del video si existe y se puede leer. */
   function useTextTrack(video) {
-    const tracks = Array.from(video.textTracks || [])
-      .filter(track => track.kind === "subtitles" || track.kind === "captions");
+    let tracks = [];
+    try {
+      tracks = Array.from(video.textTracks || [])
+        .filter(track => track.kind === "subtitles" || track.kind === "captions");
+    } catch (_) {}
     if (!tracks.length) return false;
     const track = tracks.find(item => item.mode === "showing") || tracks[0];
+    captions.choosing = false;
     captions.track = track;
     captions.trackMode = track.mode;
+    captions.knownCues = 0;
+    nextCueId = 0;
     // "hidden" carga las líneas sin dibujarlas: Nexo muestra las suyas (traducidas).
     try { track.mode = "hidden"; } catch (_) {}
     track.addEventListener("cuechange", sendActiveCues);
-    sendToNexo({ type: "captions_track", lang: track.language || "" });
+    sendToNexo({ type: "captions_track", lang: track.language || "", source: "track" });
     let attempts = 0;
     const load = () => {
       if (captions.track !== track) return;
-      if (sendCues(track)) return;
-      // Pista vacía o de otro origen sin permiso: se recurre al audio si hay clave.
+      if (sendNewCues(track) > 0) { sendActiveCues(); return; }
+      // Pista vacía o de otro origen sin permiso: probar las otras fuentes.
       if (++attempts >= 10) {
         releaseTrack();
-        if (captions.live) startRecording(); else captionError("need_key");
+        fallbackAfterTrack();
         return;
       }
       captions.trackTimer = setTimeout(load, 500);
@@ -722,12 +754,259 @@
     return true;
   }
 
+  // --- Subtítulos que el reproductor dibuja en la página -----------------
+
+  /*
+   * YouTube, Netflix, Prime Video y otros reproductores no exponen una pista:
+   * dibujan el texto en elementos de la página. Nexo lee ese texto (sin
+   * Deepgram ni clave) y lo muestra con su estilo, traducido si se pidió.
+   * Solo se consulta mientras los subtítulos de Nexo están activos.
+   */
+  const DOM_CAPTION_TEXT = [
+    ".ytp-caption-segment",
+    ".player-timedtext-text-container",
+    ".atvwebplayersdk-captions-text",
+    ".vjs-text-track-display .vjs-text-track-cue",
+    ".jw-text-track-cue",
+    ".shaka-text-container span",
+    ".plyr__caption",
+    ".bmpui-ui-subtitle-label"
+  ].join(",");
+  const DOM_CAPTION_BOXES = [
+    ".ytp-caption-window-container",
+    ".player-timedtext",
+    ".atvwebplayersdk-captions-overlay",
+    ".vjs-text-track-display",
+    ".jw-captions",
+    ".shaka-text-container",
+    ".plyr__captions",
+    ".bmpui-ui-subtitle-overlay"
+  ].join(",");
+  const DOM_POLL_MS = 250;
+  const hiddenBoxes = new Set();
+  let domStyle = null;
+
+  /** Texto visible; null si el reproductor no tiene elementos de subtítulos. */
+  function domCaptionText() {
+    let nodes;
+    try { nodes = document.querySelectorAll(DOM_CAPTION_TEXT); } catch (_) { return null; }
+    if (!nodes || !nodes.length) return null;
+    const parts = [];
+    for (const node of nodes) {
+      const text = String(node.textContent || "").replace(/\s+/g, " ").trim();
+      if (text && !parts.includes(text)) parts.push(text);
+    }
+    return parts.join(" ").slice(0, 400);
+  }
+
+  /** Nexo dibuja el texto: el del sitio se vuelve transparente para no duplicarlo. */
+  function hideSiteCaptions() {
+    if (!domStyle || !domStyle.isConnected) {
+      try {
+        domStyle = document.createElement("style");
+        domStyle.textContent = DOM_CAPTION_BOXES + "{opacity:0 !important}";
+        (document.head || document.documentElement).appendChild(domStyle);
+      } catch (_) { domStyle = null; }
+    }
+    // Además en línea: una CSP estricta puede ignorar la hoja anterior.
+    let boxes = [];
+    try { boxes = document.querySelectorAll(DOM_CAPTION_BOXES); } catch (_) {}
+    for (const box of boxes) {
+      if (hiddenBoxes.has(box)) continue;
+      try { box.style.setProperty("opacity", "0", "important"); hiddenBoxes.add(box); } catch (_) {}
+    }
+  }
+
+  function showSiteCaptions() {
+    if (domStyle) {
+      try { domStyle.remove(); } catch (_) {}
+      domStyle = null;
+    }
+    for (const box of hiddenBoxes) {
+      try { box.style.removeProperty("opacity"); } catch (_) {}
+    }
+    hiddenBoxes.clear();
+  }
+
+  function youtubePlayer() {
+    let element = null;
+    try { element = document.getElementById("movie_player") || document.querySelector(".html5-video-player"); } catch (_) {}
+    if (!element) return null;
+    // API del reproductor de la página (Firefox: wrappedJSObject desde el mundo aislado).
+    const api = element.wrappedJSObject || element;
+    try {
+      return typeof api.getOption === "function" && typeof api.setOption === "function" ? api : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function youtubeTracks(api) {
+    try {
+      const list = api.getOption("captions", "tracklist");
+      return list && list.length ? Array.from(list) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /** Idioma pedido, si no una pista hecha por personas y si no la automática. */
+  function pickYoutubeTrack(tracks, lang) {
+    const code = track => String((track && track.languageCode) || "").toLowerCase();
+    const want = String(lang || "").toLowerCase();
+    return (want && want !== "multi" && tracks.find(track => code(track) === want || code(track).startsWith(want + "-"))) ||
+      tracks.find(track => String((track && track.kind) || "") !== "asr") ||
+      tracks[0] || null;
+  }
+
+  /** Activa los subtítulos de YouTube si el video tiene alguno. */
+  function enableYoutubeCaptions(lang, token) {
+    const api = youtubePlayer();
+    if (!api) return Promise.resolve(false);
+    try { api.loadModule("captions"); } catch (_) {}
+    return new Promise(resolve => {
+      let attempts = 0;
+      const check = () => {
+        if (!captions.active || token !== captions.token) { resolve(false); return; }
+        const tracks = youtubeTracks(api);
+        if (tracks.length) {
+          let current = null;
+          try { current = api.getOption("captions", "track"); } catch (_) {}
+          if (!current || !current.languageCode) {
+            const track = pickYoutubeTrack(tracks, lang);
+            try {
+              if (track) { api.setOption("captions", "track", track); captions.ytEnabled = true; }
+            } catch (_) {}
+          }
+          resolve(true);
+          return;
+        }
+        if (++attempts >= 10) { resolve(false); return; }
+        setTimeout(check, 300);
+      };
+      check();
+    });
+  }
+
+  /** Solo se apagan si los encendió Nexo: la elección del usuario se respeta. */
+  function disableYoutubeCaptions() {
+    if (!captions.ytEnabled) return;
+    captions.ytEnabled = false;
+    const api = youtubePlayer();
+    try { if (api) api.unloadModule("captions"); } catch (_) {}
+  }
+
+  function pollDomCaptions() {
+    if (!captions.dom) return;
+    if (document.visibilityState === "hidden" && !pipActive) return;
+    hideSiteCaptions();
+    const text = domCaptionText() || "";
+    if (text === captions.domText) return;
+    captions.domText = text;
+    sendToNexo({ type: "captions_text", text });
+  }
+
+  function startDomCaptions() {
+    stopDomWatch();
+    if (captions.recorder) stopRecording(true);
+    captions.choosing = false;
+    captions.dom = true;
+    captions.domText = "";
+    sendToNexo({ type: "captions_track", lang: "", source: "dom" });
+    clearInterval(captions.domTimer);
+    captions.domTimer = setInterval(pollDomCaptions, DOM_POLL_MS);
+    pollDomCaptions();
+  }
+
+  function stopDomCaptions() {
+    clearInterval(captions.domTimer);
+    captions.domTimer = 0;
+    captions.domText = "";
+    if (captions.dom) {
+      captions.dom = false;
+      showSiteCaptions();
+    }
+    disableYoutubeCaptions();
+  }
+
+  /*
+   * Sin pista ni texto en la página: si el usuario enciende después los
+   * subtítulos del propio reproductor, Nexo los toma (y deja el audio).
+   */
+  function startDomWatch() {
+    stopDomWatch();
+    captions.domChecks = 0;
+    captions.domWatch = setInterval(() => {
+      if (!captions.active || !captions.granted || captions.dom || captions.track || ++captions.domChecks > 180) {
+        stopDomWatch();
+        return;
+      }
+      if (domCaptionText()) startDomCaptions();
+    }, 1000);
+  }
+
+  function stopDomWatch() {
+    clearInterval(captions.domWatch);
+    captions.domWatch = 0;
+  }
+
+  // --- Elección de la fuente ------------------------------------------------
+
+  /*
+   * El script corre en todos los marcos: cada marco con un video en marcha se
+   * ofrece y Nexo concede los subtítulos al de mayor tamaño. El marco elegido
+   * usa, por orden: la pista del video, el texto que dibuja el reproductor y,
+   * con clave, el audio del video (Deepgram).
+   */
+  function stopSources(notify) {
+    captions.token++;
+    clearTimeout(captions.restartTimer);
+    captions.restartTimer = 0;
+    captions.choosing = false;
+    stopRecording(notify);
+    releaseTrack();
+    stopDomCaptions();
+    stopDomWatch();
+  }
+
+  function release() {
+    stopSources(true);
+    captions.granted = false;
+    sendToNexo({ type: "captions_release" });
+  }
+
+  function fallbackToAudio() {
+    captions.choosing = false;
+    // Si el usuario enciende después el CC del reproductor, se toma ese texto.
+    startDomWatch();
+    if (!captions.live) { captionError("need_key"); return; }
+    startRecording();
+  }
+
+  function fallbackAfterTrack() {
+    if (!captions.active || !captions.granted) return;
+    const token = captions.token;
+    captions.choosing = true;
+    if (domCaptionText() !== null) { startDomCaptions(); return; }
+    enableYoutubeCaptions(captions.lang, token).then(found => {
+      if (token !== captions.token || !captions.active || !captions.granted || captions.track || captions.dom) return;
+      if (found) startDomCaptions(); else fallbackToAudio();
+    });
+  }
+
+  function chooseSource() {
+    stopSources(false);
+    captions.video = captionVideo();
+    if (!captions.video) { release(); return; }
+    if (useTextTrack(captions.video)) return;
+    fallbackAfterTrack();
+  }
+
   function discoverCaptions() {
     if (!captions.active) return;
     const video = captionVideo();
     if (captions.granted && captions.video && (!captions.video.isConnected || captions.video.ended || video !== captions.video)) {
-      stopRecording(true); releaseTrack(); captions.granted = false;
-      sendToNexo({ type: "captions_release" });
+      release();
     }
     if (!captions.granted && video && !video.paused && !video.ended) {
       const rect = video.getBoundingClientRect();
@@ -735,26 +1014,53 @@
     }
   }
 
-  function setCaptions(active, live) {
-    captions.active = active === true;
-    captions.live = live === true;
-    if (!captions.active) {
-      stopRecording(false); releaseTrack(); captions.video = null; captions.granted = false; return;
+  /** Idempotente: Nexo reenvía la orden a cada marco que conecta sin reiniciar al dueño. */
+  function setCaptions(active, live, lang) {
+    if (active !== true) {
+      stopSources(false);
+      captions.active = false;
+      captions.granted = false;
+      captions.video = null;
+      return;
     }
+    const liveChanged = captions.live !== (live === true);
+    captions.active = true;
+    captions.live = live === true;
+    captions.lang = typeof lang === "string" && lang ? lang : "multi";
+    // Se añadió la clave mientras se esperaba: probar el audio.
+    if (captions.granted && liveChanged && captions.live && !captions.track && !captions.dom && !captions.recorder) startRecording();
     discoverCaptions();
   }
 
-  // Poll also discovers SPA replacement players and videos inside open Shadow DOM.
+  // El sondeo también descubre reproductores nuevos (SPA) y videos en Shadow DOM abierto.
   setInterval(discoverCaptions, 1000);
-  document.addEventListener("playing", () => {
-    discoverCaptions(); if (captions.granted) startRecording();
+  document.addEventListener("playing", event => {
+    discoverCaptions();
+    if (captions.granted && (!captions.video || event.target === captions.video)) startRecording();
   }, true);
+  // Grabar solo mientras el video suena. La pista y el texto del reproductor siguen activos en pausa.
   ["pause", "ended", "emptied"].forEach(type => document.addEventListener(type, event => {
-    if (captions.active && event.target === captions.video) {
-      stopRecording(true); releaseTrack(); captions.granted = false;
-      sendToNexo({ type: "captions_release" });
-    }
+    if (!captions.active || !captions.granted || event.target !== captions.video) return;
+    if (captions.recorder || (!captions.track && !captions.dom)) release();
   }, true));
+
+  // Otro video en el mismo reproductor (siguiente de YouTube, lista, etc.).
+  document.addEventListener("loadedmetadata", event => {
+    const video = event.target;
+    if (!captions.active || !captions.granted || captions.choosing || !video || typeof video.pause !== "function") return;
+    if (captions.video && video !== captions.video) return;
+    clearTimeout(captions.restartTimer);
+    captions.restartTimer = setTimeout(() => {
+      captions.restartTimer = 0;
+      if (!captions.active || !captions.granted || captions.choosing) return;
+      if (captions.dom) {
+        if (captions.ytEnabled) enableYoutubeCaptions(captions.lang, captions.token);
+        return;
+      }
+      // La pista era del video anterior: elegir de nuevo (también si antes no había).
+      if (captions.track || !captions.recorder) chooseSource();
+    }, 1200);
+  }, true);
 
   // ---------------------------------------------------------------
   // Estado hacia Nexo
@@ -893,17 +1199,14 @@
     }
 
     if (message.type === "captions") {
-      setCaptions(message.active === true, message.live === true);
+      setCaptions(message.active === true, message.live === true, message.lang);
     }
 
     if (message.type === "captions_grant" && captions.active && !captions.granted) {
-      captions.granted = true; captions.video = captionVideo();
-      if (!captions.video) { sendToNexo({ type: "captions_release" }); captions.granted = false; }
-      else if (!useTextTrack(captions.video)) {
-        if (captions.live) startRecording(); else captionError("need_key");
-      }
+      captions.granted = true;
+      chooseSource();
     }
-    if (message.type === "captions_restart" && captions.active && !captions.track) {
+    if (message.type === "captions_restart" && captions.active && !captions.track && !captions.dom) {
       stopRecording(false);
       startRecording();
     }
