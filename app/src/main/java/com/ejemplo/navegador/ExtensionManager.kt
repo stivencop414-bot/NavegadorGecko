@@ -1352,8 +1352,11 @@ object ExtensionManager {
             setSession(session)
         }
 
-        val sheet = android.widget.LinearLayout(activity).apply {
+        // Se cierra arrastrando hacia abajo desde la parte superior (asa y encabezado);
+        // el resto de gestos son de la página del panel.
+        val sheet = DragDismissLayout(activity).apply {
             orientation = android.widget.LinearLayout.VERTICAL
+            dragZonePx = dp(if (extension?.id == PHANTOMSHIELD_ID) 30f else 58f)
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(p.surface)
                 cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
@@ -1402,6 +1405,8 @@ object ExtensionManager {
         }
         sheet.addView(view, android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
+        sheet.dimWindow = dialog.window
+        sheet.onDismiss = { if (dialog.isShowing) runCatching { dialog.dismiss() } }
         dialog.apply {
             requestWindowFeature(Window.FEATURE_NO_TITLE)
             setTitle(extension?.metaData?.name ?: "Extensión")

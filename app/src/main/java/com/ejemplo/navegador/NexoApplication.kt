@@ -46,6 +46,7 @@ class NexoApplication : Application() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         TabManager.onTrimMemory(level)
+        if (level >= 60 /* MODERATE */) SiteIconStore.trimMemory()
         RemoteImageLoader.trimMemory(level)
     }
 }

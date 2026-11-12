@@ -88,6 +88,8 @@ dependencies {
     implementation("org.mozilla.geckoview:geckoview-omni:159.0.20261102144711")
     implementation("androidx.core:core:1.19.1")
     implementation("androidx.documentfile:documentfile:1.1.0")
+    // Selector de pestañas: tarjetas recicladas y deslizar para cerrar.
+    implementation("androidx.recyclerview:recyclerview:1.4.0")
     // WebSocket para los subtítulos en vivo (Deepgram).
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 

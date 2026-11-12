@@ -291,12 +291,77 @@ object TabManager {
         tabForSession(session)?.let { closeTab(it.id) }
     }
 
+    /** Pestaña cerrada que se puede reabrir (Deshacer en el selector o desde el menú). */
+    class ClosedTab(
+        val id: String,
+        val url: String,
+        val title: String,
+        val isPrivate: Boolean,
+        val groupName: String?,
+        val desktopMode: Boolean,
+        val sessionState: String?,
+        val networkProfile: TabNetworkProfile?,
+        val index: Int,
+        val wasActive: Boolean,
+        val preview: android.graphics.Bitmap?,
+        val closedAt: Long = android.os.SystemClock.elapsedRealtime()
+    )
+
+    private val recentlyClosed = java.util.ArrayDeque<ClosedTab>()
+    private const val MAX_CLOSED = 10
+    /** Las privadas solo se pueden reabrir durante unos segundos (para deshacer). */
+    private const val PRIVATE_UNDO_MS = 15_000L
+
+    private fun pruneClosed() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        recentlyClosed.removeIf { it.isPrivate && now - it.closedAt > PRIVATE_UNDO_MS }
+        while (recentlyClosed.size > MAX_CLOSED) recentlyClosed.removeFirst()
+    }
+
+    fun lastClosed(): ClosedTab? {
+        pruneClosed()
+        return recentlyClosed.peekLast()
+    }
+
+    /** Reabre la última pestaña cerrada (o [id]) con su historial cuando se conservó. */
+    fun reopenClosed(id: String? = null, activate: Boolean = true): BrowserTab? {
+        pruneClosed()
+        val entry = (if (id == null) recentlyClosed.peekLast() else recentlyClosed.lastOrNull { it.id == id }) ?: return null
+        recentlyClosed.remove(entry)
+        val tab = BrowserTab(
+            id = entry.id.takeIf { candidate -> tabs.none { it.id == candidate } } ?: UUID.randomUUID().toString(),
+            url = entry.url,
+            title = entry.title,
+            isPrivate = entry.isPrivate,
+            groupName = entry.groupName,
+            desktopMode = entry.desktopMode,
+            networkProfile = entry.networkProfile,
+            sessionState = entry.sessionState
+        )
+        tabs.add(entry.index.coerceIn(0, tabs.size), tab)
+        entry.preview?.takeIf { !entry.isPrivate }?.let { TabPreviewStore.restore(requireContext(), tab.id, it) }
+        listener?.onTabCountChanged(tabs.size)
+        persist()
+        if (activate || entry.wasActive) switchTo(tab.id)
+        return tab
+    }
+
     fun closeTab(id: String) {
         val index = tabs.indexOfFirst { it.id == id }
         if (index < 0) return
 
         val removed = tabs[index]
         val wasActive = removed.id == activeId
+        // Burner no se reabre: al cerrar su última pestaña se borran sus datos.
+        if (removed.burnerId == null && !BrowserPrefs.isNexoHome(removed.url) && UrlSafety.isAppNavigable(removed.url)) {
+            recentlyClosed.addLast(ClosedTab(
+                removed.id, removed.url, removed.title, removed.isPrivate, removed.groupName,
+                removed.desktopMode, removed.sessionState.takeUnless { removed.isPrivate },
+                removed.networkProfile?.takeIf { it.type != "invalid" }, index, wasActive,
+                if (removed.isPrivate) null else TabPreviewStore.cached(removed.id)
+            ))
+            pruneClosed()
+        }
         activationHistory.remove(id)
         crashTimes.remove(id)
 
@@ -372,6 +437,11 @@ object TabManager {
 
     fun notifyMessage(message: String) {
         listener?.onMessage(message)
+    }
+
+    /** Vuelve a dibujar la pestaña activa (p. ej. cuando su buzón Burner ya tiene dirección). */
+    fun refreshActive() {
+        activeTab()?.let { listener?.onTabChanged(it) }
     }
 
     fun canGoBackOrPrevious(): Boolean =
@@ -1261,7 +1331,7 @@ object TabManager {
      */
     fun onTrimMemory(level: Int) {
         if (!initialized) return
-        TabPreviewStore.trimMemory()
+        TabPreviewStore.trimMemory(level)
         val critical = level == 15 /* RUNNING_CRITICAL */ || level >= 80 /* COMPLETE */
         if (!critical) return
         tabs.filter {

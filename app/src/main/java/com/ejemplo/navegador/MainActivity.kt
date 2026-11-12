@@ -104,8 +104,8 @@ class MainActivity :
     private lateinit var findInput: EditText
     private lateinit var findCount: TextView
 
-    /** Última miniatura automática por pestaña (evita capturar en cada carga). */
-    private val lastAutoPreview = mutableMapOf<String, Long>()
+    /** Última miniatura automática por pestaña: dirección y momento. */
+    private val lastAutoPreview = mutableMapOf<String, Pair<String, Long>>()
     private val idlePreview = Runnable { captureCurrentTabPreview() }
 
     override val hostActivity: Activity get() = this
@@ -240,6 +240,9 @@ class MainActivity :
             }
         }
         findViewById<Button>(R.id.menuButton).setOnClickListener { showMenu(it) }
+        privateBanner.setOnClickListener {
+            TabManager.activeTab()?.burnerId?.let { BurnerMailbox.show(this, it) }
+        }
         miniPlayerButton.setOnClickListener { startMiniPlayer() }
         captionsButton.setOnClickListener { toggleCaptions() }
         captionsButton.setOnLongClickListener {
@@ -510,21 +513,36 @@ class MainActivity :
         startActivity(Intent(this, screen))
     }
 
-    private fun captureCurrentTabPreview() {
+    /**
+     * [force]: el usuario abre el selector, se captura aunque suene un video.
+     * La imagen solo se guarda si al llegar sigue a la vista la misma pestaña
+     * con la misma página: antes una captura tardía podía quedar asignada a la
+     * pestaña equivocada o mostrar la página anterior.
+     */
+    private fun captureCurrentTabPreview(force: Boolean = false) {
         val tab = TabManager.activeTab() ?: return
+        val session = attachedSession ?: return
         if (
             tab.isPrivate ||
+            tab.session !== session ||
             BrowserPrefs.isNexoHome(tab.url) ||
             tab.isLoading ||
-            BrowserMediaController.isPlaying(tab.id) ||
+            isInPictureInPictureMode ||
+            startPage.visibility == View.VISIBLE ||
+            (!force && BrowserMediaController.isPlaying(tab.id)) ||
             geckoView.width <= 0 ||
             geckoView.height <= 0
         ) return
+        val url = tab.url
         runCatching {
             geckoView.capturePixels().accept(
                 { bitmap ->
-                    if (bitmap != null) {
+                    if (bitmap == null) return@accept
+                    if (attachedSession === session && tab.session === session && tab.url == url) {
                         TabPreviewStore.save(applicationContext, tab.id, bitmap)
+                        lastAutoPreview[tab.id] = url to android.os.SystemClock.elapsedRealtime()
+                    } else {
+                        bitmap.recycle()
                     }
                 },
                 { _ -> Unit }
@@ -533,21 +551,19 @@ class MainActivity :
     }
 
     /**
-     * Miniatura automática al terminar de cargar: como mucho una cada 30 s
-     * por pestaña y con la página ya asentada. Capturar la vista completa en
-     * cada carga costaba CPU y memoria (un bitmap de varios MB cada vez).
+     * Miniatura automática al terminar de cargar, con la página ya asentada:
+     * siempre que cambia la página y, en la misma, como mucho una cada 30 s.
      */
     private fun scheduleIdlePreview(tab: BrowserTab) {
         geckoView.removeCallbacks(idlePreview)
-        val last = lastAutoPreview[tab.id] ?: 0L
+        val (lastUrl, lastAt) = lastAutoPreview[tab.id] ?: ("" to 0L)
         val now = android.os.SystemClock.elapsedRealtime()
-        if (now - last < 30_000L) return
-        lastAutoPreview[tab.id] = now
-        geckoView.postDelayed(idlePreview, 1_500L)
+        if (lastUrl == tab.url && now - lastAt < 30_000L) return
+        geckoView.postDelayed(idlePreview, 1_200L)
     }
 
     private fun showTabsDialog() {
-        captureCurrentTabPreview()
+        captureCurrentTabPreview(force = true)
         TabSwitcher.show(this) { private -> viewModel.newTab(private) }
     }
 
@@ -954,7 +970,12 @@ class MainActivity :
     }
 
     private fun renderTab(tab: BrowserTab) {
-        privateBanner.text = if(tab.burnerId != null) "Burner · identidad efímera" else "Navegación privada"
+        // Burner: la franja muestra el correo temporal y abre su buzón.
+        privateBanner.text = if (tab.burnerId != null) {
+            BurnerMailbox.address(tab.burnerId)?.let { "Burner · $it  ›" } ?: "Burner · identidad efímera · buzón  ›"
+        } else "Navegación privada"
+        privateBanner.isClickable = tab.burnerId != null
+        privateBanner.contentDescription = if (tab.burnerId != null) "Abrir el buzón de esta identidad Burner" else null
         ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),tab.burnerId != null || tab.networkProfile != null)
         if (!omnibox.hasFocus()) renderOmnibox(tab)
         updateStartPage(tab)
@@ -1015,7 +1036,7 @@ class MainActivity :
     }
 
     override fun onStop() {
-        captureCurrentTabPreview()
+        geckoView.removeCallbacks(idlePreview)
 
         if (!isInPictureInPictureMode) {
             val tab = TabManager.activeTab()

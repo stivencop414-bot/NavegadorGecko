@@ -35,14 +35,17 @@ object NexoSheets {
     private fun dp(activity: Activity, value: Float): Int =
         (value * activity.resources.displayMetrics.density).toInt()
 
-    /** Muestra [content] en una hoja anclada abajo con esquinas superiores de 28dp. */
+    /**
+     * Muestra [content] en una hoja anclada abajo con esquinas superiores de
+     * 28dp. Se cierra tocando fuera, con Atrás o arrastrándola hacia abajo.
+     */
     fun show(activity: Activity, content: View): Dialog {
         val p = ThemeManager.palette(activity)
         val dialog = Dialog(activity)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         val radius = dp(activity, 28f).toFloat()
-        val sheet = LinearLayout(activity).apply {
+        val sheet = DragDismissLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 setColor(p.surface)
@@ -51,10 +54,11 @@ object NexoSheets {
             setPadding(0, dp(activity, 10f), 0, dp(activity, 16f))
         }
 
-        // Asa superior.
+        // Asa superior: indica que la hoja se puede arrastrar.
         sheet.addView(
             View(activity).apply {
                 background = ThemeManager.rounded(activity, p.outline, 3f)
+                contentDescription = "Arrastra hacia abajo para cerrar"
                 layoutParams = LinearLayout.LayoutParams(dp(activity, 36f), dp(activity, 4f)).apply {
                     gravity = Gravity.CENTER_HORIZONTAL
                     bottomMargin = dp(activity, 10f)
@@ -62,14 +66,18 @@ object NexoSheets {
             }
         )
 
+        val scroll = MaxHeightScrollView(activity, (activity.resources.displayMetrics.heightPixels * 0.82f).toInt()).apply {
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            addView(content)
+        }
         sheet.addView(
-            MaxHeightScrollView(activity, (activity.resources.displayMetrics.heightPixels * 0.82f).toInt()).apply {
-                isVerticalScrollBarEnabled = false
-                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-                addView(content)
-            },
+            scroll,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         )
+        sheet.scrollable = scroll
+        sheet.dimWindow = dialog.window
+        sheet.onDismiss = { if (dialog.isShowing) runCatching { dialog.dismiss() } }
 
         dialog.setContentView(sheet)
         dialog.window?.apply {
