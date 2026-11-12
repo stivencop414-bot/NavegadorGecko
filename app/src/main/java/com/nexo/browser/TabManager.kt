@@ -692,6 +692,8 @@ object TabManager {
     }
 
     private fun closeSession(session: GeckoSession) {
+        // Includes a killed/crashed session: stop capture before waiting for recovery.
+        LiveCaptions.stop(session)
         // Intentional closes must never call recovery or open another window.
         session.contentDelegate = null
         session.navigationDelegate = null
