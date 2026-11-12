@@ -1689,7 +1689,7 @@ class MainActivity :
     }
 
     override fun onUserLeaveHint() {
-        if (MigrationMode.enabled(this)) { super.onUserLeaveHint(); return }
+        if (MigrationMode.enabled(this) || PlaybackAudioCapture.awaitingConsent()) { super.onUserLeaveHint(); return }
         val tab = TabManager.activeTab()
 
         /*

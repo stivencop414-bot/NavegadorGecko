@@ -19,6 +19,7 @@ object PlaybackAudioCapture {
     internal data class Grant(val session: GeckoSession, val token: Any, val data: Intent)
     private var grant: Grant? = null
     internal var service: PlaybackCaptureService? = null
+    fun awaitingConsent(): Boolean = pending != null
     fun request(activity: MainActivity) {
         if (Build.VERSION.SDK_INT < 29) {
             ToastMessage.show(activity, "La captura de reproducción requiere Android 10 o posterior."); return
