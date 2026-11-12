@@ -62,6 +62,7 @@ function harness(extra = {}) {
     Object.assign(v, { paused: false, ended: false, error: null, currentSrc: 'test.webm', readyState: 4,
       videoWidth: 640, videoHeight: 360, currentTime: 50, plays: 0,
       seekable: { length: 1, start: () => 20, end: () => 80 } });
+    if (extra.captureFactory) v.captureStream = () => extra.captureFactory(v);
     v.pause = () => { v.paused = true; v.dispatchEvent(new Event('pause')); };
     v.play = () => { v.plays++; v.paused = false; return Promise.resolve(); };
     videos.push(v); return v;
@@ -72,7 +73,7 @@ function harness(extra = {}) {
     leave: () => onMessage({ type: 'pip_mode', active: false }),
     command: command => onMessage({ type: 'pip_command', command }),
     lifecycle: state => onMessage({ type: 'lifecycle', state }),
-    captions: (active, live = true, lang) => onMessage({ type: 'captions', active, live, lang }),
+    captions: (active, live = true, lang) => { onMessage({ type: 'captions', active, live, lang }); if (active) onMessage({ type: 'captions_grant' }); },
     message: value => onMessage(value),
     fire: (type, target) => { const event = new Event(type); Object.defineProperty(event, 'target', { value: target }); document.dispatchEvent(event); },
     changed: () => document.dispatchEvent(new Event('loadedmetadata')) };
@@ -220,24 +221,33 @@ test('a video the user had paused before leaving stays paused', () => {
 });
 
 function audioMocks(state = 'running') {
-  const recorders = [], sources = [];
+  const recorders = [], sources = [], tracks = [];
+  class Track extends EventTarget {
+    stop() { this.stopped = true; }
+    getSettings() { return {sampleRate:48000, channelCount:2}; }
+  }
+  class Stream {
+    constructor(audio) { this.audio = audio; }
+    getAudioTracks() { return this.audio; }
+    getVideoTracks() { return []; }
+    getTracks() { return this.audio; }
+  }
   class FakeContext {
     constructor() { this.state = state; }
     resume() { return Promise.resolve(); }
     close() { this.closed = true; }
-    createMediaElementSource(video) { const node = { video, links: 0, connect() { this.links++; }, disconnect() { this.links--; } }; sources.push(node); return node; }
-    createMediaStreamDestination() { return { stream: {}, connect() {} }; }
-    createAnalyser() { return { fftSize: 512, connect() {}, getByteTimeDomainData: data => data.fill(150) }; }
-    get destination() { return {}; }
+    createMediaElementSource() { throw Error('Must never reroute the media element'); }
+    createMediaStreamSource(stream) { const node = { stream, links: 0, connect() { this.links++; }, disconnect() { this.links = 0; } }; sources.push(node); return node; }
+    createAnalyser() { return { fftSize: 512, getByteTimeDomainData: data => data.fill(150) }; }
   }
   class FakeRecorder {
     static isTypeSupported(type) { return type === 'audio/webm;codecs=opus'; }
-    constructor(stream, options) { this.options = options; this.state = 'inactive'; recorders.push(this); }
-    start(slice) { this.slice = slice; this.state = 'recording'; }
-    stop() { this.state = 'inactive'; }
+    constructor(stream, options) { this.stream=stream; this.mimeType=options.mimeType; this.options=options; this.state='inactive'; recorders.push(this); }
+    start(slice) { this.slice=slice; this.state='recording'; }
+    stop() { this.state='inactive'; }
   }
-  const window = {};
-  return { recorders, sources, extra: { AudioContext: FakeContext, MediaRecorder: FakeRecorder } };
+  return { recorders, sources, tracks, extra: { AudioContext: FakeContext, MediaRecorder: FakeRecorder, MediaStream: Stream,
+    captureFactory: () => { const track=new Track(); tracks.push(track); return new Stream([track]); } } };
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
@@ -257,20 +267,20 @@ test('live captions record compressed audio only while the video plays', async (
   h.fire('pause', v);
   assert.equal(recorder.state, 'inactive');
   assert.ok(h.reports.some(x => x.type === 'captions_stop'));
-  h.fire('playing', v); await flush(); await flush();
+  h.fire('playing', v); h.message({type:'captions_grant'}); await flush(); await flush();
   assert.equal(audio.recorders.length, 2, 'a new recording starts with its own header');
-  assert.equal(audio.sources.length, 1, 'the element source is reused');
+  assert.equal(audio.sources.length, 2, 'each copied stream has a fresh meter');
   h.captions(false);
   assert.equal(audio.recorders[1].state, 'inactive');
 });
 
-test('a suspended audio context never reroutes (and silences) the video', async () => {
+test('a suspended meter does not prevent audio capture or reroute the video', async () => {
   const audio = audioMocks('suspended');
   const h = harness(audio.extra); h.video();
   h.window.AudioContext = audio.extra.AudioContext;
   h.captions(true); await flush(); h.tick(900); await flush(); await flush();
-  assert.equal(audio.sources.length, 0);
-  assert.ok(h.reports.some(x => x.type === 'captions_error' && x.code === 'suspended'));
+  assert.equal(audio.recorders.length, 1); h.tick(2000);
+  assert.ok(h.reports.some(x => x.type === 'captions_status' && x.code === 'meter_unavailable'));
 });
 
 test('going to the background stops captions recording and returning resumes it', async () => {
@@ -317,11 +327,48 @@ test('a restart after a network drop starts a fresh recording and stopping detac
   const h = harness(audio.extra); h.video();
   h.window.AudioContext = audio.extra.AudioContext;
   h.captions(true); await flush(); await flush();
-  assert.equal(audio.sources[0].links, 3, 'speakers + recorder + level meter');
+  assert.equal(audio.sources[0].links, 1, 'meter only; no speakers');
   h.message({ type: 'captions_restart' }); await flush(); await flush();
   assert.equal(audio.recorders.length, 2);
   h.captions(false);
-  assert.equal(audio.sources[0].links, 1, 'only the speaker output stays connected');
+  assert.ok(audio.sources.every(s=>s.links === 0));
+  assert.ok(audio.tracks.every(t=>t.stopped));
+});
+
+test('frames offer a player but cannot capture before native grants ownership', async () => {
+  const audio=audioMocks(), h=harness(audio.extra); h.video();
+  h.message({type:'captions',active:true,live:true}); await flush();
+  assert.ok(h.reports.some(x=>x.type==='captions_offer')); assert.equal(audio.recorders.length,0);
+  h.message({type:'captions_grant'}); await flush(); assert.equal(audio.recorders.length,1);
+  h.message({type:'captions_grant'}); await flush(); assert.equal(audio.recorders.length,1);
+});
+test('late Blob reads cannot send audio after disable', async () => {
+  const audio=audioMocks(),h=harness(audio.extra);h.video();h.captions(true);await flush();
+  let resolve; const promise=new Promise(r=>resolve=r);
+  audio.recorders[0].ondataavailable({data:{size:3,arrayBuffer:()=>promise}});
+  h.captions(false);resolve(new Uint8Array([1,2,3]).buffer);await flush();
+  assert.equal(h.reports.filter(x=>x.type==='captions_audio').length,0);assert.ok(audio.tracks.every(t=>t.stopped));
+});
+test('a dynamically inserted player is discovered after activation', () => {
+  const h=harness();h.message({type:'captions',active:true,live:true});h.tick(1000);
+  assert.equal(h.reports.filter(x=>x.type==='captions_offer').length,0);
+  h.video();h.tick(1000);assert.ok(h.reports.some(x=>x.type==='captions_offer'));
+});
+test('unsupported capture and MIME report errors without touching player audio', async () => {
+  const h=harness();h.video();h.captions(true);await flush();
+  assert.ok(h.reports.some(x=>x.type==='captions_error' && x.code==='unsupported'));
+  const audio=audioMocks();audio.extra.MediaRecorder.isTypeSupported=()=>false;
+  const h2=harness(audio.extra);h2.video();h2.captions(true);await flush();
+  assert.ok(h2.reports.some(x=>x.type==='captions_error'&&x.code==='mime'));assert.equal(audio.recorders.length,0);
+});
+test('Blob completion order cannot reorder the container byte stream', async () => {
+  const audio=audioMocks(), h=harness(audio.extra);h.video();h.captions(true);await flush();
+  const recorder=audio.recorders[0];let first;
+  recorder.ondataavailable({data:{size:1,arrayBuffer:()=>new Promise(r=>first=r)}});
+  recorder.ondataavailable({data:{size:1,arrayBuffer:async()=>new Uint8Array([2]).buffer}});
+  await flush();assert.equal(h.reports.filter(x=>x.type==='captions_audio').length,0);
+  first(new Uint8Array([1]).buffer);await flush();await flush();
+  assert.deepEqual(h.reports.filter(x=>x.type==='captions_audio').map(x=>x.data),['AQ==','Ag==']);
 });
 
 // --- Subtítulos: líneas HLS que llegan tarde y texto dibujado por el reproductor ---
@@ -418,4 +465,44 @@ test('a new video in the same player chooses the caption source again', async ()
   h.fire('loadedmetadata', v); h.tick(1300); await flush();
   assert.ok(h.reports.some(x => x.type === 'captions_track' && x.source === 'track'));
   assert.ok(h.reports.some(x => x.type === 'captions_cues'));
+});
+
+// --- Fusión con el protocolo de oferta/concesión ---
+
+test('the order re-sent to every frame does not restart the owner recording', async () => {
+  const audio = audioMocks();
+  const h = harness(audio.extra); h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  h.captions(true); await flush(); await flush();
+  assert.equal(audio.recorders.length, 1);
+  // Nexo reenvía la orden cuando conecta otro marco (p. ej. un iframe de anuncio).
+  h.message({ type: 'captions', active: true, live: true, lang: 'multi' }); await flush(); await flush();
+  assert.equal(audio.recorders.length, 1, 'no new recording');
+  assert.equal(audio.recorders[0].state, 'recording');
+  assert.equal(h.reports.filter(x => x.type === 'captions_start').length, 1);
+});
+
+test('a frame without the grant only offers: it never reads text or records', async () => {
+  const audio = audioMocks();
+  const h = harness(audio.extra); h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  h.document.querySelectorAll = selector => selector.includes('.ytp-caption-segment') ? [{ textContent: 'Hola' }] : [];
+  h.message({ type: 'captions', active: true, live: true }); await flush(); h.tick(2100); await flush();
+  assert.ok(h.reports.some(x => x.type === 'captions_offer'));
+  assert.equal(h.reports.some(x => x.type === 'captions_text' || x.type === 'captions_start' || x.type === 'captions_track'), false);
+  assert.equal(audio.recorders.length, 0);
+});
+
+test('with the grant, the player text wins over audio capture (no Deepgram minutes)', async () => {
+  const audio = audioMocks();
+  const h = harness(audio.extra); h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  h.document.querySelectorAll = selector => selector.includes('.ytp-caption-segment') ? [{ textContent: 'Hola' }] : [];
+  h.captions(true, true); await flush(); h.tick(300);
+  assert.ok(h.reports.some(x => x.type === 'captions_track' && x.source === 'dom'));
+  assert.equal(h.reports.filter(x => x.type === 'captions_text').pop().text, 'Hola');
+  assert.equal(audio.recorders.length, 0);
+  // Pausar no suelta los subtítulos leídos del reproductor.
+  h.fire('pause', h.document.getElementsByTagName('video')[0]);
+  assert.equal(h.reports.some(x => x.type === 'captions_release'), false);
 });

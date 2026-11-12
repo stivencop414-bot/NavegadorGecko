@@ -237,6 +237,34 @@
                     android:layout_height="1dp"
                     android:tag="divider" />
                 <Switch
+                    android:id="@+id/dockGesturesSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Gestos en la barra inferior (cambiar de pestaña)"
+                    android:textSize="15sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+                <Switch
+                    android:id="@+id/parallelDownloadsSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="54dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:switchPadding="16dp"
+                    android:text="Descargas en varias conexiones"
+                    android:textSize="15sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+                <Switch
                     android:id="@+id/desktopDefaultSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -679,6 +707,11 @@
                     android:textSize="15sp" />
             </LinearLayout>
 
+            <Button
+                android:id="@+id/transferProfileButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Transferir perfil entre paquetes" />
             <TextView
                 android:id="@+id/aboutText"
                 android:layout_width="match_parent"

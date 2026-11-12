@@ -526,10 +526,9 @@
    * graba mientras el video se reproduce en primer plano.
    */
   const CAPTION_SLICE_MS = 250;
-  const audioGraphs = new WeakMap();
   const captions = {
-    active: false, live: false, lang: "multi", choosing: false, token: 0,
-    video: null, recorder: null, silentTimer: 0,
+    active: false, live: false, lang: "multi", granted: false, choosing: false, token: 0,
+    video: null, recorder: null, silentTimer: 0, epoch: 0, stream: null, meter: null,
     track: null, trackMode: "", trackTimer: 0, knownCues: 0,
     dom: false, domTimer: 0, domText: "", domWatch: 0, domChecks: 0, ytEnabled: false,
     restartTimer: 0
@@ -564,110 +563,105 @@
     return btoa(binary);
   }
 
-  async function audioGraph(video) {
-    const known = audioGraphs.get(video);
-    if (known) return known;
-    const Context = window.AudioContext || window.webkitAudioContext;
-    if (typeof Context !== "function" || typeof MediaRecorder !== "function") throw new Error("unsupported");
-    const context = new Context();
-    if (context.state !== "running") {
-      try { await Promise.race([context.resume(), new Promise(resolve => setTimeout(resolve, 800))]); } catch (_) {}
-    }
-    // Sin un contexto en marcha, desviar el audio dejaría el video en silencio.
-    if (context.state !== "running") {
-      try { context.close(); } catch (_) {}
-      throw new Error("suspended");
-    }
-    const source = context.createMediaElementSource(video);
-    // La salida normal se conserva para siempre: el video sigue sonando igual.
-    source.connect(context.destination);
-    const destination = context.createMediaStreamDestination();
-    const analyser = context.createAnalyser();
-    analyser.fftSize = 512;
-    const graph = { context, source, destination, analyser, tapped: false };
-    audioGraphs.set(video, graph);
-    return graph;
-  }
-
-  /** Rama de captura conectada solo mientras se graba; fuera de eso no hay trabajo extra. */
-  function tap(graph, on) {
-    if (!graph || graph.tapped === on) return;
-    try {
-      if (on) { graph.source.connect(graph.destination); graph.source.connect(graph.analyser); }
-      else { graph.source.disconnect(graph.destination); graph.source.disconnect(graph.analyser); }
-      graph.tapped = on;
-    } catch (_) {}
-  }
-
+  // Capture a copy of the media tracks. Never reroute the element through Web Audio:
+  // cross-origin MediaElementAudioSourceNode is silent by specification.
   function stopRecording(notify) {
+    ++captions.epoch;
     const recorder = captions.recorder;
     captions.recorder = null;
     clearTimeout(captions.silentTimer);
-    captions.silentTimer = 0;
-    if (captions.video) tap(audioGraphs.get(captions.video), false);
     if (recorder) {
-      try { if (recorder.state !== "inactive") recorder.stop(); } catch (_) {}
-      if (notify) sendToNexo({ type: "captions_stop" });
+      try { recorder.stop(); } catch (_) {}
     }
+    for (const track of captions.stream?.getTracks() || []) track.stop();
+    captions.stream = null;
+    if (captions.meter) {
+      try { captions.meter.source.disconnect(); captions.meter.context.close(); } catch (_) {}
+      captions.meter = null;
+    }
+    if (notify && recorder) sendToNexo({ type: "captions_stop" });
   }
 
-  /** Un video protegido (DRM) o de otro origen sin permiso entrega silencio. */
-  function watchSilence(graph, recorder) {
-    const samples = new Uint8Array(graph.analyser.fftSize);
-    let checks = 0;
-    let heard = false;
-    const check = () => {
-      if (captions.recorder !== recorder) return;
-      graph.analyser.getByteTimeDomainData(samples);
-      for (const value of samples) if (Math.abs(value - 128) > 2) { heard = true; break; }
-      checks++;
-      if (heard) return;
-      if (checks >= 6) { captionError("silent"); return; }
+  function watchSilence(stream, recorder) {
+    const Context = window.AudioContext || window.webkitAudioContext;
+    if (!Context) return;
+    try {
+      const context = new Context();
+      const source = context.createMediaStreamSource(stream);
+      const analyser = context.createAnalyser();
+      source.connect(analyser); // no connection to speakers; never duplicate audio
+      captions.meter = { context, source };
+      context.resume().catch(() => {});
+      const samples = new Uint8Array(analyser.fftSize);
+      let checks = 0;
+      const check = () => {
+        if (captions.recorder !== recorder) return;
+        if (context.state !== "running") {
+          sendToNexo({ type: "captions_status", code: "meter_unavailable" });
+          return;
+        }
+        analyser.getByteTimeDomainData(samples);
+        if (samples.some(value => Math.abs(value - 128) > 2)) {
+          sendToNexo({ type: "captions_status", code: "signal" }); return;
+        }
+        if (++checks >= 6) { captionError("silent"); return; }
+        captions.silentTimer = setTimeout(check, 2000);
+      };
       captions.silentTimer = setTimeout(check, 2000);
-    };
-    captions.silentTimer = setTimeout(check, 2000);
+    } catch (_) { sendToNexo({ type: "captions_status", code: "meter_unavailable" }); }
   }
 
   async function startRecording() {
-    if (!captions.active || !captions.live || captions.choosing || captions.track || captions.dom || captions.recorder) return;
-    const video = captions.video && captions.video.isConnected ? captions.video : captionVideo();
-    if (!video) { captionError("no_video"); return; }
-    captions.video = video;
-    if (video.paused || video.ended || document.visibilityState === "hidden") return;
-    let graph;
-    try {
-      graph = await audioGraph(video);
-    } catch (error) {
-      captionError(error && error.message === "suspended" ? "suspended" : "unsupported");
-      return;
+    if (!captions.active || !captions.granted || !captions.live || captions.choosing || captions.track || captions.dom || captions.recorder) return;
+    const video = captions.video;
+    if (!video || !video.isConnected || video.paused || video.ended || document.visibilityState === "hidden") {
+      sendToNexo({ type: "captions_status", code: "paused" }); return;
     }
-    if (!captions.active || captions.recorder || captions.track || captions.dom || video.paused) return;
-    tap(graph, true);
-    const mimeType = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus"]
-      .find(type => MediaRecorder.isTypeSupported(type)) || "";
-    let recorder;
+    const epoch = ++captions.epoch;
     try {
-      recorder = new MediaRecorder(graph.destination.stream, mimeType ? { mimeType, audioBitsPerSecond: 24000 } : undefined);
-    } catch (_) {
-      captionError("unsupported");
-      return;
-    }
-    captions.recorder = recorder;
-    recorder.ondataavailable = event => {
-      if (!event.data || !event.data.size || captions.recorder !== recorder) return;
-      event.data.arrayBuffer().then(buffer => {
-        if (captions.recorder === recorder) sendToNexo({ type: "captions_audio", data: bytesToBase64(buffer) });
-      }).catch(() => {});
-    };
-    sendToNexo({ type: "captions_start", mime: mimeType });
-    try {
+      const capture = video.captureStream || video.mozCaptureStream;
+      if (!capture || typeof MediaRecorder !== "function") throw new Error("unsupported");
+      const mimeType = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus"].find(type => MediaRecorder.isTypeSupported(type));
+      if (!mimeType) throw new Error("mime");
+      const captured = capture.call(video);
+      const tracks = captured.getAudioTracks();
+      // Release captured video tracks immediately. The underlying player is unaffected.
+      for (const track of captured.getVideoTracks()) track.stop();
+      if (!tracks.length) { for (const t of captured.getTracks()) t.stop(); throw new Error("no_audio"); }
+      const stream = new MediaStream(tracks);
+      if (epoch !== captions.epoch || !captions.active) { stream.getTracks().forEach(t => t.stop()); return; }
+      captions.stream = stream;
+      const recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 24000 });
+      captions.recorder = recorder;
+      let reads = Promise.resolve(), queuedReads = 0;
+      recorder.ondataavailable = event => {
+        if (!event.data?.size || captions.recorder !== recorder) return;
+        if (++queuedReads > 40) { stopRecording(false); captionError("capture"); return; }
+        // Preserve container byte order even when Blob reads resolve at different speeds.
+        reads = reads.then(() => {
+          if (captions.recorder !== recorder || epoch !== captions.epoch) return null;
+          return event.data.arrayBuffer();
+        }).then(buffer => {
+          --queuedReads;
+          if (buffer && captions.recorder === recorder && epoch === captions.epoch)
+            sendToNexo({ type: "captions_audio", data: bytesToBase64(buffer) });
+        }).catch(() => { --queuedReads; if (captions.recorder === recorder) { stopRecording(false); captionError("capture"); } });
+      };
+      recorder.onerror = () => {
+        if (captions.recorder !== recorder) return;
+        stopRecording(false); captionError("capture");
+      };
+      tracks.forEach(t => t.addEventListener("ended", () => {
+        if (captions.recorder === recorder) { stopRecording(true); discoverCaptions(); }
+      }));
+      sendToNexo({ type: "captions_start", mime: recorder.mimeType || mimeType,
+        rate: tracks[0].getSettings?.().sampleRate || 0, channels: tracks[0].getSettings?.().channelCount || 0 });
       recorder.start(CAPTION_SLICE_MS);
-    } catch (_) {
-      captions.recorder = null;
-      captionError("unsupported");
-      return;
+      watchSilence(stream, recorder);
+    } catch (error) {
+      if (epoch !== captions.epoch) return;
+      stopRecording(false); captionError(error.message || "unsupported");
     }
-    watchSilence(graph, recorder);
   }
 
   // --- Pista de subtítulos del propio video: sin Deepgram ---------------
@@ -943,7 +937,7 @@
     stopDomWatch();
     captions.domChecks = 0;
     captions.domWatch = setInterval(() => {
-      if (!captions.active || captions.dom || captions.track || ++captions.domChecks > 180) {
+      if (!captions.active || !captions.granted || captions.dom || captions.track || ++captions.domChecks > 180) {
         stopDomWatch();
         return;
       }
@@ -958,78 +952,113 @@
 
   // --- Elección de la fuente ------------------------------------------------
 
+  /*
+   * El script corre en todos los marcos: cada marco con un video en marcha se
+   * ofrece y Nexo concede los subtítulos al de mayor tamaño. El marco elegido
+   * usa, por orden: la pista del video, el texto que dibuja el reproductor y,
+   * con clave, el audio del video (Deepgram).
+   */
+  function stopSources(notify) {
+    captions.token++;
+    clearTimeout(captions.restartTimer);
+    captions.restartTimer = 0;
+    captions.choosing = false;
+    stopRecording(notify);
+    releaseTrack();
+    stopDomCaptions();
+    stopDomWatch();
+  }
+
+  function release() {
+    stopSources(true);
+    captions.granted = false;
+    sendToNexo({ type: "captions_release" });
+  }
+
   function fallbackToAudio() {
     captions.choosing = false;
+    // Si el usuario enciende después el CC del reproductor, se toma ese texto.
     startDomWatch();
-    if (!captions.video) { captionError("no_video"); return; }
     if (!captions.live) { captionError("need_key"); return; }
     startRecording();
   }
 
   function fallbackAfterTrack() {
-    if (!captions.active) return;
+    if (!captions.active || !captions.granted) return;
     const token = captions.token;
     captions.choosing = true;
     if (domCaptionText() !== null) { startDomCaptions(); return; }
     enableYoutubeCaptions(captions.lang, token).then(found => {
-      if (token !== captions.token || !captions.active || captions.track || captions.dom) return;
+      if (token !== captions.token || !captions.active || !captions.granted || captions.track || captions.dom) return;
       if (found) startDomCaptions(); else fallbackToAudio();
     });
   }
 
-  /** Pista del video → texto del reproductor → audio con Deepgram (si hay clave). */
   function chooseSource() {
+    stopSources(false);
     captions.video = captionVideo();
-    if (captions.video && useTextTrack(captions.video)) return;
+    if (!captions.video) { release(); return; }
+    if (useTextTrack(captions.video)) return;
     fallbackAfterTrack();
   }
 
+  function discoverCaptions() {
+    if (!captions.active) return;
+    const video = captionVideo();
+    if (captions.granted && captions.video && (!captions.video.isConnected || captions.video.ended || video !== captions.video)) {
+      release();
+    }
+    if (!captions.granted && video && !video.paused && !video.ended) {
+      const rect = video.getBoundingClientRect();
+      sendToNexo({ type: "captions_offer", score: Math.round(Math.max(0, rect.width) * Math.max(0, rect.height)) });
+    }
+  }
+
+  /** Idempotente: Nexo reenvía la orden a cada marco que conecta sin reiniciar al dueño. */
   function setCaptions(active, live, lang) {
-    captions.token++;
-    clearTimeout(captions.restartTimer);
-    stopRecording(false);
-    releaseTrack();
-    stopDomCaptions();
-    stopDomWatch();
-    captions.active = active === true;
-    captions.live = live === true;
-    captions.lang = typeof lang === "string" && lang ? lang : "multi";
-    captions.choosing = false;
-    if (!captions.active) {
+    if (active !== true) {
+      stopSources(false);
+      captions.active = false;
+      captions.granted = false;
       captions.video = null;
       return;
     }
-    chooseSource();
+    const liveChanged = captions.live !== (live === true);
+    captions.active = true;
+    captions.live = live === true;
+    captions.lang = typeof lang === "string" && lang ? lang : "multi";
+    // Se añadió la clave mientras se esperaba: probar el audio.
+    if (captions.granted && liveChanged && captions.live && !captions.track && !captions.dom && !captions.recorder) startRecording();
+    discoverCaptions();
   }
 
-  // Grabar solo mientras el video suena: en pausa no se envía nada (ni se cobra).
+  // El sondeo también descubre reproductores nuevos (SPA) y videos en Shadow DOM abierto.
+  setInterval(discoverCaptions, 1000);
   document.addEventListener("playing", event => {
-    if (captions.active && (!captions.video || event.target === captions.video)) {
-      if (!captions.video) captions.video = event.target;
-      startRecording();
-    }
+    discoverCaptions();
+    if (captions.granted && (!captions.video || event.target === captions.video)) startRecording();
   }, true);
-  ["pause", "ended", "emptied"].forEach(type => {
-    document.addEventListener(type, event => {
-      if (captions.active && event.target === captions.video) stopRecording(true);
-    }, true);
-  });
+  // Grabar solo mientras el video suena. La pista y el texto del reproductor siguen activos en pausa.
+  ["pause", "ended", "emptied"].forEach(type => document.addEventListener(type, event => {
+    if (!captions.active || !captions.granted || event.target !== captions.video) return;
+    if (captions.recorder || (!captions.track && !captions.dom)) release();
+  }, true));
 
   // Otro video en el mismo reproductor (siguiente de YouTube, lista, etc.).
   document.addEventListener("loadedmetadata", event => {
     const video = event.target;
-    if (!captions.active || captions.choosing || !video || typeof video.pause !== "function") return;
+    if (!captions.active || !captions.granted || captions.choosing || !video || typeof video.pause !== "function") return;
     if (captions.video && video !== captions.video) return;
     clearTimeout(captions.restartTimer);
     captions.restartTimer = setTimeout(() => {
       captions.restartTimer = 0;
-      if (!captions.active || captions.choosing) return;
+      if (!captions.active || !captions.granted || captions.choosing) return;
       if (captions.dom) {
         if (captions.ytEnabled) enableYoutubeCaptions(captions.lang, captions.token);
         return;
       }
       // La pista era del video anterior: elegir de nuevo (también si antes no había).
-      if (captions.track || !captions.recorder) setCaptions(true, captions.live, captions.lang);
+      if (captions.track || !captions.recorder) chooseSource();
     }, 1200);
   }, true);
 
@@ -1173,6 +1202,10 @@
       setCaptions(message.active === true, message.live === true, message.lang);
     }
 
+    if (message.type === "captions_grant" && captions.active && !captions.granted) {
+      captions.granted = true;
+      chooseSource();
+    }
     if (message.type === "captions_restart" && captions.active && !captions.track && !captions.dom) {
       stopRecording(false);
       startRecording();
@@ -1208,7 +1241,7 @@
 
     candidate.onMessage.addListener(onNativeMessage);
     candidate.onDisconnect.addListener(() => {
-      if (port === candidate) port = null;
+      if (port === candidate) { port = null; setCaptions(false, false); }
       scheduleReconnect();
     });
 
