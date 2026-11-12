@@ -27,11 +27,18 @@ class NexoGeckoView @JvmOverloads constructor(
     @Volatile var canPullToRefresh = false
         private set
 
+    private var touchEpoch = 0L
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            ++touchEpoch
+            canPullToRefresh = false
+        }
         if (event.actionMasked != MotionEvent.ACTION_DOWN) return super.onTouchEvent(event)
         canPullToRefresh = false
+        val epoch = ++touchEpoch
+        val touchedSession = session
         onTouchEventForDetailResult(event).accept { detail ->
-            if (detail == null) return@accept
+            if (epoch != touchEpoch || session !== touchedSession || detail == null) return@accept
             val handledByBrowser = detail.handledResult() == PanZoomController.INPUT_RESULT_HANDLED
             val canScrollUp = detail.scrollableDirections() and PanZoomController.SCROLLABLE_FLAG_TOP != 0
             val canOverscroll = detail.overscrollDirections() and PanZoomController.OVERSCROLL_FLAG_VERTICAL != 0

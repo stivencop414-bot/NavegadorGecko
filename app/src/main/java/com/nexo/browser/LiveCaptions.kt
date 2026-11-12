@@ -48,6 +48,7 @@ object LiveCaptions {
     private class Stream(val session: GeckoSession) {
         @Volatile var stopped = false
         val calls = java.util.concurrent.ConcurrentHashMap.newKeySet<okhttp3.Call>()
+        var deviceAudio = false
         var socket: WebSocket? = null
         var opened = false
         val queue = ArrayDeque<ByteString>()
@@ -269,6 +270,7 @@ object LiveCaptions {
 
     fun stop(session: GeckoSession) {
         val stream = active.remove(session) ?: return
+        PlaybackAudioCapture.cancel(session)
         main.removeCallbacksAndMessages(stream)
         synchronized(stream) { stream.stopped = true; stream.calls.forEach { it.cancel() }; stream.calls.clear() }
         close(stream)
@@ -342,7 +344,8 @@ object LiveCaptions {
     fun relisten(context: Context, session: GeckoSession?) {
         val stream = session?.let { active[it] } ?: return
         stream.language = BrowserPrefs.captionLanguage(context)
-        if (!stream.trackMode && !stream.domMode) ExtensionManager.restartCaptions(stream.session)
+        if (stream.deviceAudio) { close(stream); connect(context.applicationContext,stream,CaptionProtocol.modelFor(stream.language)) }
+        else if (!stream.trackMode && !stream.domMode) ExtensionManager.restartCaptions(stream.session)
     }
 
     // --- Mensajes del puente de la página --------------------------------
@@ -380,6 +383,31 @@ object LiveCaptions {
         connect(app, stream, stream.model.ifBlank { CaptionProtocol.modelFor(stream.language) })
     }
 
+    fun captureToken(session: GeckoSession): Any? = active[session]
+    fun matchesCapture(session: GeckoSession, token: Any): Boolean = active[session] === token
+    fun usingDeviceAudio(session: GeckoSession?): Boolean = session?.let { active[it]?.deviceAudio } == true
+
+    fun startDeviceAudio(session: GeckoSession, token: Any): Boolean {
+        val stream = active[session] ?: return false
+        if (stream !== token || limitReached(AppContext.get())) return false
+        ExtensionManager.setCaptions(session,false)
+        close(stream); resetSource(stream)
+        stream.deviceAudio = true
+        stream.trackMode = false; stream.domMode = false
+        stream.text.clear(); stream.headerChecked = true
+        stream.receivedBytes = 0; stream.lastAudioAt = 0; stream.lastResultAt = 0
+        stream.startedAt = System.currentTimeMillis(); stream.signal = false
+        setState(stream,State.CONNECTING,"Capturando reproducción de Nexo con Android · conectando…")
+        connect(AppContext.get(),stream,CaptionProtocol.modelFor(stream.language))
+        return true
+    }
+    fun onDeviceAudio(session: GeckoSession, bytes: ByteArray) {
+        val stream = active[session] ?: return
+        if (!stream.deviceAudio) return
+        if (!stream.signal && PlaybackPcm.hasSignal(bytes)) onStatus(session,"signal")
+        acceptAudio(session,stream,bytes)
+    }
+
     fun onAudio(session: GeckoSession, base64: String) {
         val stream = active[session] ?: return
         if (stream.state == State.ERROR || stream.startedAt == 0L || base64.length > 350000) return
@@ -392,6 +420,11 @@ object LiveCaptions {
             }
             stream.headerChecked = true
         }
+        acceptAudio(session,stream,bytes)
+    }
+
+    private fun acceptAudio(session: GeckoSession, stream: Stream, bytes: ByteArray) {
+        if (stream.state == State.ERROR || stream.startedAt == 0L || bytes.isEmpty() || bytes.size > 256*1024) return
         stream.receivedBytes += bytes.size
         val now = System.currentTimeMillis()
         if (stream.lastAudioAt > 0) stream.unsavedMs += (now - stream.lastAudioAt).coerceIn(0L, 1000L)
@@ -404,7 +437,7 @@ object LiveCaptions {
             else {
                 close(stream)
                 stream.message = "La red no puede enviar el audio. Reiniciando captura…"
-                ExtensionManager.restartCaptions(session)
+                restartAudio(stream)
             }
         } else if (stream.queue.size < 40) {
             stream.queue.addLast(chunk)
@@ -431,6 +464,8 @@ object LiveCaptions {
     fun onPageError(context: Context, session: GeckoSession, code: String, message: String) {
         val stream = active[session] ?: return
         stream.delivered = true
+        PlaybackAudioCapture.cancel(session)
+        stream.deviceAudio = false
         if (code == "need_key") {
             // La página sigue vigilando: si el usuario enciende el CC del reproductor, Nexo lo toma solo.
             setState(stream, State.ERROR,
@@ -534,15 +569,14 @@ object LiveCaptions {
     private fun connect(context: Context, stream: Stream, model: String) {
         val key = BrowserPrefs.deepgramKey(context)
         if (key.isBlank()) {
-            setState(stream, State.ERROR, "Añade tu clave de Deepgram en Ajustes › Subtítulos.")
-            notifyChanged(stream.session)
+            onPageError(context,stream.session,"need_deepgram","Añade tu clave de Deepgram en Ajustes › Subtítulos.")
             return
         }
         setState(stream, State.CONNECTING)
         notifyChanged(stream.session)
         val generation = ++stream.generation
         val request = Request.Builder()
-            .url(CaptionProtocol.listenUrl(stream.language, model).replaceFirst("wss://", "https://"))
+            .url((if(stream.deviceAudio) PlaybackPcm.listenUrl(stream.language,model) else CaptionProtocol.listenUrl(stream.language, model)).replaceFirst("wss://", "https://"))
             .header("Authorization", "Token $key")
             .build()
         stream.socket = client.newWebSocket(request, object : WebSocketListener() {
@@ -595,7 +629,7 @@ object LiveCaptions {
                         stream.triedFallback = true
                         stream.model = "nova-2"
                         close(stream)
-                        ExtensionManager.restartCaptions(stream.session)
+                        restartAudio(stream)
                         return@post
                     }
                     // Corte de red: hasta 3 reintentos con espera creciente; cada uno empieza
@@ -608,7 +642,7 @@ object LiveCaptions {
                         notifyChanged(stream.session)
                         main.postDelayed({
                             if (active[stream.session] === stream && stream.generation == generation) {
-                                ExtensionManager.restartCaptions(stream.session)
+                                restartAudio(stream)
                             }
                         }, delay)
                         return@post
@@ -645,6 +679,11 @@ object LiveCaptions {
             if (!BrowserPrefs.captionsEnabled(context)) stop(session)
             else { retarget(context, session); relisten(context, session); ExtensionManager.restoreCaptions(session) }
         }
+    }
+
+    private fun restartAudio(stream: Stream) {
+        if (stream.deviceAudio) { close(stream); connect(AppContext.get(),stream,stream.model.ifBlank { CaptionProtocol.modelFor(stream.language) }) }
+        else ExtensionManager.restartCaptions(stream.session)
     }
 
     private fun close(stream: Stream) {

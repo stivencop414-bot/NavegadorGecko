@@ -506,3 +506,30 @@ test('with the grant, the player text wins over audio capture (no Deepgram minut
   h.fire('pause', h.document.getElementsByTagName('video')[0]);
   assert.equal(h.reports.some(x => x.type === 'captions_release'), false);
 });
+
+test('capture waits for delayed Gecko audio tracks rather than reporting no_audio immediately', async () => {
+  const audio=audioMocks(), h=harness(audio.extra), video=h.video();
+  const tracks=[];
+  video.captureStream=()=>new audio.extra.MediaStream(tracks);
+  h.captions(true);await flush();await flush();
+  assert.equal(audio.recorders.length,0);
+  assert.equal(h.reports.some(x=>x.code==='no_audio'),false);
+  const track={stop(){this.stopped=true;},addEventListener(){},getSettings(){return {};}};
+  tracks.push(track);h.tick(100);await flush();await flush();
+  assert.equal(audio.recorders.length,1);
+  h.captions(false);assert.equal(track.stopped,true);
+});
+test('pending track discovery is cancelled and does not create a recorder after CC is off', async () => {
+  const audio=audioMocks(), h=harness(audio.extra),video=h.video(),tracks=[];
+  video.captureStream=()=>new audio.extra.MediaStream(tracks);
+  h.captions(true);await flush();h.captions(false);h.tick(5000);await flush();
+  assert.equal(audio.recorders.length,0);
+  assert.equal(h.reports.some(x=>x.code==='no_audio'),false);
+});
+test('a player exposing no audio fails after a bounded wait',async()=>{
+  const audio=audioMocks(),h=harness(audio.extra),video=h.video();
+  video.captureStream=()=>new audio.extra.MediaStream([]);
+  h.captions(true);await flush();h.tick(3100);await flush();await flush();
+  assert.ok(h.reports.some(x=>x.code==='no_audio'));
+  assert.equal(audio.recorders.length,0);
+});

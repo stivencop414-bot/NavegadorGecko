@@ -228,6 +228,12 @@ object CaptionsUi {
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(activity, 10f)
         })
+        if (activity is MainActivity && android.os.Build.VERSION.SDK_INT >= 29) {
+            body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Capturar audio con Android",
+                "Para reproductores que bloquean la captura web · requiere Deepgram y autorización") {
+                sheet.dismiss(); PlaybackAudioCapture.request(activity)
+            })
+        }
         body.addView(NexoUi.button(activity, "Apagar subtítulos", danger = true) { sheet.dismiss(); onOff() }, NexoUi.buttonParams(activity, 8f))
         sheet = NexoSheets.show(activity, NexoSheets.column(activity, NexoSheets.header(activity, "Subtítulos en vivo", stateText(activity, session)), body))
     }
