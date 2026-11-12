@@ -145,6 +145,11 @@ class SettingsActivity : Activity() {
         captionsEnabled = findViewById(R.id.captionsEnabledSwitch)
 
         findViewById<Button>(R.id.transferProfileButton).setOnClickListener { MigrationMode.enter(this) }
+        // Paso automático desde la app anterior (com.ejemplo.navegador); solo tiene sentido en la nueva.
+        findViewById<Button>(R.id.legacyImportButton).apply {
+            visibility = if (packageName == LegacyImport.TARGET_PACKAGE) android.view.View.VISIBLE else android.view.View.GONE
+            setOnClickListener { LegacyImport.showManual(this@SettingsActivity) { recreate() } }
+        }
         populate()
         applyTheme()
         findViewById<Button>(R.id.saveSettingsButton).setOnClickListener { save() }

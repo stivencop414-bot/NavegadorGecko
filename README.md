@@ -10,6 +10,10 @@ automáticamente historial, pestañas, extensiones ni ajustes. Consulta
 Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 
 ## Incluye
+- **Paso desde la app anterior** (`com.ejemplo.navegador` → `com.nexo.browser`): instala la actualización
+  `Nexo-anterior-actualizacion` sobre la app anterior, abre Nexo nuevo y toca **Traer datos**. Pasan historial,
+  accesos, pestañas normales, ajustes y claves sin archivos ni contraseñas (ver
+  [transferencia](docs/TRANSFERENCIA-PERFIL.md)).
 - Omnibox: URL o búsqueda por palabras.
 - Google, DuckDuckGo, Bing, Brave Search y Startpage.
 - Multipestañas, sesiones LRU y pestañas privadas. Grupos con nombre y color, píldoras con

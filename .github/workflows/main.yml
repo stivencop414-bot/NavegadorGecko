@@ -257,15 +257,25 @@ jobs:
         run: |
           set -euo pipefail
           gradle :app:testReleaseUnitTest :app:assembleRelease :app:lintRelease --stacktrace --no-daemon
+          mkdir -p build-out/new build-out/old
+          cp app/build/outputs/apk/release/*.apk build-out/new/
+          cp app/build/outputs/mapping/release/mapping.txt build-out/new/mapping.txt
+          # Actualización de transición para quien tiene la app anterior (com.ejemplo.navegador):
+          # mismas fuentes, entrega sus datos a Nexo nuevo por un proveedor protegido por firma.
+          gradle -PnexoTransition :app:assembleRelease --stacktrace --no-daemon
+          cp app/build/outputs/apk/release/*.apk build-out/old/
+          cp app/build/outputs/mapping/release/mapping.txt build-out/old/mapping.txt
           git diff --exit-code
 
-      - name: Release APK keeps startup constructors
+      - name: Release APKs keep startup constructors and identity
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/check_release_reflection.py \
             --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" \
-            app/build/outputs/apk/release/*.apk
+            build-out/new/*.apk build-out/old/*.apk
+          python3 tools/check_apk_identity.py --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" --package com.nexo.browser build-out/new/*.apk
+          python3 tools/check_apk_identity.py --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" --package com.ejemplo.navegador build-out/old/*.apk
 
       - name: Sign ABI APKs
         shell: bash
@@ -299,10 +309,16 @@ jobs:
           APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
           mkdir -p artifacts/release
 
-          ARM64="$(find app/build/outputs/apk/release -type f -name '*arm64-v8a*.apk' | head -n1)"
-          ARM32="$(find app/build/outputs/apk/release -type f -name '*armeabi-v7a*.apk' | head -n1)"
-          test -n "$ARM64" || { echo "::error::No se generó arm64-v8a"; exit 1; }
-          test -n "$ARM32" || { echo "::error::No se generó armeabi-v7a"; exit 1; }
+          pick() {
+            local found
+            found="$(find "$1" -type f -name "*$2*.apk" | head -n1)"
+            test -n "$found" || { echo "::error::No se generó $2 en $1" >&2; exit 1; }
+            printf '%s' "$found"
+          }
+          ARM64="$(pick build-out/new arm64-v8a)"
+          ARM32="$(pick build-out/new armeabi-v7a)"
+          OLD64="$(pick build-out/old arm64-v8a)"
+          OLD32="$(pick build-out/old armeabi-v7a)"
 
           sign_one() {
             local input="$1"
@@ -322,6 +338,8 @@ jobs:
 
           sign_one "$ARM64" "artifacts/release/Nexo-v${VERSION_NAME}-arm64-v8a.apk"
           sign_one "$ARM32" "artifacts/release/Nexo-v${VERSION_NAME}-armeabi-v7a.apk"
+          sign_one "$OLD64" "artifacts/release/Nexo-anterior-actualizacion-v${VERSION_NAME}-arm64-v8a.apk"
+          sign_one "$OLD32" "artifacts/release/Nexo-anterior-actualizacion-v${VERSION_NAME}-armeabi-v7a.apk"
 
           cd artifacts/release
           sha256sum *.apk > SHA256SUMS.txt
@@ -341,7 +359,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Nexo-v${{ steps.version.outputs.version_name }}-mapping
-          path: app/build/outputs/mapping/release/mapping.txt
+          path: build-out/*/mapping.txt
           if-no-files-found: error
           retention-days: 90
 
@@ -362,8 +380,18 @@ jobs:
             - Build generado exclusivamente desde source ya versionado.
             - APKs firmados con la clave Android persistente del proyecto.
             - SHA-256 incluido en SHA256SUMS.txt.
-            - Desde 0.25.0 el paquete es `com.nexo.browser`: se instala junto al paquete antiguo. Usa la actualización de transición y la transferencia cifrada descritas en docs/TRANSFERENCIA-PERFIL.md; conserva la app anterior y verifica tus datos antes de retirarla.
+
+            **¿Vienes de la app anterior (com.ejemplo.navegador)?**
+            1. Instala `Nexo-anterior-actualizacion-…` encima de tu app anterior (se actualiza sin perder nada).
+            2. Instala `Nexo-v…` (la app nueva, `com.nexo.browser`) y ábrela.
+            3. Toca **Traer datos**: historial, accesos rápidos, pestañas normales, ajustes y claves pasan solos.
+            4. Comprueba que todo está y entonces desinstala la app anterior.
+
+            No se pasan pestañas privadas, Burner, cookies ni descargas. Para los datos de extensiones (PhantomShield) usa
+            Ajustes › Copia cifrada del perfil (docs/TRANSFERENCIA-PERFIL.md).
           files: |
             artifacts/release/Nexo-v${{ steps.version.outputs.version_name }}-arm64-v8a.apk
             artifacts/release/Nexo-v${{ steps.version.outputs.version_name }}-armeabi-v7a.apk
+            artifacts/release/Nexo-anterior-actualizacion-v${{ steps.version.outputs.version_name }}-arm64-v8a.apk
+            artifacts/release/Nexo-anterior-actualizacion-v${{ steps.version.outputs.version_name }}-armeabi-v7a.apk
             artifacts/release/SHA256SUMS.txt

@@ -1243,6 +1243,16 @@ class MainActivity :
         ExtensionManager.consumePendingAction { ok, message ->
             if (!ok) runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
         }
+        // Paso desde la app anterior: la nueva ofrece traer los datos; la anterior avisa de la mudanza.
+        root.postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            LegacyImport.offerIfNeeded(this) {
+                GeckoRuntimeHolder.applyRuntimePrefs(this)
+                TabManager.reapplySettings()
+                recreate()
+            }
+            LegacyImport.noticeInOldApp(this)
+        }, 900L)
         if (themeKey.isNotBlank() && themeKey != ThemeManager.themeKey(this)) {
             // Diálogos, menús y controles del sistema dependen del tema de la
             // Activity: recrearla para aplicarlo entero.

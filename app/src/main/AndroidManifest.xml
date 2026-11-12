@@ -16,6 +16,24 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
+    <!--
+        Paso de datos entre la app anterior (com.ejemplo.navegador) y Nexo nuevo
+        (com.nexo.browser). Nivel "signature": solo otra app firmada con la misma
+        clave puede obtenerlo. Ambas lo declaran; la comprobación real se repite
+        en LegacyProfileProvider.call() (paquete, firma y permiso del llamante).
+    -->
+    <permission
+        android:name="com.nexo.browser.permission.TRANSFER_PROFILE"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.nexo.browser.permission.TRANSFER_PROFILE" />
+
+    <!-- Android 11+: ver la otra app de Nexo y su proveedor de datos. -->
+    <queries>
+        <package android:name="com.ejemplo.navegador" />
+        <package android:name="com.nexo.browser" />
+        <provider android:authorities="com.ejemplo.navegador.profile" />
+    </queries>
+
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
@@ -31,6 +49,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Nexo.Light.Violet"
         android:usesCleartextTraffic="true">
+        <!-- Solo activo en la actualización de transición (paquete anterior). -->
+        <provider
+            android:name="com.nexo.browser.LegacyProfileProvider"
+            android:authorities="${applicationId}.profile"
+            android:enabled="${legacyExport}"
+            android:exported="true"
+            android:permission="com.nexo.browser.permission.TRANSFER_PROFILE" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

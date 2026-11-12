@@ -708,10 +708,16 @@
             </LinearLayout>
 
             <Button
+                android:id="@+id/legacyImportButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Traer datos de Nexo anterior" />
+            <Button
                 android:id="@+id/transferProfileButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Transferir perfil entre paquetes" />
+                android:layout_marginTop="8dp"
+                android:text="Copia cifrada del perfil (incluye extensiones)" />
             <TextView
                 android:id="@+id/aboutText"
                 android:layout_width="match_parent"
