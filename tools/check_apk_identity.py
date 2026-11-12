@@ -20,7 +20,7 @@ def check(build_tools, expected, apk):
     assert '"android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"' in manifest
     exported = re.search(r'android:exported\([^)]*\)=(?:\(type 0x12\))?(\w+)', capture)
     kind = re.search(r'foregroundServiceType\([^)]*\)=(?:\(type 0x11\))?(\w+)', capture)
-    assert exported and int(exported.group(1), 16) == 0, 'Capture service must not be exported'
+    assert exported and (exported.group(1).lower() == 'false' or exported.group(1).lower().startswith('0x') and int(exported.group(1), 16) == 0 or exported.group(1) == '0'), 'Capture service must not be exported'
     assert kind and int(kind.group(1), 16) == 32, 'Capture service must be mediaProjection only'
     # Paso de datos entre paquetes: permiso de firma y proveedor activo solo en el paquete anterior.
     elements = re.split(r'\n(?=\s*E: )', manifest)
