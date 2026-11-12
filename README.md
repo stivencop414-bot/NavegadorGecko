@@ -1,5 +1,12 @@
 # Nexo Browser
 
+<img src="docs/brand/nexo.svg" alt="Logo de Nexo Browser" width="112" />
+
+Desde **0.25.0**, el identificador Android es **`com.nexo.browser`**.
+Esta versión se instala como una app nueva junto a las anteriores; no transfiere
+automáticamente historial, pestañas, extensiones ni ajustes. Consulta
+[el cambio de identidad](docs/IDENTIDAD-NEXO.md) antes de instalarla.
+
 Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 
 ## Incluye
@@ -83,7 +90,7 @@ Una extensión privada/sin firma puede integrarse dentro de
   redirecciones sin toque del usuario o en pestaña privada piden confirmación.
 - **Permisos de sitios**: se pregunta siempre mostrando el dominio real; las notificaciones
   web se rechazan porque Nexo aún no las muestra.
-- **Puente nativo** (`nexo_bridge`): solo acepta mensajes de su propia extensión y del frame principal. No envía URL, título ni contenido de la página. El puente del traductor local se retira al actualizar.
+- **Puente nativo** (`nexo_bridge`): verifica su propia extensión y la sesión. PiP usa el frame principal; los subtítulos descubren reproductores en los marcos y capturan desde un único puerto autorizado por sesión. Solo con CC activo se reciben pistas de subtítulos o audio para transcribir; las claves permanecen en el proceso nativo. El puente del traductor local se retira al actualizar.
 - **Privacidad**: el historial elimina parámetros sensibles (tokens, sesiones, firmas) antes de
   guardarse; las pestañas privadas no se guardan en historial, pestañas ni miniaturas; la
   notificación multimedia no muestra el título en la pantalla de bloqueo.
@@ -114,7 +121,7 @@ gradle :app:lintRelease
 Capturas de la interfaz nativa (Robolectric, opcional y fuera de la CI):
 
 ```bash
-gradle :app:testDebugUnitTest --tests 'com.ejemplo.navegador.ScreenshotTest' \
+gradle :app:testDebugUnitTest --tests 'com.nexo.browser.ScreenshotTest' \
   -PnexoScreenshots -PnexoShotsDir=/ruta/capturas
 ```
 
@@ -144,3 +151,7 @@ Los alcances y límites están en [grupos, rutas y Burner](docs/PESTANAS-RED-BUR
 Para conservar los datos al actualizar, consulta [actualizaciones y firma](docs/ACTUALIZACIONES-Y-FIRMA.md).
 
 La memoria y el diagnóstico de IA se explican en [aprendizaje local](docs/IA-MEMORIA.md).
+
+## Transición de paquete y subtítulos
+
+Consulta [transferencia cifrada del perfil](docs/TRANSFERENCIA-PERFIL.md) para la actualización de transición `-PnexoTransition`, importación y recuperación. El [diagnóstico de subtítulos](docs/DIAGNOSTICO-SUBTITULOS.md) explica la captura, sus estados y las verificaciones reales pendientes.

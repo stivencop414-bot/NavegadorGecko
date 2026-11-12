@@ -22,7 +22,7 @@
     <uses-feature android:name="android.hardware.location" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <application
-        android:name=".NexoApplication"
+        android:name="com.nexo.browser.NexoApplication"
         android:allowBackup="false"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"
@@ -33,7 +33,7 @@
         android:usesCleartextTraffic="true">
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="com.ejemplo.navegador.files"
+            android:authorities="${applicationId}.files"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data
@@ -41,17 +41,19 @@
                 android:resource="@xml/file_paths" />
         </provider>
         <service
-            android:name=".MediaPlaybackService"
+            android:name="com.nexo.browser.MediaPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"
             android:stopWithTask="false" />
-        <activity android:name=".SettingsActivity" android:exported="false" />
-        <activity android:name=".ExtensionsActivity" android:exported="false" />
-        <activity android:name=".ExtensionStoreActivity" android:exported="false" />
-        <activity android:name=".HistoryActivity" android:exported="false" />
-        <activity android:name=".DownloadsActivity" android:exported="false" />
+        <activity android:name="com.nexo.browser.MigrationActivity" android:exported="false"
+            android:launchMode="singleTask" android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity android:name="com.nexo.browser.SettingsActivity" android:exported="false" />
+        <activity android:name="com.nexo.browser.ExtensionsActivity" android:exported="false" />
+        <activity android:name="com.nexo.browser.ExtensionStoreActivity" android:exported="false" />
+        <activity android:name="com.nexo.browser.HistoryActivity" android:exported="false" />
+        <activity android:name="com.nexo.browser.DownloadsActivity" android:exported="false" />
         <activity
-            android:name=".MainActivity"
+            android:name="com.nexo.browser.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:supportsPictureInPicture="true"
@@ -91,8 +93,8 @@
             Las apps externas solo pueden abrir http/https en MainActivity.
         -->
         <activity-alias
-            android:name=".InternalOpenActivity"
+            android:name="com.nexo.browser.InternalOpenActivity"
             android:exported="false"
-            android:targetActivity=".MainActivity" />
+            android:targetActivity="com.nexo.browser.MainActivity" />
     </application>
 </manifest>

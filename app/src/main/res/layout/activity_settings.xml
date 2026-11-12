@@ -679,6 +679,11 @@
                     android:textSize="15sp" />
             </LinearLayout>
 
+            <Button
+                android:id="@+id/transferProfileButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Transferir perfil entre paquetes" />
             <TextView
                 android:id="@+id/aboutText"
                 android:layout_width="match_parent"

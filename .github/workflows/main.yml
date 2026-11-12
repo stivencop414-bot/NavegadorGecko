@@ -15,8 +15,7 @@ on:
         description: "Tag opcional (solo release; vacío = v<versionName>)"
         required: false
         default: ""
-  pull_request:
-    branches: [main]
+  pull_request: {}
   push:
     branches: [main]
     paths:
@@ -46,6 +45,11 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'build' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      matrix:
+        transition: [false, true]
+    env:
+      NEXO_TRANSITION: ${{ matrix.transition }}
 
     steps:
       - name: Checkout committed source
@@ -116,7 +120,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gradle \
+          args=()
+          if [ "$NEXO_TRANSITION" = true ]; then args+=(-PnexoTransition); fi
+          gradle "${args[@]}" \
             :app:testDebugUnitTest \
             :app:testReleaseUnitTest \
             :app:assembleDebug \
@@ -135,6 +141,9 @@ jobs:
           python3 tools/check_release_reflection.py \
             --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" \
             app/build/outputs/apk/release/*.apk
+          expected=com.nexo.browser
+          if [ "$NEXO_TRANSITION" = true ]; then expected=com.ejemplo.navegador; fi
+          python3 tools/check_apk_identity.py --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" --package "$expected" app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk
 
       - name: Confirm build did not mutate tracked source
         shell: bash
@@ -146,7 +155,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Nexo-CI-${{ github.sha }}
+          name: Nexo-CI-${{ github.sha }}-transition-${{ matrix.transition }}
           path: |
             app/build/outputs/apk/**/*.apk
             app/build/outputs/mapping/release/mapping.txt
@@ -353,6 +362,7 @@ jobs:
             - Build generado exclusivamente desde source ya versionado.
             - APKs firmados con la clave Android persistente del proyecto.
             - SHA-256 incluido en SHA256SUMS.txt.
+            - Desde 0.25.0 el paquete es `com.nexo.browser`: se instala junto al paquete antiguo. Usa la actualización de transición y la transferencia cifrada descritas en docs/TRANSFERENCIA-PERFIL.md; conserva la app anterior y verifica tus datos antes de retirarla.
           files: |
             artifacts/release/Nexo-v${{ steps.version.outputs.version_name }}-arm64-v8a.apk
             artifacts/release/Nexo-v${{ steps.version.outputs.version_name }}-armeabi-v7a.apk

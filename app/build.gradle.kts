@@ -2,7 +2,7 @@ plugins {
     id("com.android.application")
 }
 android {
-    namespace = "com.ejemplo.navegador"
+    namespace = "com.nexo.browser"
     // GeckoView 159 exige compilar contra Android 37.2 (versión menor de API).
     compileSdk {
         version = release(37) {
@@ -10,11 +10,11 @@ android {
         }
     }
     defaultConfig {
-        applicationId = "com.ejemplo.navegador"
+        applicationId = if (project.hasProperty("nexoTransition")) "com.ejemplo.navegador" else "com.nexo.browser"
         minSdk = 26
         targetSdk = 34
-        versionCode = 42
-        versionName = "0.24.0"
+        versionCode = 44
+        versionName = "0.25.1"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

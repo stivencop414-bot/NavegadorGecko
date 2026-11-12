@@ -1,8 +1,15 @@
-# Firma persistente desde Nexo 0.14.1
+# Firma e identidad de Android
+
+**Desde 0.25.0 el paquete es `com.nexo.browser`.** Android lo instala como otra app:
+no reemplaza las versiones anteriores ni transfiere automáticamente sus datos,
+aunque la firma sea la misma. Ver [identidad de Nexo](IDENTIDAD-NEXO.md).
+
+## Antecedentes: firma persistente desde 0.14.1
 
 Android conserva los datos al reemplazar una app si mantiene `applicationId`, un
-`versionCode` superior y la misma identidad de firma. Nexo mantiene
-`com.ejemplo.navegador` y sube versionCode de 28 a 29.
+`versionCode` superior y la misma identidad de firma. En 0.14.1 Nexo mantuvo
+`com.ejemplo.navegador` y subió versionCode de 28 a 29. Esa línea de identidad
+se conserva hasta 0.24.0; las secciones históricas siguientes se refieren a ella.
 
 El propietario confirmó que usa un APK debug de Artifacts y no conserva su keystore.
 Por su indicación se creó una nueva clave persistente RSA-4096 para iniciar la línea de
