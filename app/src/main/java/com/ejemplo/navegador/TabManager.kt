@@ -428,11 +428,22 @@ object TabManager {
         persist()
     }
 
-    fun reload() {
+    /** [bypassCache]: recarga completa, sin usar la caché (pulsación larga en Recargar). */
+    fun reload(bypassCache: Boolean = false) {
         val tab = activeTab() ?: return
         if(tab.session?.let { TabRouting.synthetic(it) } == true) {
             applyNetwork(tab.id,tab.networkProfile)
+        } else if (bypassCache) {
+            tab.session?.reload(GeckoSession.LOAD_FLAGS_BYPASS_CACHE)
         } else tab.session?.reload()
+    }
+
+    /** Pestaña vecina del mismo modo (normal o privado), para el gesto de la barra. */
+    fun adjacentTabId(offset: Int): String? {
+        val current = activeTab() ?: return null
+        val same = tabs.filter { it.isPrivate == current.isPrivate }
+        val index = same.indexOfFirst { it.id == current.id }
+        return same.getOrNull(index + offset)?.id
     }
 
     fun notifyMessage(message: String) {

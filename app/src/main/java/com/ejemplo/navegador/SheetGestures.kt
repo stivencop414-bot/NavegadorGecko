@@ -100,7 +100,7 @@ class DragDismissLayout(context: Context) : LinearLayout(context) {
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                if (dragging) release()
+                if (dragging) release() else performClick()
                 recycle()
                 return true
             }
@@ -112,6 +112,8 @@ class DragDismissLayout(context: Context) : LinearLayout(context) {
         }
         return super.onTouchEvent(event)
     }
+
+    override fun performClick(): Boolean = super.performClick()
 
     private fun beginDrag(event: MotionEvent) {
         dragging = true

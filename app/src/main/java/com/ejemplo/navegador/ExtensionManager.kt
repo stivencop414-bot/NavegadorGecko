@@ -175,6 +175,14 @@ object ExtensionManager {
         return raw?.takeIf { it == "OFF" || it == "PAUSE" || it.matches(Regex("""[0-9]{1,3}\+?""")) }
     }
 
+    /** Insignia que la extensión muestra en su botón para la pestaña actual (o la general). */
+    fun badge(extension: WebExtension): String? {
+        val session = TabManager.activeSession()
+        val text = session?.let { sessionActions[it]?.get(extension.id)?.badgeText }
+            ?: defaultActions[extension.id]?.badgeText
+        return text?.trim()?.take(4)?.takeIf { it.isNotEmpty() }
+    }
+
     /** Extensiones activas que tienen botón (browser_action/page_action). */
     fun actionableExtensions(): List<WebExtension> {
         val session = TabManager.activeSession()
@@ -253,6 +261,16 @@ object ExtensionManager {
             onDone(
                 false,
                 "La extensión no expone una acción para esta pestaña."
+            )
+            return
+        }
+
+        // En una pestaña privada Gecko no ejecuta extensiones sin ese permiso: explicarlo.
+        if (TabManager.activeTab()?.isPrivate == true && !extension.isBuiltIn && !extension.metaData.allowedInPrivateBrowsing) {
+            onDone(
+                false,
+                "${extension.metaData.name ?: "Esta extensión"} no está permitida en pestañas privadas. " +
+                    "Actívalo en Extensiones › la extensión › Permitir en pestañas privadas."
             )
             return
         }

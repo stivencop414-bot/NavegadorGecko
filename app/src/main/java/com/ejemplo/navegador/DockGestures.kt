@@ -83,6 +83,7 @@ class GestureDock @JvmOverloads constructor(
                 val dx = event.rawX - startX
                 val dy = event.rawY - startY
                 val velocity = tracker?.let { it.computeCurrentVelocity(1000); it.xVelocity to it.yVelocity } ?: (0f to 0f)
+                var handled = true
                 when {
                     abs(dx) > abs(dy) && (abs(dx) > distance || abs(velocity.first) > flingVelocity) && abs(dx) > slop -> {
                         performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
@@ -92,13 +93,17 @@ class GestureDock @JvmOverloads constructor(
                         performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                         onSwipeUp()
                     }
+                    else -> handled = false
                 }
+                if (!handled) performClick()
                 recycle()
             }
             MotionEvent.ACTION_CANCEL -> recycle()
         }
         return true
     }
+
+    override fun performClick(): Boolean = super.performClick()
 
     private fun recycle() {
         tracker?.recycle()
