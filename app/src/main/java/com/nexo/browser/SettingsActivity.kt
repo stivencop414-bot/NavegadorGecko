@@ -140,6 +140,7 @@ class SettingsActivity : Activity() {
         remoteDebug = findViewById(R.id.remoteDebugSwitch)
         captionsEnabled = findViewById(R.id.captionsEnabledSwitch)
 
+        findViewById<Button>(R.id.transferProfileButton).setOnClickListener { MigrationMode.enter(this) }
         populate()
         applyTheme()
         findViewById<Button>(R.id.saveSettingsButton).setOnClickListener { save() }

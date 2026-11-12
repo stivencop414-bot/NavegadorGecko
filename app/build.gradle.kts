@@ -10,11 +10,11 @@ android {
         }
     }
     defaultConfig {
-        applicationId = "com.nexo.browser"
+        applicationId = if (project.hasProperty("nexoTransition")) "com.ejemplo.navegador" else "com.nexo.browser"
         minSdk = 26
         targetSdk = 34
-        versionCode = 43
-        versionName = "0.25.0"
+        versionCode = 44
+        versionName = "0.25.1"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

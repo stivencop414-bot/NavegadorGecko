@@ -1,11 +1,11 @@
 {
   "manifest_version": 2,
   "name": "Nexo Browser Core",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Funciones internas de Nexo Browser.",
   "browser_specific_settings": {
     "gecko": {
-      "id": "nexo_bridge@com.nexo.browser"
+      "id": "nexo_bridge@com.ejemplo.navegador"
     }
   },
   "permissions": [
@@ -22,6 +22,8 @@
         "content_script.js"
       ],
       "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
       "css": [
         "pip.css"
       ]

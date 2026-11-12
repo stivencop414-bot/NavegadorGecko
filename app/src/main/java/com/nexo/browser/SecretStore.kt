@@ -49,6 +49,13 @@ object SecretStore {
         }.getOrDefault("").also { if (it.isNotEmpty()) cache[name] = it }
     }
 
+    /** Encrypt with this package's key; never export the Keystore key itself. */
+    fun encrypt(value: String): String {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key())
+        return Base64.encodeToString(cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
+    }
+
     fun put(context: Context, name: String, value: String) {
         val clean = value.trim()
         cache.remove(name)

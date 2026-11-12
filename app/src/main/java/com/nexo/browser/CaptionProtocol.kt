@@ -9,6 +9,18 @@ import java.net.URLEncoder
  * Sin dependencias de Android para poder probarlo en la JVM.
  */
 object CaptionProtocol {
+    fun supportedMime(mime: String): Boolean = mime.lowercase().replace(" ", "") in
+        setOf("audio/webm;codecs=opus", "audio/ogg;codecs=opus")
+
+    fun hasContainerHeader(bytes: ByteArray): Boolean = bytes.size >= 4 && (
+        bytes.take(4) == listOf(0x1a.toByte(), 0x45.toByte(), 0xdf.toByte(), 0xa3.toByte()) ||
+        bytes.take(4) == "OggS".toByteArray().toList())
+
+    fun parseError(raw: String): String? = runCatching {
+        val json = JSONObject(raw)
+        if (json.optString("type") == "Error") json.optString("description", "Error de transcripción").take(240) else null
+    }.getOrNull()
+
     const val LISTEN_ENDPOINT = "wss://api.deepgram.com/v1/listen"
 
     /** nova-3 para inglés y el modo multilingüe; nova-2 cubre el resto de idiomas. */

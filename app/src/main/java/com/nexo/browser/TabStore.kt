@@ -39,6 +39,8 @@ object TabStore {
         return legacy
     }
 
+    fun flush() { io.submit {}.get() }
+
     /** [serialize] se ejecuta fuera del hilo principal. */
     fun write(context: Context, serialize: () -> String) {
         val app = context.applicationContext
