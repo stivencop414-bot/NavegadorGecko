@@ -15,8 +15,7 @@ on:
         description: "Tag opcional (solo release; vacío = v<versionName>)"
         required: false
         default: ""
-  pull_request:
-    branches: [main]
+  pull_request: {}
   push:
     branches: [main]
     paths:
