@@ -531,7 +531,7 @@
     video: null, recorder: null, silentTimer: 0, epoch: 0, stream: null, meter: null,
     track: null, trackMode: "", trackTimer: 0, knownCues: 0,
     dom: false, domTimer: 0, domText: "", domWatch: 0, domChecks: 0, ytEnabled: false,
-    restartTimer: 0
+    restartTimer: 0, capturing: false, waitCancel: null
   };
   const MAX_CUES = 3000;
   // Identificador estable por línea: los reproductores HLS añaden líneas
@@ -567,6 +567,8 @@
   // cross-origin MediaElementAudioSourceNode is silent by specification.
   function stopRecording(notify) {
     ++captions.epoch;
+    captions.waitCancel?.(); captions.waitCancel = null;
+    captions.capturing = false;
     const recorder = captions.recorder;
     captions.recorder = null;
     clearTimeout(captions.silentTimer);
@@ -611,20 +613,49 @@
     } catch (_) { sendToNexo({ type: "captions_status", code: "meter_unavailable" }); }
   }
 
+  // Gecko may populate captureStream tracks after metadata/MSE becomes ready.
+  // Wait briefly, but release pending streams immediately when CC is switched off.
+  function captureAudioTracks(stream, epoch) {
+    return new Promise(resolve => {
+      let timer = 0, attempts = 0, done = false;
+      const finish = tracks => {
+        if (done) return;
+        done = true; clearTimeout(timer);
+        stream.removeEventListener?.("addtrack", check);
+        if (captions.waitCancel === cancel) captions.waitCancel = null;
+        resolve(tracks);
+      };
+      const cancel = () => finish(null);
+      const check = () => {
+        clearTimeout(timer);
+        if (!captions.active || epoch !== captions.epoch) { finish(null); return; }
+        const tracks = stream.getAudioTracks();
+        if (tracks.length || ++attempts >= 31) { finish(tracks); return; }
+        timer = setTimeout(check, 100);
+      };
+      captions.waitCancel = cancel;
+      stream.addEventListener?.("addtrack", check);
+      check();
+    });
+  }
+
   async function startRecording() {
-    if (!captions.active || !captions.granted || !captions.live || captions.choosing || captions.track || captions.dom || captions.recorder) return;
+    if (!captions.active || !captions.granted || !captions.live || captions.choosing || captions.track || captions.dom || captions.recorder || captions.capturing) return;
     const video = captions.video;
     if (!video || !video.isConnected || video.paused || video.ended || document.visibilityState === "hidden") {
       sendToNexo({ type: "captions_status", code: "paused" }); return;
     }
     const epoch = ++captions.epoch;
+    captions.capturing = true;
     try {
       const capture = video.captureStream || video.mozCaptureStream;
       if (!capture || typeof MediaRecorder !== "function") throw new Error("unsupported");
       const mimeType = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus"].find(type => MediaRecorder.isTypeSupported(type));
       if (!mimeType) throw new Error("mime");
       const captured = capture.call(video);
-      const tracks = captured.getAudioTracks();
+      captions.stream = captured;
+      const tracks = await captureAudioTracks(captured, epoch);
+      if (tracks === null || epoch !== captions.epoch) { captured.getTracks().forEach(t => t.stop()); return; }
       // Release captured video tracks immediately. The underlying player is unaffected.
       for (const track of captured.getVideoTracks()) track.stop();
       if (!tracks.length) { for (const t of captured.getTracks()) t.stop(); throw new Error("no_audio"); }
@@ -661,6 +692,8 @@
     } catch (error) {
       if (epoch !== captions.epoch) return;
       stopRecording(false); captionError(error.message || "unsupported");
+    } finally {
+      if (epoch === captions.epoch) captions.capturing = false;
     }
   }
 

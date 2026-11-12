@@ -11,9 +11,17 @@ def check(build_tools, expected, apk):
     assert re.search(r"package: name='" + re.escape(expected) + "'", badging), apk
     manifest = subprocess.run([aapt, 'dump', 'xmltree', '--file', 'AndroidManifest.xml', apk], check=True, capture_output=True, text=True).stdout
     assert f'"{expected}.files"' in manifest, 'FileProvider authority does not match applicationId'
-    for name in ['NexoApplication', 'MainActivity', 'SettingsActivity', 'ExtensionsActivity', 'MigrationActivity', 'MediaPlaybackService', 'InternalOpenActivity']:
+    for name in ['NexoApplication', 'MainActivity', 'SettingsActivity', 'ExtensionsActivity', 'MigrationActivity', 'MediaPlaybackService', 'PlaybackCaptureService', 'InternalOpenActivity']:
         assert f'"com.nexo.browser.{name}"' in manifest, f'Incorrect component: {name}'
     assert '"com.ejemplo.navegador.MainActivity"' not in manifest
+    capture = next((e for e in re.split(r'\n(?=\s*E: )', manifest)
+                    if e.lstrip().startswith('E: service ') and '"com.nexo.browser.PlaybackCaptureService"' in e), None)
+    assert capture, 'Missing audio playback capture service'
+    assert '"android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"' in manifest
+    exported = re.search(r'android:exported\([^)]*\)=(?:\(type 0x12\))?(\w+)', capture)
+    kind = re.search(r'foregroundServiceType\([^)]*\)=(?:\(type 0x11\))?(\w+)', capture)
+    assert exported and int(exported.group(1), 16) == 0, 'Capture service must not be exported'
+    assert kind and int(kind.group(1), 16) == 32, 'Capture service must be mediaProjection only'
     # Paso de datos entre paquetes: permiso de firma y proveedor activo solo en el paquete anterior.
     elements = re.split(r'\n(?=\s*E: )', manifest)
     permission = next((e for e in elements if e.lstrip().startswith('E: permission ')

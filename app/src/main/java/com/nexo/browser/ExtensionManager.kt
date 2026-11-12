@@ -1103,7 +1103,7 @@ object ExtensionManager {
     }
 
     fun restoreCaptions(session: GeckoSession) {
-        if (LiveCaptions.isActive(session)) postCaptions(session, captionsOn(session))
+        if (LiveCaptions.isActive(session) && !LiveCaptions.usingDeviceAudio(session)) postCaptions(session, captionsOn(session))
     }
 
     /** Avisa al puente de que la app pasa a segundo plano o vuelve (recuperación de video). */
@@ -1173,6 +1173,7 @@ object ExtensionManager {
         )
     }
 
+    private val extensionTabPrompts = mutableSetOf<String>()
     private val tabBudgets = mutableMapOf<String, TabCreationBudget>()
 
     private fun registerExtension(
@@ -1225,18 +1226,23 @@ object ExtensionManager {
                     if (!tabBudgets.getOrPut(source.id) { TabCreationBudget() }.allow(android.os.SystemClock.elapsedRealtime())) {
                         return null
                     }
-                    val session =
-                        TabManager
-                            .createSessionForExtension(
-                                url,
-                                createDetails.active !=
-                                    false
-                            )
-
-                    return GeckoResult
-                        .fromValue(
-                            session
-                        )
+                    if (!UrlSafety.isWebUrl(url)) return GeckoResult.fromValue(TabManager.createSessionForExtension(url,createDetails.active != false))
+                    val activity = BrowserHosts.current()?.hostActivity ?: return null
+                    if (!extensionTabPrompts.add(source.id)) return null
+                    val result = GeckoResult<GeckoSession>()
+                    var answered = false
+                    android.app.AlertDialog.Builder(activity)
+                        .setTitle("¿Permitir que la extensión abra una pestaña?")
+                        .setMessage("${source.metaData.name ?: source.id} quiere abrir ${Uri.parse(url).host}.")
+                        .setPositiveButton("Abrir") { _, _ ->
+                            answered = true
+                            result.complete(TabManager.createSessionForExtension(url,createDetails.active != false))
+                        }.setNegativeButton("Cancelar",null)
+                        .setOnDismissListener {
+                            extensionTabPrompts.remove(source.id)
+                            if (!answered) result.completeExceptionally(SecurityException("Apertura cancelada por el usuario"))
+                        }.show()
+                    return result
                 }
 
                 override fun onOpenOptionsPage(
@@ -1312,15 +1318,8 @@ object ExtensionManager {
                             WebExtension
                                 .UpdateTabDetails
                     ): GeckoResult<AllowOrDeny> {
-                        if (
-                            details.active == true
-                        ) {
-                            TabManager
-                                .activateBySession(
-                                    session
-                                )
-                        }
-
+                        // Extension scripts must not steal focus from the user's current tab.
+                        if (details.active == true && session !== TabManager.activeSession()) return GeckoResult.deny()
                         return GeckoResult.allow()
                     }
                 }

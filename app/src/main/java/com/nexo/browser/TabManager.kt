@@ -444,10 +444,19 @@ object TabManager {
             )
 
         tab.url = target
+        tab.navigationEpoch++
         tab.lastUsed = System.currentTimeMillis()
 
         if(tab.networkProfile == null && tab.burnerId == null) GeckoRuntimeHolder.speculativeConnect(requireContext(),target)
-        ensureSession(tab).loadUri(target)
+        // An explicit navigation must never restore an older history entry first.
+        tab.sessionState = null
+        val session = tab.session
+        when {
+            session == null -> ensureSession(tab) // opens and loads exactly once, after routing
+            TabRouting.blocked(session) -> applyNetwork(tab.id, tab.networkProfile)
+            TabRouting.preparing(session) -> Unit // the pending route loads the latest tab.url
+            else -> session.loadUri(target)
+        }
         listener?.onTabChanged(tab)
         persist()
     }
@@ -455,7 +464,10 @@ object TabManager {
     /** [bypassCache]: recarga completa, sin usar la caché (pulsación larga en Recargar). */
     fun reload(bypassCache: Boolean = false) {
         val tab = activeTab() ?: return
-        if(tab.session?.let { TabRouting.synthetic(it) } == true) {
+        if (tab.session == null) {
+            tab.sessionState = null
+            ensureSession(tab)
+        } else if(tab.session?.let { TabRouting.synthetic(it) } == true) {
             applyNetwork(tab.id,tab.networkProfile)
         } else if (bypassCache) {
             tab.session?.reload(GeckoSession.LOAD_FLAGS_BYPASS_CACHE)
@@ -754,15 +766,18 @@ object TabManager {
                 if (!tab.isLoading) {
                     tab.sessionState
                         ?.let {
-                            GeckoSession.SessionState.fromString(it)
+                            runCatching { GeckoSession.SessionState.fromString(it) }.getOrNull()?.takeIf { state ->
+                                TabNavigation.canRestore(tab.url, runCatching { state[state.currentIndex].uri }.getOrNull())
+                            }
                         }
                 } else {
                     null
                 }
 
             val target = tab.url
+            val epoch = tab.navigationEpoch
             TabRouting.prepare(tab,session,restored != null) {
-                if(restored != null && tab.url == target) session.restoreState(restored) else session.loadUri(tab.url)
+                if(restored != null && tab.url == target && tab.navigationEpoch == epoch) session.restoreState(restored) else session.loadUri(tab.url)
             }
         } else if(tab.networkProfile != null || tab.burnerId != null) {
             mainHandler.post {
@@ -821,6 +836,7 @@ object TabManager {
 
     private fun configureDelegates(tab: BrowserTab, session: GeckoSession) {
         val newWindows = NewWindowPolicy()
+        var windowPrompt: android.app.AlertDialog? = null
         TranslatorManager.bind(session)
         session.setPromptDelegate(PagePrompts)
         session.setPermissionDelegate(SitePermissions)
@@ -909,7 +925,8 @@ object TabManager {
 
                 // window.focus() desde otra pestaña (p. ej. tras un inicio de sesión).
                 override fun onFocusRequest(session: GeckoSession) {
-                    if (tab.id != activeId) switchTo(tab.id, loadUrl = false)
+                    // window.focus() is not a user tab selection. Background pages,
+                    // including popunders, must not steal the visible GeckoView.
                 }
             }
         )
@@ -960,6 +977,25 @@ object TabManager {
 
         session.setNavigationDelegate(
             object : GeckoSession.NavigationDelegate {
+                override fun onLocationChange(
+                    session: GeckoSession,
+                    url: String?,
+                    permissions: MutableList<GeckoSession.PermissionDelegate.ContentPermission>,
+                    hasUserGesture: Boolean
+                ) {
+                    if (tab.session !== session || TabRouting.synthetic(session) || url == null || !isSafeAppNavigationUrl(url)) return
+                    if (tab.url != url) {
+                        if (LiveCaptions.usingDeviceAudio(session)) LiveCaptions.stop(session)
+                        else PlaybackAudioCapture.cancel(session)
+                        tab.sessionState = null
+                        tab.navigationEpoch++
+                        windowPrompt?.dismiss()
+                    }
+                    tab.url = url
+                    persist()
+                    listener?.onTabChanged(tab)
+                }
+
                 override fun onLoadRequest(
                     session: GeckoSession,
                     request: GeckoSession.NavigationDelegate.LoadRequest
@@ -994,9 +1030,35 @@ object TabManager {
 
                     if (tab.session !== session || tabs.none { it.id == tab.id }) return GeckoResult.deny()
                     if (request.target == GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW) {
-                        return if (newWindows.authorize(request.uri, request.hasUserGesture, android.os.SystemClock.elapsedRealtime())) {
-                            GeckoResult.allow()
-                        } else GeckoResult.deny()
+                        if (windowPrompt != null) return GeckoResult.deny()
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (!newWindows.authorize(request.uri, request.hasUserGesture && tab.id == activeId, now)) return GeckoResult.deny()
+                        // Gesture flags also accompany stolen video taps. Require explicit consent
+                        // for cross-origin popups rather than opening advertising tabs automatically.
+                        if (TabNavigation.needsWindowConfirmation(tab.url, request.uri)) {
+                            val activity = BrowserHosts.current()?.hostActivity ?: return GeckoResult.deny()
+                            val epoch = tab.navigationEpoch
+                            val decision = GeckoResult<AllowOrDeny>()
+                            var answered = false
+                            windowPrompt = android.app.AlertDialog.Builder(activity)
+                                .setTitle("¿Abrir otra pestaña?")
+                                .setMessage("La página quiere abrir ${Uri.parse(request.uri).host ?: "una ventana"}. Puedes cancelar y seguir en el reproductor.")
+                                .setNegativeButton("Cancelar", null)
+                                .setPositiveButton("Abrir") { _, _ ->
+                                    answered = true
+                                    val valid = tab.session === session && tab.id == activeId && tab.navigationEpoch == epoch &&
+                                        newWindows.authorize(request.uri,true,android.os.SystemClock.elapsedRealtime())
+                                    if (!valid) newWindows.cancel()
+                                    decision.complete(if(valid) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
+                                }.setOnDismissListener {
+                                    windowPrompt = null
+                                    if (!answered) { newWindows.cancel(); decision.complete(AllowOrDeny.DENY) }
+                                }.show()
+                            // Continue Gecko's original new-window request after consent so
+                            // window.opener/postMessage login flows and private isolation survive.
+                            return decision
+                        }
+                        return GeckoResult.allow()
                     }
 
                     val target =
@@ -1008,7 +1070,7 @@ object TabManager {
                     // Una ventana nueva se resuelve en onNewSession: no
                     // redirigir aquí o se cargaría en la pestaña actual.
                     if (
-                        target != request.uri &&
+                        request.isDirectNavigation && target != request.uri &&
                         request.target != GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW
                     ) {
                         tab.url = target
@@ -1061,7 +1123,8 @@ object TabManager {
                     sessionState: GeckoSession.SessionState
                 ) {
                     if (
-                        !TabRouting.synthetic(session) && !tab.isPrivate &&
+                        tab.session === session && !TabRouting.synthetic(session) && !tab.isPrivate &&
+                        TabNavigation.canRestore(tab.url, runCatching { sessionState[sessionState.currentIndex].uri }.getOrNull()) &&
                         !BrowserMediaController.isPlaying(tab.id)
                     ) {
                         tab.sessionState =
@@ -1071,8 +1134,10 @@ object TabManager {
                 }
 
                 override fun onPageStart(session: GeckoSession, url: String) {
+                    if (tab.session !== session) return
                     if (TabRouting.bootstrap(session,url) || TabRouting.preparing(session)) return
                     TabRouting.targetStarted(session)
+                    windowPrompt?.dismiss()
                     // Una página nueva no hereda los subtítulos (ni su consumo de Deepgram).
                     if (LiveCaptions.isActive(session)) LiveCaptions.stop(session)
                     tab.navigationEpoch++
@@ -1091,6 +1156,7 @@ object TabManager {
                     session: GeckoSession,
                     progress: Int
                 ) {
+                    if (tab.session !== session) return
                     if(TabRouting.synthetic(session)) return
                     listener?.onProgress(
                         tab,
@@ -1100,6 +1166,7 @@ object TabManager {
                 }
 
                 override fun onPageStop(session: GeckoSession, success: Boolean) {
+                    if (tab.session !== session) return
                     if(TabRouting.synthetic(session)) return
                     if(success) TabRouting.targetFinished(session)
                     tab.isLoading = false

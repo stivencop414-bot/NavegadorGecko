@@ -44,6 +44,7 @@ object TabRouting {
         return tab.burnerId != null &&
             (profile == null || (profile.type == "direct" && profile.latency == 0 && profile.latitude == null))
     }
+    fun blocked(session: GeckoSession) = failed.containsKey(session)
     fun preparing(session: GeckoSession) = pending.containsKey(session) || failed.containsKey(session)
     fun synthetic(session: GeckoSession) = preparing(session) || awaiting.containsKey(session)
     fun reserve(session: GeckoSession) { pending[session] = true; awaiting[session] = true }

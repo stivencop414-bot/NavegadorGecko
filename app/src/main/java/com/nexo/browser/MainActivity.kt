@@ -1277,6 +1277,7 @@ class MainActivity :
 
         if (!isInPictureInPictureMode) {
             val tab = TabManager.activeTab()
+            tab?.session?.takeIf { LiveCaptions.usingDeviceAudio(it) }?.let { LiveCaptions.stop(it) }
 
             ExtensionManager.sendLifecycle(tab?.session, false)
             wasBackgrounded = true
@@ -1842,6 +1843,7 @@ class MainActivity :
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == PlaybackAudioCapture.REQUEST) { PlaybackAudioCapture.result(this,resultCode,data); return }
         if (requestCode != REQUEST_FILE_PICKER) return
         val callback = filePickerCallback ?: return
         filePickerCallback = null

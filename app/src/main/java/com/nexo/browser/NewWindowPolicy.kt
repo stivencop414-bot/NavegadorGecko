@@ -14,6 +14,8 @@ class NewWindowPolicy {
         return true
     }
 
+    fun cancel() { pending = null }
+
     fun consume(uri: String, now: Long): Boolean {
         val expected = pending ?: return false
         pending = null
