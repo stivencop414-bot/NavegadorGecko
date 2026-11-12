@@ -533,3 +533,54 @@ test('a player exposing no audio fails after a bounded wait',async()=>{
   assert.ok(h.reports.some(x=>x.code==='no_audio'));
   assert.equal(audio.recorders.length,0);
 });
+
+// --- Audio que no se detecta: video silenciado y silencio real ---
+
+function silentAudio() {
+  const audio = audioMocks();
+  const Base = audio.extra.AudioContext;
+  audio.extra.AudioContext = class extends Base {
+    createAnalyser() { return { fftSize: 2048, getFloatTimeDomainData: data => data.fill(0), getByteTimeDomainData: data => data.fill(128) }; }
+  };
+  return audio;
+}
+
+test('a muted video waits for the user to unmute instead of failing', async () => {
+  const audio = audioMocks();
+  const h = harness(audio.extra), v = h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  v.muted = true;
+  h.captions(true, true); await flush(); await flush();
+  assert.equal(audio.recorders.length, 0, 'nothing recorded while muted');
+  assert.ok(h.reports.some(x => x.type === 'captions_status' && x.code === 'muted'));
+  assert.equal(h.reports.some(x => x.type === 'captions_error'), false);
+  v.muted = false; h.fire('volumechange', v); await flush(); await flush();
+  assert.equal(audio.recorders.length, 1, 'recording starts once the sound is on');
+});
+
+test('silence only counts while the video advances: a paused video is never reported as protected', async () => {
+  const audio = silentAudio();
+  const h = harness(audio.extra), v = h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  h.captions(true, true); await flush(); await flush();
+  assert.equal(audio.recorders.length, 1);
+  v.paused = true; // pausa del reproductor sin evento (no suelta la captura)
+  h.tick(40000);
+  assert.equal(h.reports.some(x => x.type === 'captions_error' && x.code === 'silent'), false);
+  v.paused = false;
+  for (let i = 0; i < 12; i++) { v.currentTime += 1.5; h.tick(1500); }
+  assert.ok(h.reports.some(x => x.type === 'captions_error' && x.code === 'silent'), 'real silence while playing is reported');
+});
+
+test('quiet speech under the old byte threshold is still detected as signal', async () => {
+  const audio = audioMocks();
+  const Base = audio.extra.AudioContext;
+  audio.extra.AudioContext = class extends Base {
+    createAnalyser() { return { fftSize: 2048, getFloatTimeDomainData: data => { data.fill(0); data[10] = 0.01; } }; }
+  };
+  const h = harness(audio.extra); h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  h.captions(true, true); await flush(); await flush();
+  h.tick(1600);
+  assert.ok(h.reports.some(x => x.type === 'captions_status' && x.code === 'signal'));
+});

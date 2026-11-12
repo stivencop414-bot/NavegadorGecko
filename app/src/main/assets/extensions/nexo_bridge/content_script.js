@@ -584,6 +584,32 @@
     if (notify && recorder) sendToNexo({ type: "captions_stop" });
   }
 
+  /** Video en silencio por el usuario o por el reproductor (autoplay sin sonido). */
+  function videoMuted(video) {
+    try { return !!video && (video.muted === true || Number(video.volume) === 0); } catch (_) { return false; }
+  }
+
+  /** Nivel máximo del fragmento analizado (0–1). Float si existe: detecta voz baja (~-50 dB). */
+  function peakLevel(analyser, floats, bytes) {
+    if (floats && typeof analyser.getFloatTimeDomainData === "function") {
+      analyser.getFloatTimeDomainData(floats);
+      let peak = 0;
+      for (const value of floats) { const level = Math.abs(value); if (level > peak) peak = level; }
+      return peak;
+    }
+    analyser.getByteTimeDomainData(bytes);
+    let peak = 0;
+    for (const value of bytes) { const level = Math.abs(value - 128) / 128; if (level > peak) peak = level; }
+    return peak;
+  }
+
+  /*
+   * Silencio real: solo cuenta mientras el video avanza con sonido. Un video
+   * pausado, silenciado o en una intro muda no se da por perdido; si se
+   * silencia, se avisa y se espera a que el usuario active el sonido.
+   */
+  const SILENCE_CHECK_MS = 1500;
+  const SILENCE_LIMIT_CHECKS = 10; // ~15 s reproduciendo sin señal
   function watchSilence(stream, recorder) {
     const Context = window.AudioContext || window.webkitAudioContext;
     if (!Context) return;
@@ -591,25 +617,35 @@
       const context = new Context();
       const source = context.createMediaStreamSource(stream);
       const analyser = context.createAnalyser();
+      analyser.fftSize = 2048;
       source.connect(analyser); // no connection to speakers; never duplicate audio
       captions.meter = { context, source };
       context.resume().catch(() => {});
-      const samples = new Uint8Array(analyser.fftSize);
-      let checks = 0;
+      const floats = typeof Float32Array === "function" ? new Float32Array(analyser.fftSize) : null;
+      const bytes = new Uint8Array(analyser.fftSize);
+      let silentChecks = 0, mutedReported = false, lastTime = -1;
       const check = () => {
         if (captions.recorder !== recorder) return;
         if (context.state !== "running") {
           sendToNexo({ type: "captions_status", code: "meter_unavailable" });
           return;
         }
-        analyser.getByteTimeDomainData(samples);
-        if (samples.some(value => Math.abs(value - 128) > 2)) {
+        const video = captions.video;
+        if (videoMuted(video)) {
+          if (!mutedReported) { mutedReported = true; sendToNexo({ type: "captions_status", code: "muted" }); }
+          silentChecks = 0;
+        } else if (peakLevel(analyser, floats, bytes) > 0.003) {
           sendToNexo({ type: "captions_status", code: "signal" }); return;
+        } else {
+          mutedReported = false;
+          const time = video ? Number(video.currentTime) : 0;
+          const advancing = video && !video.paused && !video.ended && time !== lastTime;
+          lastTime = time;
+          if (advancing && ++silentChecks >= SILENCE_LIMIT_CHECKS) { captionError("silent"); return; }
         }
-        if (++checks >= 6) { captionError("silent"); return; }
-        captions.silentTimer = setTimeout(check, 2000);
+        captions.silentTimer = setTimeout(check, SILENCE_CHECK_MS);
       };
-      captions.silentTimer = setTimeout(check, 2000);
+      captions.silentTimer = setTimeout(check, SILENCE_CHECK_MS);
     } catch (_) { sendToNexo({ type: "captions_status", code: "meter_unavailable" }); }
   }
 
@@ -645,6 +681,8 @@
     if (!video || !video.isConnected || video.paused || video.ended || document.visibilityState === "hidden") {
       sendToNexo({ type: "captions_status", code: "paused" }); return;
     }
+    // Sin sonido no hay nada que transcribir: se espera al "volumechange" en vez de fallar.
+    if (videoMuted(video)) { sendToNexo({ type: "captions_status", code: "muted" }); return; }
     const epoch = ++captions.epoch;
     captions.capturing = true;
     try {
@@ -1076,6 +1114,12 @@
     if (!captions.active || !captions.granted || event.target !== captions.video) return;
     if (captions.recorder || (!captions.track && !captions.dom)) release();
   }, true));
+
+  // El usuario activa el sonido de un video que empezó silenciado: empezar a transcribir.
+  document.addEventListener("volumechange", event => {
+    if (!captions.active || !captions.granted || !captions.live || event.target !== captions.video) return;
+    if (!videoMuted(captions.video) && !captions.recorder && !captions.track && !captions.dom) startRecording();
+  }, true);
 
   // Otro video en el mismo reproductor (siguiente de YouTube, lista, etc.).
   document.addEventListener("loadedmetadata", event => {

@@ -20,7 +20,8 @@ object PlaybackAudioCapture {
     private var grant: Grant? = null
     internal var service: PlaybackCaptureService? = null
     fun awaitingConsent(): Boolean = pending != null
-    fun request(activity: MainActivity) {
+    /** [reason]: la página no pudo dar su audio; se explica antes de proponer la captura de Android. */
+    fun request(activity: MainActivity, reason: String? = null) {
         if (Build.VERSION.SDK_INT < 29) {
             ToastMessage.show(activity, "La captura de reproducción requiere Android 10 o posterior."); return
         }
@@ -31,9 +32,11 @@ object PlaybackAudioCapture {
             ToastMessage.show(activity, "Configura Deepgram para reconocer el audio. Google o IA solo traducen texto."); return
         }
         if (pending != null) return
-        AlertDialog.Builder(activity).setTitle("Capturar el audio de Nexo")
-            .setMessage("Android pedirá permiso de captura y de grabación de audio. Nexo capturará solo su propia reproducción, no el micrófono ni otras apps. Puede incluir otras pestañas de Nexo que estén sonando: páusalas antes. Enviará ese audio a Deepgram para transcribirlo. Se detiene al apagar CC, cambiar de página/pestaña o salir de Nexo (salvo PiP). DRM y algunos reproductores pueden impedirlo.")
-            .setNegativeButton("Cancelar", null).setPositiveButton("Continuar") { _, _ ->
+        AlertDialog.Builder(activity).setTitle(if (reason != null) "¿Escuchar el video con Android?" else "Capturar el audio de Nexo")
+            .setMessage((reason?.let { "No se pudo tomar el audio desde la página: $it\n\nAndroid sí puede escucharlo directamente. " } ?: "") +
+                "Android pedirá permiso de captura y de grabación de audio. Nexo capturará solo su propia reproducción, no el micrófono ni otras apps. Puede incluir otras pestañas de Nexo que estén sonando: páusalas antes. Enviará ese audio a Deepgram para transcribirlo. Se detiene al apagar CC, cambiar de página/pestaña o salir de Nexo (salvo PiP). DRM y algunos reproductores pueden impedirlo.")
+            .setNegativeButton(if (reason != null) "Ahora no" else "Cancelar", null)
+            .setPositiveButton(if (reason != null) "Usar captura de Android" else "Continuar") { _, _ ->
                 if (!LiveCaptions.matchesCapture(session, token) || TabManager.activeSession() !== session) return@setPositiveButton
                 pending = Request(session, token)
                 activity.requestAndroidPermissions(arrayOf(Manifest.permission.RECORD_AUDIO)) { allowed ->
@@ -77,6 +80,15 @@ class PlaybackCaptureService : Service() {
     @Volatile private var running = false
     private var closing = false
     private val main = Handler(Looper.getMainLooper())
+    // Si el video está sonando (lo actualiza el hilo principal cada segundo).
+    @Volatile private var mediaPlaying = true
+    private val playbackWatch = object : Runnable {
+        override fun run() {
+            val current = session ?: return
+            mediaPlaying = TabManager.tabForSession(current)?.let { BrowserMediaController.isPlaying(it.id) } ?: true
+            if (running) main.postDelayed(this, 1000L)
+        }
+    }
     private val callback = object : MediaProjection.Callback() {
         override fun onStop() { fail("Android detuvo la autorización de captura. Puedes volver a activarla desde CC.") }
     }
@@ -88,8 +100,15 @@ class PlaybackCaptureService : Service() {
             return START_NOT_STICKY
         }
         val grant = PlaybackAudioCapture.takeGrant()
+        // Arrancado con startForegroundService: Android cierra la app si el servicio se detiene
+        // sin haber pasado a primer plano. Se promueve antes de cualquier comprobación.
+        if (!running && !promote()) {
+            grant?.let { LiveCaptions.onPageError(this, it.session, "android_capture", "Android no permitió iniciar la captura. Vuelve a intentarlo con Nexo visible.") }
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (Build.VERSION.SDK_INT < 29 || grant == null || running || !LiveCaptions.matchesCapture(grant.session,grant.token) || TabManager.activeSession() !== grant.session) {
-            if (!running) stopSelf()
+            if (!running) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
             return START_NOT_STICKY
         }
         if (closing) { LiveCaptions.onPageError(this,grant.session,"android_capture","La captura anterior se está cerrando. Vuelve a autorizar desde CC."); stopSelf(); return START_NOT_STICKY }
@@ -100,14 +119,6 @@ class PlaybackCaptureService : Service() {
             return START_NOT_STICKY
         }
         try {
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(NotificationChannel("caption-capture", "Captura para subtítulos", NotificationManager.IMPORTANCE_LOW))
-            val stop = PendingIntent.getService(this, 0, Intent(this,PlaybackCaptureService::class.java).setAction("stop"), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-            val notification = Notification.Builder(this,"caption-capture")
-                .setSmallIcon(R.drawable.ic_nav_reload).setContentTitle("Nexo · captura de audio activa")
-                .setContentText("Solo reproducción de Nexo · transcripción con Deepgram")
-                .setOngoing(true).addAction(Notification.Action.Builder(null,"Detener",stop).build()).build()
-            startForeground(947,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
             val consent = getSystemService(MediaProjectionManager::class.java).getMediaProjection(Activity.RESULT_OK,grant.data) ?: error("Projection denied")
             projection = consent
             consent.registerCallback(callback, main)
@@ -128,22 +139,34 @@ class PlaybackCaptureService : Service() {
             check(audio.recordingState == AudioRecord.RECORDSTATE_RECORDING)
             check(LiveCaptions.startDeviceAudio(grant.session,grant.token))
             running = true
+            main.post(playbackWatch)
             Thread({
                 val buffer = ByteArray(8000) // 250 ms, mono PCM16 at 16 kHz
+                val gain = PlaybackPcm.Gain()
                 var signal = false
-                val started = SystemClock.elapsedRealtime()
+                var playingSilenceMs = 0L
+                var quietReported = false
                 try {
                     while (running) {
                         val size = audio.read(buffer,0,buffer.size,AudioRecord.READ_BLOCKING)
                         if (size < 0) error("AudioRecord read failed")
                         if (size == 0) continue
                         val bytes = buffer.copyOf(size)
-                        signal = signal || PlaybackPcm.hasSignal(bytes)
+                        val heard = PlaybackPcm.hasSignal(bytes)
+                        signal = signal || heard
+                        if (heard) gain.apply(bytes)
                         main.post {
                             if (running && LiveCaptions.matchesCapture(grant.session,grant.token)) LiveCaptions.onDeviceAudio(grant.session,bytes)
                         }
-                        if (!signal && SystemClock.elapsedRealtime()-started > 15000) {
-                            main.post { if (running) fail("Android solo entrega silencio. Comprueba que el video suene; el reproductor, su proceso o DRM pueden impedir la captura.") }; break
+                        if (signal) continue
+                        // El silencio solo cuenta con el video sonando: en pausa no se da por perdido.
+                        if (mediaPlaying) playingSilenceMs += size * 1000L / (PlaybackPcm.SAMPLE_RATE * 2)
+                        if (!quietReported && playingSilenceMs > 6000) {
+                            quietReported = true
+                            main.post { if (running) LiveCaptions.onStatus(grant.session,"device_quiet") }
+                        }
+                        if (playingSilenceMs > 25000) {
+                            main.post { if (running) fail("Android solo entrega silencio aunque el video se reproduce. Comprueba que no esté silenciado; el reproductor o DRM pueden impedir la captura.") }; break
                         }
                     }
                 } catch (_: Exception) { main.post { if(running) fail("Android no pudo seguir capturando el audio del reproductor.") } }
@@ -151,6 +174,19 @@ class PlaybackCaptureService : Service() {
         } catch (_: Exception) { fail("No se pudo iniciar la captura de reproducción. Comprueba permisos y vuelve a autorizar con Nexo visible.") }
         return START_NOT_STICKY
     }
+    /** Notificación de captura con "Detener"; false si Android no deja pasar a primer plano. */
+    private fun promote(): Boolean = runCatching {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel("caption-capture", "Captura para subtítulos", NotificationManager.IMPORTANCE_LOW))
+        val stop = PendingIntent.getService(this, 0, Intent(this,PlaybackCaptureService::class.java).setAction("stop"), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val notification = Notification.Builder(this,"caption-capture")
+            .setSmallIcon(R.drawable.ic_stat_nexo).setContentTitle("Nexo · captura de audio activa")
+            .setContentText("Solo reproducción de Nexo · transcripción con Deepgram")
+            .setOngoing(true).addAction(Notification.Action.Builder(null,"Detener",stop).build()).build()
+        if (Build.VERSION.SDK_INT >= 29) startForeground(947,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        else startForeground(947,notification)
+    }.isSuccess
+
     private fun fail(message: String) {
         if (closing) return // ignore a revocation already queued before explicit stop
         val current = session
@@ -160,6 +196,7 @@ class PlaybackCaptureService : Service() {
     internal fun finishCapture() {
         if (closing) return
         closing = true; running = false
+        main.removeCallbacks(playbackWatch)
         val audio = recorder; recorder = null
         runCatching { audio?.stop() }; runCatching { audio?.release() }
         val consent = projection; projection = null

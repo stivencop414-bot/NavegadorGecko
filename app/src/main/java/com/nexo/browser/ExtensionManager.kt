@@ -1117,10 +1117,10 @@ object ExtensionManager {
     private fun captionErrorText(code: String): String = when (code) {
         "no_video" -> "No hay un video en esta página."
         "suspended" -> "Toca el video una vez y vuelve a activar los subtítulos."
-        "unsupported", "mime", "capture", "SecurityError" -> "Este reproductor no permite capturar audio Opus. Prueba una pista de subtítulos propia."
-        "no_audio" -> "No hay pistas de audio capturables; puede ser CORS o contenido protegido."
+        "unsupported", "mime", "capture", "SecurityError" -> "La página no deja grabar el audio de este reproductor."
+        "no_audio" -> "El reproductor no entrega su audio a la página (otro origen, protección o reproductor especial)."
         "paused" -> "Esperando a que el video se reproduzca."
-        "silent" -> "El video no deja captar su audio (puede estar protegido)."
+        "silent" -> "El video suena pero la página solo recibe silencio (otro origen o contenido protegido)."
         "need_key" -> "Hace falta una clave de Deepgram para este video."
         else -> "No se pudo captar el audio del video."
     }
