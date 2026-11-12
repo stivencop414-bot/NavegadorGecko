@@ -655,7 +655,8 @@ class MainActivity :
             this,
             url,
             isPrivate = tab?.isPrivate == true,
-            referrer = tab?.url
+            referrer = tab?.url,
+            parallel = tab?.burnerId == null
         ) { _, message ->
             runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
         }

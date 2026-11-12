@@ -846,9 +846,16 @@ object TabManager {
                         return
                     }
 
+                    // Sin proxy ni Burner, un archivo grande puede repartirse en varias conexiones
+                    // y reanudarse si se corta (misma sesión: cookies y modo privado).
+                    val source = if (tab.networkProfile == null && tab.burnerId == null) {
+                        DownloadSource(tab.isPrivate, tab.url.takeIf { UrlSafety.isWebUrl(it) })
+                    } else null
+                    listener?.onMessage("Descargando…")
                     DownloadStore.saveResponse(
                         requireContext(),
-                        response
+                        response,
+                        source
                     ) { _, message ->
                         listener?.onMessage(message)
                     }
