@@ -2,6 +2,7 @@ package com.nexo.browser
 
 import android.content.Context
 import org.mozilla.geckoview.ContentBlocking
+import org.mozilla.geckoview.GeckoPreferenceController
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.mozilla.geckoview.GeckoWebExecutor
@@ -52,6 +53,7 @@ object GeckoRuntimeHolder {
 
                     executor = GeckoWebExecutor(it)
                     applyRuntimePrefs(context)
+                    applyAudioPrefs()
                 }
             }
         }
@@ -78,6 +80,23 @@ object GeckoRuntimeHolder {
             BrowserPrefs.THEME_SYSTEM -> GeckoRuntimeSettings.COLOR_SCHEME_SYSTEM
             else -> GeckoRuntimeSettings.COLOR_SCHEME_DARK
         }
+
+    /**
+     * Audio de Gecko por la vía normal del mezclador de Android, la que la
+     * captura de reproducción (subtítulos) puede oír. cubeb abre los flujos
+     * AAudio en modo de baja latencia (MMAP, invisible para la captura) si
+     * piden ≤ 4000 frames: Web Audio y los videos capturados por la página
+     * pedían 512–1024. Con 4800 frames (~100 ms) van por el mezclador.
+     * Tienen que ser preferencias de usuario: Gecko ignora la de Web Audio
+     * si solo es un valor por defecto (las de arranque lo son).
+     */
+    @androidx.annotation.OptIn(markerClass = [org.mozilla.geckoview.ExperimentalGeckoViewApi::class])
+    private fun applyAudioPrefs() {
+        runCatching {
+            GeckoPreferenceController.setGeckoPref("media.cubeb_latency_mtg_frames", 4800, GeckoPreferenceController.PREF_BRANCH_USER)
+            GeckoPreferenceController.setGeckoPref("media.cubeb_latency_playback_ms", 150, GeckoPreferenceController.PREF_BRANCH_USER)
+        }
+    }
 
     fun applyRuntimePrefs(context: Context) {
         val settings = runtime?.settings ?: return
