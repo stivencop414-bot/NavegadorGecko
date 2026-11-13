@@ -52,6 +52,9 @@ object LiveCaptions {
         // Motivo del último fallo de la captura en la página y si ya se ofreció la de Android.
         var pageFailure: String? = null
         var offeredDevice = false
+        // El audio del video solo sale hacia Deepgram si el usuario lo eligió (o lo dejó automático en Ajustes).
+        var audioAllowed = false
+        var offeredChoice = false
         var socket: WebSocket? = null
         var opened = false
         val queue = ArrayDeque<ByteString>()
@@ -233,12 +236,13 @@ object LiveCaptions {
 
     /** Envía la orden a la página; si el puente aún no conecta, se reenvía al conectar. */
     private fun deliver(context: Context, stream: Stream) {
-        // Con clave, la página puede usar Deepgram si el video no trae subtítulos propios.
+        // Texto primero (pista, reproductor, archivo .vtt/.srt). El audio solo con permiso explícito.
         stream.delivered = ExtensionManager.setCaptions(
             stream.session,
             true,
-            live = BrowserPrefs.deepgramKey(context).isNotBlank(),
-            language = stream.language
+            live = audioAllowed(stream),
+            language = stream.language,
+            target = BrowserPrefs.captionTranslateTo(context)
         )
         stream.stateChangedAt = SystemClock.uptimeMillis()
     }
@@ -464,6 +468,33 @@ object LiveCaptions {
         notifyChanged(session)
     }
 
+    private fun audioAllowed(stream: Stream): Boolean =
+        BrowserPrefs.deepgramKey(AppContext.get()).isNotBlank() &&
+            (stream.audioAllowed || BrowserPrefs.captionAudioAuto(AppContext.get()))
+
+    fun audioAllowed(session: GeckoSession): Boolean = active[session]?.let { audioAllowed(it) } == true
+
+    /** El usuario eligió transcribir el audio de este video con Deepgram. */
+    fun allowAudio(context: Context, session: GeckoSession?) {
+        val stream = session?.let { active[it] } ?: return
+        stream.audioAllowed = true
+        stream.pageFailure = null
+        setState(stream, State.WAITING, "Transcribiendo el audio con Deepgram · reproduce el video…")
+        deliver(context.applicationContext, stream)
+        notifyChanged(stream.session)
+    }
+
+    /**
+     * true una sola vez por activación cuando el video no trae ningún texto y
+     * el audio no está permitido: la interfaz pregunta qué hacer.
+     */
+    fun takeNoTextChoice(session: GeckoSession?): Boolean {
+        val stream = session?.let { active[it] } ?: return false
+        if (stream.offeredChoice || stream.pageFailure != "need_key" || audioAllowed(stream)) return false
+        stream.offeredChoice = true
+        return true
+    }
+
     /** Fallos de la página que la captura de Android puede resolver (no claves, límites ni red). */
     private val DEVICE_FIXABLE = setOf("no_audio", "silent", "capture", "unsupported", "mime", "SecurityError", "NotSupportedError", "suspended")
 
@@ -487,8 +518,8 @@ object LiveCaptions {
         if (code == "need_key") {
             // La página sigue vigilando: si el usuario enciende el CC del reproductor, Nexo lo toma solo.
             setState(stream, State.ERROR,
-                "Este video no trae subtítulos que Nexo pueda leer. Activa los subtítulos del reproductor " +
-                    "(Nexo los tomará solo) o añade una clave de Deepgram para transcribir el audio.")
+                "Este video no trae subtítulos de texto. Si enciendes los del reproductor, Nexo los toma solo; " +
+                    "también puedes usar los subtítulos instantáneos de Android o transcribir el audio.")
             notifyChanged(session)
             return
         }

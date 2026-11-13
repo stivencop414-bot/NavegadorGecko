@@ -1355,6 +1355,11 @@ class MainActivity :
         val message = LiveCaptions.message(session)
         if (LiveCaptions.state(session) == LiveCaptions.State.ERROR && message != null && message != lastCaptionMessage) {
             lastCaptionMessage = message
+            // Sin ningún texto en el video: preguntar (nada se graba ni se envía sin elegirlo).
+            if (LiveCaptions.takeNoTextChoice(session)) {
+                SystemCaptions.showNoTextChoice(this, session) { refreshCaptionsUi() }
+                return
+            }
             // La página no pudo dar su audio: Android puede escucharlo directamente (una vez por activación).
             if (Build.VERSION.SDK_INT >= 29 && BrowserPrefs.deepgramKey(this).isNotBlank() &&
                 !PlaybackAudioCapture.awaitingConsent() && LiveCaptions.takeDeviceSuggestion(session)

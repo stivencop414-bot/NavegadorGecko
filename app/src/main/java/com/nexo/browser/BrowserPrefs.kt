@@ -168,6 +168,9 @@ object BrowserPrefs {
     fun captionMode(c: Context) = p(c).getString("caption_mode", "translated") ?: "translated"
     fun setCaptionMode(c: Context, v: String) = p(c).edit().putString("caption_mode", v).apply()
     // Límite diario de audio enviado a Deepgram (minutos; 0 = sin límite) y consumo de hoy.
+    /** false (por defecto): sin subtítulos de texto, Nexo pregunta antes de enviar el audio a Deepgram. */
+    fun captionAudioAuto(c: Context) = p(c).getBoolean("caption_audio_auto", false)
+    fun setCaptionAudioAuto(c: Context, v: Boolean) = p(c).edit().putBoolean("caption_audio_auto", v).apply()
     fun captionDailyLimit(c: Context) = p(c).getInt("caption_daily_limit", 120).coerceIn(0, 1440)
     fun setCaptionDailyLimit(c: Context, v: Int) = p(c).edit().putInt("caption_daily_limit", v.coerceIn(0, 1440)).apply()
     private fun today(): String = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())

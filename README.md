@@ -46,7 +46,13 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
   - Si el reproductor dibuja sus propios subtítulos (YouTube, Netflix, Prime Video, video.js, JW Player,
     Shaka, Plyr, Bitmovin), Nexo los lee sin clave y los muestra con su estilo y traducidos. En YouTube
     los activa solo; en otros sitios basta con encender el CC del reproductor.
-  - Si no, el audio se comprime en la página (Opus, ~24 kbps) y Deepgram lo transcribe en streaming desde el
+  - Si el reproductor descarga su propio archivo de subtítulos (`.vtt`/`.srt`), Nexo lo lee y lo sincroniza
+    con el video (prefiere el del idioma al que traduces). Texto, sin audio ni servidores.
+  - Si el video no trae ningún texto, Nexo **pregunta**: subtítulos instantáneos de Android (generados en el
+    teléfono, sin enviar nada) o transcribir con Deepgram. El audio nunca se envía sin elegirlo, salvo que
+    actives «Transcribir el audio sin preguntar». Nunca se usa el micrófono: se toma el sonido digital del
+    reproductor, así que da igual usar audífonos.
+  - Con Deepgram, el audio se comprime en la página (Opus, ~24 kbps) y se transcribe en streaming desde el
     proceso nativo; la clave nunca llega a la página.
   - Traducción a 37 idiomas sin esperas artificiales: cada frase sale al momento si no hay otra petición en
     curso (lo que llega mientras tanto viaja junto en la siguiente), el texto provisional se traduce por
