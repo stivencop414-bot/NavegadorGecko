@@ -2,6 +2,9 @@
 
 ## Paso automático (0.26.1)
 
+> Desde 0.27.0 los releases solo publican la app nueva (`com.nexo.browser`). La actualización de
+> transición se publicó en 0.26.1 y 0.26.2; si ya la tienes instalada, el paso automático sigue funcionando.
+
 Desde 0.26.1 los datos nativos pasan solos de la app anterior (`com.ejemplo.navegador`) a Nexo nuevo
 (`com.nexo.browser`), sin archivos ni contraseñas:
 
