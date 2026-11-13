@@ -49,6 +49,11 @@ object LiveCaptions {
         @Volatile var stopped = false
         val calls = java.util.concurrent.ConcurrentHashMap.newKeySet<okhttp3.Call>()
         var deviceAudio = false
+        // Captura de Android: nivel del audio que llega (0–100), desde cuándo hay señal y si ya se reabrió el audio.
+        var deviceLevel = 0
+        var deviceSignalSince = 0L
+        var devicePlaying = false
+        var deviceNudged = false
         // Motivo del último fallo de la captura en la página y si ya se ofreció la de Android.
         var pageFailure: String? = null
         var offeredDevice = false
@@ -125,7 +130,8 @@ object LiveCaptions {
             for (stream in active.values.toList()) {
                 // Deepgram cierra a los ~10 s sin audio: mantener la conexión en pausas cortas del habla.
                 if (stream.opened && now - stream.lastAudioAt > 3500L) stream.socket?.send(CaptionProtocol.KEEP_ALIVE)
-                if (stream.startedAt > 0 && now - maxOf(stream.startedAt, stream.lastResultAt) > 15000 && stream.state != State.ERROR) {
+                // La captura de Android tiene su propio diagnóstico (nivel y Deepgram), al segundo.
+                if (!stream.deviceAudio && stream.startedAt > 0 && now - maxOf(stream.startedAt, stream.lastResultAt) > 15000 && stream.state != State.ERROR) {
                     stream.message = if (stream.receivedBytes == 0L) "No llega audio del reproductor. Puede estar pausado o protegido."
                         else "Audio recibido: ${stream.receivedBytes} bytes · ${if (stream.signal) "señal detectada" else "señal no confirmada"}. Deepgram aún no devuelve texto."
                     notifyChanged(stream.session)
@@ -400,6 +406,7 @@ object LiveCaptions {
         ExtensionManager.setCaptions(session,false)
         close(stream); resetSource(stream)
         stream.deviceAudio = true
+        stream.deviceLevel = 0; stream.deviceSignalSince = 0L; stream.devicePlaying = false; stream.deviceNudged = false
         stream.trackMode = false; stream.domMode = false
         stream.text.clear(); stream.headerChecked = true
         stream.receivedBytes = 0; stream.lastAudioAt = 0; stream.lastResultAt = 0
@@ -408,6 +415,40 @@ object LiveCaptions {
         connect(AppContext.get(),stream,CaptionProtocol.modelFor(stream.language))
         return true
     }
+    /**
+     * Diagnóstico de la captura de Android, una vez por segundo: [peak] es el
+     * pico PCM16 (0–32767) del último segundo y [playing] si el video suena.
+     */
+    fun onDeviceLevel(session: GeckoSession, peak: Int, playing: Boolean) {
+        val stream = active[session] ?: return
+        if (!stream.deviceAudio || stream.state == State.ERROR) return
+        val level = (peak * 100 / 32767).coerceIn(0, 100).let { if (peak > 120 && it == 0) 1 else it }
+        stream.deviceLevel = level
+        stream.devicePlaying = playing
+        val now = SystemClock.uptimeMillis()
+        if (level > 0 && stream.deviceSignalSince == 0L) stream.deviceSignalSince = now
+        // Con texto en pantalla el diagnóstico sobra.
+        if (stream.lastResultAt > 0L) return
+        val message = deviceMessage(stream, now)
+        if (message != stream.message) { stream.message = message; notifyChanged(session) }
+    }
+
+    private fun languageLabel(stream: Stream): String =
+        if (stream.language == "multi") "detección automática" else CaptionProtocol.TARGET_LANGUAGES.firstOrNull { it.code == stream.language }?.label ?: stream.language
+
+    private fun deviceMessage(stream: Stream, now: Long): String {
+        val level = "nivel ${(stream.deviceLevel / 5) * 5} %".let { if (stream.deviceLevel in 1..4) "nivel bajo" else it }
+        return when {
+            stream.deviceLevel == 0 && !stream.devicePlaying -> "Android escuchando · aún no llega sonido (¿el video está en pausa?)"
+            stream.deviceLevel == 0 -> "Android captura pero solo llega silencio (nivel 0 %)" +
+                if (stream.deviceNudged) " · reabriendo el audio del video…" else " · comprueba que el video suene"
+            !stream.opened -> "Android oye el video ($level) · conectando con Deepgram…"
+            stream.deviceSignalSince > 0 && now - stream.deviceSignalSince > 15000 ->
+                "Android oye el video ($level), pero Deepgram no devuelve texto. Revisa el idioma del audio en CC (ahora: ${languageLabel(stream)})."
+            else -> "Android oye el video ($level) · Deepgram escuchando (${languageLabel(stream)})…"
+        }
+    }
+
     fun onDeviceAudio(session: GeckoSession, bytes: ByteArray) {
         val stream = active[session] ?: return
         if (!stream.deviceAudio) return
@@ -719,7 +760,15 @@ object LiveCaptions {
             "meter_unavailable" -> "Audio capturado; medidor no disponible. Esperando transcripción…"
             "paused" -> "Esperando reproducción…"
             "muted" -> "El video está en silencio: activa su sonido y Nexo empezará a transcribir."
-            "device_quiet" -> "Android aún no recibe sonido: comprueba que el video suene (sin silenciar)."
+            "device_quiet" -> {
+                // Silencio con el video sonando: puede seguir en la vía de baja latencia que
+                // Android no captura. Se reabre su audio una vez (un salto al mismo punto).
+                if (stream.deviceAudio && !stream.deviceNudged) {
+                    stream.deviceNudged = true
+                    ExtensionManager.nudgeMedia(session)
+                }
+                deviceMessage(stream, SystemClock.uptimeMillis())
+            }
             else -> stream.message
         }
         notifyChanged(session)

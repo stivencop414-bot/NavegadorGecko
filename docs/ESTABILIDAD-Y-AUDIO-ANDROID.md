@@ -75,3 +75,32 @@ Las pruebas JS comprueban pistas tardías, cancelación, tiempo límite, orden d
 Antes de distribuir, probar en Android 10 y 14+ con audio controlado: aceptar/denegar/revocar consentimiento, apagar durante el selector, cambiar página/pestaña, Home/PiP, notificación Detener, silencio, red cortada y límites diarios. Verificar que el micrófono y otras apps nunca entran en la captura, que el sonido no cambia, y que la memoria/proyección se liberan. Después probar los reproductores habituales. Para navegación: varias SPA, volver/avanzar, cambio de pestaña descartada, popunders con toque, login con ventana y extensiones que pidan abrir/activar pestañas.
 
 Fuentes oficiales: [captura de reproducción de Android](https://developer.android.com/media/platform/av-capture), [ciclo de vida y consentimiento de MediaProjection](https://developer.android.com/media/grow/media-projection), y API de GeckoView 159 contrastada con el AAR instalado (NavigationDelegate.onLocationChange, SessionState.currentIndex y HistoryItem.uri).
+
+## Captura de Android que no oía nada (0.27.1)
+
+Síntoma: con el permiso de captura de Android concedido, en servidores de
+streaming (reproductores HLS/m3u8 dentro de iframes de terceros) no aparecía
+ningún subtítulo.
+
+Causas y cambios:
+
+- **Marcos nuevos cancelaban la captura.** Estas páginas crean iframes
+  (anuncios, reproductor recargado) todo el tiempo. Cada marco nuevo recibía
+  la orden de subtítulos de página, respondía «sin texto» o empezaba su
+  propia grabación, y eso cancelaba la captura de Android o cerraba la
+  conexión PCM con Deepgram. Mientras Android captura, la página ya no
+  recibe órdenes ni se atienden sus mensajes de subtítulos.
+- **Vía de audio de baja latencia.** Gecko reproduce con AAudio. Un flujo de
+  baja latencia (MMAP), como el que queda tras `mozCaptureStream` o en
+  reproductores con Web Audio, no lo enruta Android a la captura si ya estaba
+  abierto. Con 6 s de silencio y el video sonando, Nexo hace una vez un salto
+  al mismo punto (`media_nudge`): Gecko reabre el flujo y Android lo captura.
+- **Sin abortos mudos.** Todos los casos en que la solicitud se cancelaba sin
+  decir nada muestran ahora el motivo. Una solicitud sin respuesta ya no
+  bloquea las siguientes, y en Android 14+ se pide directamente la pantalla
+  completa: con «Una sola app» se podía elegir otra app.
+- **Diagnóstico en pantalla.** Mientras no hay texto: nivel de audio que
+  recibe Android, estado de Deepgram e idioma configurado.
+
+El formato del video (m3u8/HLS) no afecta a la captura de Android: Android
+escucha la salida de audio de Nexo, no el archivo.

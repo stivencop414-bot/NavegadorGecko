@@ -1105,6 +1105,15 @@ object ExtensionManager {
         put("lang", LiveCaptions.language(session).takeIf { it.matches(Regex("[a-zA-Z]{2,3}(-[A-Za-z]{2,4})?|multi")) } ?: "multi")
     }
 
+    /**
+     * Reabre la salida de audio de los videos que suenan (un salto al mismo
+     * punto). Gecko vuelve a crear su flujo de audio y Android lo enruta ya
+     * por la vía que la captura puede oír.
+     */
+    fun nudgeMedia(session: GeckoSession?) {
+        postCaptions(session, JSONObject().put("type", "media_nudge"))
+    }
+
     fun restoreCaptions(session: GeckoSession) {
         if (LiveCaptions.isActive(session) && !LiveCaptions.usingDeviceAudio(session)) postCaptions(session, captionsOn(session))
     }
@@ -1605,7 +1614,9 @@ object ExtensionManager {
                                 return
                             }
                             val session = port.sender.session
-                            if (json != null && session != null && LiveCaptions.isActive(session)) {
+                            // Con la captura de Android activa la página no participa: un marco nuevo
+                            // (anuncio, reproductor recargado) no puede reiniciarla ni cancelarla.
+                            if (json != null && session != null && LiveCaptions.isActive(session) && !LiveCaptions.usingDeviceAudio(session)) {
                                 val type = json.optString("type")
                                 if (type == "captions_offer" && captionOwners[session] == null) {
                                     val pending = captionOffers[session]
@@ -1667,7 +1678,7 @@ object ExtensionManager {
                 port.sender.session?.let { session ->
                     // Solo al marco nuevo: la orden pudo llegar antes de que conectara. Los
                     // demás marcos siguen como estaban (sin reiniciar a quien tiene los subtítulos).
-                    if (LiveCaptions.isActive(session)) {
+                    if (LiveCaptions.isActive(session) && !LiveCaptions.usingDeviceAudio(session)) {
                         runCatching { port.postMessage(captionsOn(session)) }
                         LiveCaptions.onBridgeConnected(session)
                     }

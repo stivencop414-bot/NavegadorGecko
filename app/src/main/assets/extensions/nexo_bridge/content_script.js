@@ -1383,6 +1383,22 @@
   // Conexión con Nexo (con reconexión)
   // ---------------------------------------------------------------
 
+  /*
+   * Captura de Android: un salto al mismo punto hace que Gecko cierre y vuelva
+   * a abrir el flujo de audio del video. Abierto con la captura ya activa,
+   * Android lo enruta por la vía que puede oír (no por la de baja latencia).
+   */
+  function nudgeMedia() {
+    const media = new Set(collectVideos().concat(Array.from(document.getElementsByTagName("audio"))));
+    for (const element of media) {
+      try {
+        if (element.paused || element.ended || element.muted || element.readyState < 2) continue;
+        const time = Number(element.currentTime);
+        if (Number.isFinite(time)) element.currentTime = time;
+      } catch (_) {}
+    }
+  }
+
   function onNativeMessage(message) {
     if (!message || typeof message !== "object") return;
 
@@ -1413,6 +1429,8 @@
         if (captions.active) setTimeout(startRecording, 900);
       }
     }
+
+    if (message.type === "media_nudge") nudgeMedia();
 
     if (message.type === "captions") {
       setCaptions(message.active === true, message.live === true, message.lang, message.target);
