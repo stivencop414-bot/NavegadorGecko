@@ -635,3 +635,17 @@ test('HLS subtitle segments with relative timing are not used as a whole file', 
   assert.equal(h.reports.some(x => x.type === 'captions_track' && x.source === 'file'), false);
   assert.ok(h.reports.some(x => x.type === 'captions_error' && x.code === 'need_key'), 'no text source: Nexo asks instead of recording');
 });
+
+test('media_nudge reopens the audio of playing media with a seek to the same point', () => {
+  const h = harness(), playing = h.video(), paused = h.video(), muted = h.video();
+  paused.paused = true; muted.muted = true;
+  const seeks = new Map();
+  for (const v of [playing, paused, muted]) {
+    let time = 42; seeks.set(v, []);
+    Object.defineProperty(v, 'currentTime', { get: () => time, set: value => { seeks.get(v).push(value); time = value; } });
+  }
+  h.message({ type: 'media_nudge' });
+  assert.deepEqual(seeks.get(playing), [42], 'one seek to the current time');
+  assert.deepEqual(seeks.get(paused), []);
+  assert.deepEqual(seeks.get(muted), []);
+});
