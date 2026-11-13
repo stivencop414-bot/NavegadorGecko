@@ -411,7 +411,7 @@ object LiveCaptions {
         stream.text.clear(); stream.headerChecked = true
         stream.receivedBytes = 0; stream.lastAudioAt = 0; stream.lastResultAt = 0
         stream.startedAt = System.currentTimeMillis(); stream.signal = false
-        setState(stream,State.CONNECTING,"Capturando reproducción de Nexo con Android · conectando…")
+        setState(stream,State.CONNECTING,"Capturando el audio con Android · conectando…")
         connect(AppContext.get(),stream,CaptionProtocol.modelFor(stream.language))
         return true
     }

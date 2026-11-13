@@ -104,3 +104,27 @@ Causas y cambios:
 
 El formato del video (m3u8/HLS) no afecta a la captura de Android: Android
 escucha la salida de audio de Nexo, no el archivo.
+
+## Audio de Gecko por el mezclador de Android (0.27.2)
+
+Tras la 0.27.1 la captura seguía sin oír nada en esos servidores.
+
+- **Latencia de audio como preferencias de usuario** (`GeckoPreferenceController`,
+  rama de usuario): `media.cubeb_latency_mtg_frames = 4800` y
+  `media.cubeb_latency_playback_ms = 150`. cubeb abre AAudio en modo de baja
+  latencia (MMAP, invisible para `AudioPlaybackCapture`) si el flujo pide
+  ≤ 4000 frames. Web Audio, los reproductores que pasan el video por
+  `createMediaElementSource` y los videos capturados con `mozCaptureStream`
+  usan el MediaTrackGraph, que pedía 512–1024. Con 4800 (~100 ms) van por el
+  mezclador. Gecko solo respeta `media.cubeb_latency_mtg_frames` si tiene
+  valor de usuario. Las preferencias de arranque (`configFilePath`, YAML)
+  entran como valores por defecto y no servían.
+- **Sin filtro por UID** en la captura: se capta el audio multimedia
+  (MEDIA/GAME/UNKNOWN) del teléfono, sea cual sea el proceso que lo
+  reproduce. Nunca el micrófono. El diálogo lo explica.
+- Descartado de una propuesta externa: reescribir cabeceras CORS de todas
+  las respuestas con `Access-Control-Allow-Credentials: true` (abriría la
+  lectura de datos con sesión entre sitios) y forzar `crossOrigin="anonymous"`
+  en los videos (rompe la reproducción en CDNs sin CORS). Tampoco aplica que
+  el audio de 24–32 kHz active la baja latencia: `AudioSink` remuestrea por
+  debajo de 44,1 kHz a la frecuencia preferida (48 kHz).

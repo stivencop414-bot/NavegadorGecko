@@ -39,7 +39,7 @@ object PlaybackAudioCapture {
         pending?.let { if (SystemClock.uptimeMillis() - it.at < 60_000L) return else pending = null }
         AlertDialog.Builder(activity).setTitle(if (reason != null) "¿Escuchar el video con Android?" else "Capturar el audio de Nexo")
             .setMessage((reason?.let { "No se pudo tomar el audio desde la página: $it\n\nAndroid sí puede escucharlo directamente. " } ?: "") +
-                "Android pedirá permiso de captura y de grabación de audio. Nexo capturará solo su propia reproducción, no el micrófono ni otras apps. Puede incluir otras pestañas de Nexo que estén sonando: páusalas antes. Enviará ese audio a Deepgram para transcribirlo. Se detiene al apagar CC, cambiar de página/pestaña o salir de Nexo (salvo PiP). DRM y algunos reproductores pueden impedirlo.")
+                "Android pedirá permiso de captura y de grabación de audio. Nexo escuchará el audio multimedia que suene en el teléfono (nunca el micrófono): pausa la música u otras apps y pestañas que estén sonando. Enviará ese audio a Deepgram para transcribirlo. Se detiene al apagar CC, cambiar de página/pestaña o salir de Nexo (salvo PiP). DRM y algunos reproductores pueden impedirlo.")
             .setNegativeButton(if (reason != null) "Ahora no" else "Cancelar", null)
             .setPositiveButton(if (reason != null) "Usar captura de Android" else "Continuar") { _, _ ->
                 if (!LiveCaptions.matchesCapture(session, token) || TabManager.activeSession() !== session) {
@@ -151,8 +151,9 @@ class PlaybackCaptureService : Service() {
             val consent = getSystemService(MediaProjectionManager::class.java).getMediaProjection(Activity.RESULT_OK,grant.data) ?: error("Projection denied")
             projection = consent
             consent.registerCallback(callback, main)
+            // Sin filtro por UID: el audio de Gecko puede salir de un proceso hijo con otro
+            // UID y Android lo descartaba entero. Se capta el audio multimedia del teléfono.
             val config = AudioPlaybackCaptureConfiguration.Builder(consent)
-                .addMatchingUid(Process.myUid())
                 .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
                 .addMatchingUsage(AudioAttributes.USAGE_GAME)
                 .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN).build()
@@ -220,7 +221,7 @@ class PlaybackCaptureService : Service() {
         val stop = PendingIntent.getService(this, 0, Intent(this,PlaybackCaptureService::class.java).setAction("stop"), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification = Notification.Builder(this,"caption-capture")
             .setSmallIcon(R.drawable.ic_stat_nexo).setContentTitle("Nexo · captura de audio activa")
-            .setContentText("Solo reproducción de Nexo · transcripción con Deepgram")
+            .setContentText("Audio multimedia del teléfono · transcripción con Deepgram")
             .setOngoing(true).addAction(Notification.Action.Builder(null,"Detener",stop).build()).build()
         if (Build.VERSION.SDK_INT >= 29) startForeground(947,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         else startForeground(947,notification)
