@@ -228,6 +228,18 @@ object CaptionsUi {
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(activity, 10f)
         })
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Subtítulos instantáneos de Android",
+            "Generados en el teléfono, sin enviar nada · funcionan con audífonos") {
+            sheet.dismiss(); SystemCaptions.openSystemSettings(activity)
+        })
+        if (activity is MainActivity && !LiveCaptions.isTrackMode(session) && !LiveCaptions.isDomMode(session) &&
+            !LiveCaptions.audioAllowed(session) && BrowserPrefs.deepgramKey(activity).isNotBlank()
+        ) {
+            body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_play, "Transcribir el audio de este video",
+                "Se envía el audio del video a Deepgram (no el micrófono)") {
+                sheet.dismiss(); LiveCaptions.allowAudio(activity, session); onChange()
+            })
+        }
         if (activity is MainActivity && android.os.Build.VERSION.SDK_INT >= 29) {
             body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Capturar audio con Android",
                 "Para reproductores que bloquean la captura web · requiere Deepgram y autorización") {
@@ -253,7 +265,7 @@ object CaptionsUi {
         val (keyView, keyField) = NexoUi.field(activity, "Clave API de Deepgram", "Pega tu clave", BrowserPrefs.deepgramKey(activity))
         keyField.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         body.addView(keyView)
-        body.addView(NexoUi.note(activity, "Si el video o su reproductor (YouTube, Netflix, Prime Video…) tienen subtítulos, Nexo los usa sin clave. Si no, Deepgram transcribe el audio en la nube con tu cuenta."))
+        body.addView(NexoUi.note(activity, "Nexo usa primero texto: la pista del video, los subtítulos del reproductor (YouTube, Netflix…) o el archivo .vtt/.srt que descarga la página. Nunca usa el micrófono. Deepgram (en la nube, con tu cuenta) solo transcribe el audio del video si tú lo eliges."))
         body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_link, "Crear una clave en deepgram.com", "Se abre en una pestaña nueva") {
             sheet.dismiss()
             TabManager.createTab("https://console.deepgram.com/signup", false, true)
@@ -324,6 +336,11 @@ object CaptionsUi {
         body.addView(translateBox)
         refreshProvider()
 
+        var audioAuto = BrowserPrefs.captionAudioAuto(activity)
+        body.addView(NexoUi.switchRow(activity, "Transcribir el audio sin preguntar",
+            "Si el video no trae subtítulos de texto, enviar su audio a Deepgram directamente. Apagado: Nexo pregunta antes.", audioAuto) {
+            audioAuto = it
+        })
         body.addView(NexoUi.section(activity, "Límite diario de Deepgram"))
         val limitRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         chips(limitRow, listOf("30" to "30 min", "60" to "1 h", "120" to "2 h", "240" to "4 h", "0" to "Sin límite"), { limit.toString() }) { limit = it.toInt() }
@@ -364,6 +381,7 @@ object CaptionsUi {
             BrowserPrefs.setCaptionSize(activity, size)
             BrowserPrefs.setCaptionMode(activity, mode)
             BrowserPrefs.setCaptionDailyLimit(activity, limit)
+            BrowserPrefs.setCaptionAudioAuto(activity, audioAuto)
             BrowserPrefs.setAiTranslateProvider(activity, aiProvider)
             BrowserPrefs.setAiTranslateModel(activity, aiModelField.text.toString())
             BrowserPrefs.setAiTranslateEndpoint(activity, if (aiProvider == "custom") aiEndpointField.text.toString() else "")

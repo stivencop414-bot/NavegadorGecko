@@ -51,6 +51,21 @@ Android puede devolver silencio por DRM, política de captura del productor, pro
 - **Procesos de Gecko:** `isolatedProcessEnabled(false)` queda explícito. La captura filtra por el UID de
   Nexo; con procesos aislados (otro UID) Android solo entregaría silencio.
 
+## Texto primero; audio solo si se elige (0.27.0)
+
+Orden de fuentes en el marco que recibe los subtítulos: pista del video → texto que dibuja el reproductor →
+**archivo de subtítulos que descargó la página** (`.vtt`/`.srt` de `performance` o `<track src>`, pedido con
+`content.fetch` como la propia página, máx. 2 MiB; los segmentos HLS con `X-TIMESTAMP-MAP` se descartan porque
+su tiempo es relativo) → subtítulos de YouTube → audio.
+
+El audio ya no se usa automáticamente aunque haya clave de Deepgram. Sin texto, Nexo pregunta: subtítulos
+instantáneos de Android (Live Caption, en el dispositivo; se abre Ajustes con instrucciones porque no hay un
+intent público para activarlo), transcribir con Deepgram o esperar a los subtítulos del reproductor. La opción
+«Transcribir el audio sin preguntar» de Ajustes de subtítulos recupera el comportamiento anterior.
+
+Ni la captura de la página ni la de Android usan el micrófono: toman el sonido digital del reproductor antes
+de la salida, por lo que altavoz o audífonos no cambian el resultado.
+
 ## Evidencia y límites
 
 Se revisó únicamente el HTML y los cargadores de reproductor de la página de ejemplo proporcionada por el usuario. Las opciones SB/VO/LU/DD/JK se insertan dinámicamente; la página también carga scripts e iframes de terceros. No se descargó ni se reprodujo el vídeo y no se atribuye un fallo concreto a un servidor solo por sus siglas. La captura de pantalla del usuario confirmó el error de pistas vacías, no un error del traductor.

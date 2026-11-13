@@ -1066,10 +1066,12 @@ object ExtensionManager {
      * Va a todos los marcos (el video puede estar en un iframe); devuelve
      * false si la página aún no tiene el puente conectado.
      */
-    fun setCaptions(session: GeckoSession?, active: Boolean, live: Boolean = false, language: String = "multi"): Boolean =
+    fun setCaptions(session: GeckoSession?, active: Boolean, live: Boolean = false, language: String = "multi", target: String = ""): Boolean =
         postCaptions(session, JSONObject().apply {
             put("type", "captions")
             put("active", active)
+            // Idioma de destino: si la página tiene un archivo de subtítulos en ese idioma, se prefiere.
+            put("target", target.takeIf { it.matches(Regex("[a-zA-Z]{2,3}(-[A-Za-z]{2,4})?")) } ?: "")
             // live: hay clave de Deepgram; sin ella se usan la pista del video o el texto del reproductor.
             put("live", live)
             // Idioma preferido al elegir entre las pistas del reproductor (p. ej. YouTube).
@@ -1098,7 +1100,8 @@ object ExtensionManager {
     private fun captionsOn(session: GeckoSession) = JSONObject().apply {
         put("type", "captions")
         put("active", true)
-        put("live", BrowserPrefs.deepgramKey(AppContext.get()).isNotBlank())
+        put("live", LiveCaptions.audioAllowed(session))
+        put("target", BrowserPrefs.captionTranslateTo(AppContext.get()).takeIf { it.matches(Regex("[a-zA-Z]{2,3}(-[A-Za-z]{2,4})?")) } ?: "")
         put("lang", LiveCaptions.language(session).takeIf { it.matches(Regex("[a-zA-Z]{2,3}(-[A-Za-z]{2,4})?|multi")) } ?: "multi")
     }
 
@@ -1121,7 +1124,7 @@ object ExtensionManager {
         "no_audio" -> "El reproductor no entrega su audio a la página (otro origen, protección o reproductor especial)."
         "paused" -> "Esperando a que el video se reproduzca."
         "silent" -> "El video suena pero la página solo recibe silencio (otro origen o contenido protegido)."
-        "need_key" -> "Hace falta una clave de Deepgram para este video."
+        "need_key" -> "Este video no trae subtítulos de texto."
         else -> "No se pudo captar el audio del video."
     }
 

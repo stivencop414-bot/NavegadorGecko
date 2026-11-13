@@ -584,3 +584,54 @@ test('quiet speech under the old byte threshold is still detected as signal', as
   h.tick(1600);
   assert.ok(h.reports.some(x => x.type === 'captions_status' && x.code === 'signal'));
 });
+
+// --- Archivos de subtítulos descargados por el reproductor (sin audio) ---
+
+function subtitleExtra(files, extra = {}) {
+  const fetched = [];
+  return { fetched, extra: Object.assign({
+    URL, location: { href: 'https://video.test/watch/1' },
+    performance: { getEntriesByType: type => type === 'resource' ? Object.keys(files).map(name => ({ name })) : [] },
+    fetch: async url => { fetched.push(url); const body = files[url];
+      return { ok: body !== undefined, headers: { get: () => null }, text: async () => body }; }
+  }, extra) };
+}
+
+const VTT = 'WEBVTT\n\n1\n00:00:01.000 --> 00:00:03.000\n<i>Hola</i> &amp; adiós\n\n00:04.500 --> 00:06.000 align:start\nSegunda línea\n';
+
+test('a subtitle file loaded by the player is used instead of recording audio', async () => {
+  const audio = audioMocks();
+  const sub = subtitleExtra({ 'https://cdn.test/subs/en.vtt': VTT }, audio.extra);
+  const h = harness(sub.extra), v = h.video();
+  h.window.AudioContext = audio.extra.AudioContext;
+  v.currentTime = 0;
+  h.captions(true, true); await flush(); await flush(); await flush();
+  assert.ok(h.reports.some(x => x.type === 'captions_track' && x.source === 'file'));
+  const cues = h.reports.filter(x => x.type === 'captions_cues').flatMap(x => x.cues).map(c => [c.i, c.s, c.e, c.t]);
+  assert.deepEqual(cues, [[0, 1, 3, 'Hola & adiós'], [1, 4.5, 6, 'Segunda línea']]);
+  assert.equal(audio.recorders.length, 0, 'no audio is recorded or sent');
+  v.currentTime = 2; h.tick(260);
+  assert.deepEqual(Array.from(h.reports.filter(x => x.type === 'captions_active').pop().ids), [0]);
+  v.currentTime = 5; h.tick(260);
+  assert.deepEqual(Array.from(h.reports.filter(x => x.type === 'captions_active').pop().ids), [1]);
+  h.captions(false);
+});
+
+test('the file in the requested language is preferred and SRT is understood', async () => {
+  const srt = '1\n00:00:01,000 --> 00:00:02,500\nBonjour\n';
+  const sub = subtitleExtra({ 'https://cdn.test/fr/movie.srt': srt, 'https://cdn.test/en/movie.vtt': VTT });
+  const h = harness(sub.extra); h.video();
+  h.message({ type: 'captions', active: true, live: false, lang: 'multi', target: 'fr' }); h.message({ type: 'captions_grant' });
+  await flush(); await flush(); await flush();
+  assert.deepEqual(sub.fetched, ['https://cdn.test/fr/movie.srt']);
+  assert.equal(h.reports.find(x => x.type === 'captions_cues').cues[0].t, 'Bonjour');
+});
+
+test('HLS subtitle segments with relative timing are not used as a whole file', async () => {
+  const segment = 'WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:900000,LOCAL:00:00:00.000\n\n00:00:01.000 --> 00:00:02.000\nTrozo\n';
+  const sub = subtitleExtra({ 'https://cdn.test/seg/sub_001.vtt': segment });
+  const h = harness(sub.extra); h.video();
+  h.captions(true, false); await flush(); await flush(); await flush();
+  assert.equal(h.reports.some(x => x.type === 'captions_track' && x.source === 'file'), false);
+  assert.ok(h.reports.some(x => x.type === 'captions_error' && x.code === 'need_key'), 'no text source: Nexo asks instead of recording');
+});

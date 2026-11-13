@@ -531,7 +531,8 @@
     video: null, recorder: null, silentTimer: 0, epoch: 0, stream: null, meter: null,
     track: null, trackMode: "", trackTimer: 0, knownCues: 0,
     dom: false, domTimer: 0, domText: "", domWatch: 0, domChecks: 0, ytEnabled: false,
-    restartTimer: 0, capturing: false, waitCancel: null
+    restartTimer: 0, capturing: false, waitCancel: null,
+    target: "", file: null, fileTimer: 0, fileUrls: 0
   };
   const MAX_CUES = 3000;
   // Identificador estable por línea: los reproductores HLS añaden líneas
@@ -676,7 +677,7 @@
   }
 
   async function startRecording() {
-    if (!captions.active || !captions.granted || !captions.live || captions.choosing || captions.track || captions.dom || captions.recorder || captions.capturing) return;
+    if (!captions.active || !captions.granted || !captions.live || captions.choosing || textSource() || captions.recorder || captions.capturing) return;
     const video = captions.video;
     if (!video || !video.isConnected || video.paused || video.ended || document.visibilityState === "hidden") {
       sendToNexo({ type: "captions_status", code: "paused" }); return;
@@ -1008,17 +1009,150 @@
     stopDomWatch();
     captions.domChecks = 0;
     captions.domWatch = setInterval(() => {
-      if (!captions.active || !captions.granted || captions.dom || captions.track || ++captions.domChecks > 180) {
+      if (!captions.active || !captions.granted || textSource() || ++captions.domChecks > 180) {
         stopDomWatch();
         return;
       }
-      if (domCaptionText()) startDomCaptions();
+      if (domCaptionText()) { startDomCaptions(); return; }
+      // El usuario eligió subtítulos en el reproductor y este descargó su archivo.
+      if (subtitleUrls().length !== captions.fileUrls) loadSubtitleFile(captions.token);
     }, 1000);
   }
 
   function stopDomWatch() {
     clearInterval(captions.domWatch);
     captions.domWatch = 0;
+  }
+
+  // --- Archivos de subtítulos que descarga la propia página ------------------
+
+  /*
+   * Muchos reproductores (JW Player, video.js, Plyr…) descargan un .vtt/.srt
+   * aparte y lo dibujan ellos mismos, sin pista en el <video>. Nexo lee ese
+   * mismo archivo y lo sincroniza con el video: texto, sin audio ni servidores.
+   */
+  const SUB_FILE = /\.(vtt|srt)(?:[?#]|$)|[?&](?:fmt|format|type)=(?:vtt|srt|webvtt)(?:&|$)/i;
+  const MAX_SUB_BYTES = 2 * 1024 * 1024;
+
+  function textSource() { return !!(captions.track || captions.dom || captions.file); }
+
+  function subtitleUrls() {
+    const urls = [];
+    const add = raw => {
+      try {
+        const url = new URL(String(raw), location.href);
+        if (/^https?:$/.test(url.protocol) && SUB_FILE.test(url.pathname + url.search) && !urls.includes(url.href)) urls.push(url.href);
+      } catch (_) {}
+    };
+    try { for (const entry of performance.getEntriesByType("resource")) add(entry.name); } catch (_) {}
+    try { for (const track of document.querySelectorAll("track[src]")) add(track.getAttribute("src")); } catch (_) {}
+    return urls.slice(-40);
+  }
+
+  /** El archivo en el idioma pedido evita traducir; si no, el último cargado (el que eligió el reproductor). */
+  function pickSubtitleUrl(urls, lang) {
+    const code = String(lang || "").toLowerCase().split("-")[0];
+    if (code && code !== "multi") {
+      const token = new RegExp("(^|[^a-z])" + code + "([^a-z]|$)", "i");
+      const match = urls.slice().reverse().find(url => token.test(url.split("?")[0]));
+      if (match) return match;
+    }
+    return urls[urls.length - 1];
+  }
+
+  function parseTime(value) {
+    const m = /^(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})$/.exec(String(value).trim());
+    if (!m) return NaN;
+    return Number(m[1] || 0) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4].padEnd(3, "0")) / 1000;
+  }
+
+  function decodeEntities(text) {
+    return text.replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/&quot;/g, "\"").replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, "&");
+  }
+
+  /**
+   * WebVTT o SRT → [{s, e, t}] ordenadas. Los segmentos HLS (X-TIMESTAMP-MAP)
+   * se descartan: su tiempo es relativo y hls.js ya los expone como pista.
+   */
+  function parseSubtitles(raw) {
+    const text = String(raw || "").replace(/\r/g, "");
+    if (/X-TIMESTAMP-MAP/.test(text)) return [];
+    const cues = [];
+    for (const block of text.split(/\n{2,}/)) {
+      const lines = block.split("\n");
+      const at = lines.findIndex(line => line.includes("-->"));
+      if (at < 0) continue;
+      const parts = lines[at].split("-->");
+      const s = parseTime(parts[0]);
+      const e = parseTime(String(parts[1] || "").trim().split(/\s+/)[0]);
+      const t = decodeEntities(lines.slice(at + 1).join(" ").replace(/<[^>]*>/g, "").replace(/\{[^}]*\}/g, ""))
+        .replace(/\s+/g, " ").trim().slice(0, 300);
+      if (Number.isFinite(s) && Number.isFinite(e) && e > s && t) cues.push({ s, e, t });
+      if (cues.length >= MAX_CUES) break;
+    }
+    return cues.sort((a, b) => a.s - b.s);
+  }
+
+  async function loadSubtitleFile(token) {
+    const urls = subtitleUrls();
+    captions.fileUrls = urls.length;
+    // content.fetch (Firefox) pide como la propia página: el CDN responde igual que al reproductor.
+    const pageFetch = typeof content !== "undefined" && content && typeof content.fetch === "function"
+      ? content.fetch.bind(content) : (typeof fetch === "function" ? fetch : null);
+    if (!urls.length || !pageFetch) return false;
+    const url = pickSubtitleUrl(urls, captions.target || captions.lang);
+    let text = "";
+    try {
+      const response = await pageFetch(url, { credentials: "same-origin" });
+      if (!response.ok) return false;
+      if (Number(response.headers.get("content-length") || 0) > MAX_SUB_BYTES) return false;
+      text = (await response.text()).slice(0, MAX_SUB_BYTES);
+    } catch (_) {
+      return false;
+    }
+    if (token !== captions.token || !captions.active || !captions.granted || textSource()) return false;
+    const cues = parseSubtitles(text);
+    if (!cues.length) return false;
+    startFileCaptions(cues);
+    return true;
+  }
+
+  function startFileCaptions(cues) {
+    stopDomWatch();
+    if (captions.recorder) stopRecording(true);
+    captions.choosing = false;
+    captions.file = { cues, last: null };
+    sendToNexo({ type: "captions_track", lang: "", source: "file" });
+    const list = cues.map((cue, i) => ({ i, s: cue.s, e: cue.e, t: cue.t }));
+    for (let i = 0; i < list.length; i += 200) sendToNexo({ type: "captions_cues", cues: list.slice(i, i + 200) });
+    clearInterval(captions.fileTimer);
+    captions.fileTimer = setInterval(syncFileCaptions, 250);
+    syncFileCaptions();
+  }
+
+  /** Líneas activas según el tiempo del video (como haría una pista). */
+  function syncFileCaptions() {
+    const file = captions.file, video = captions.video;
+    if (!file || !video) return;
+    if (document.visibilityState === "hidden" && !pipActive) return;
+    const now = Number(video.currentTime) || 0;
+    const ids = [];
+    for (let i = 0; i < file.cues.length; i++) {
+      const cue = file.cues[i];
+      if (cue.s > now) break;
+      if (cue.e > now) ids.push(i);
+    }
+    const key = ids.slice(0, 4).join(",");
+    if (key === file.last) return;
+    file.last = key;
+    sendToNexo({ type: "captions_active", ids: ids.slice(0, 4) });
+  }
+
+  function stopFileCaptions() {
+    clearInterval(captions.fileTimer);
+    captions.fileTimer = 0;
+    captions.file = null;
   }
 
   // --- Elección de la fuente ------------------------------------------------
@@ -1037,6 +1171,7 @@
     stopRecording(notify);
     releaseTrack();
     stopDomCaptions();
+    stopFileCaptions();
     stopDomWatch();
   }
 
@@ -1059,9 +1194,12 @@
     const token = captions.token;
     captions.choosing = true;
     if (domCaptionText() !== null) { startDomCaptions(); return; }
-    enableYoutubeCaptions(captions.lang, token).then(found => {
-      if (token !== captions.token || !captions.active || !captions.granted || captions.track || captions.dom) return;
-      if (found) startDomCaptions(); else fallbackToAudio();
+    loadSubtitleFile(token).then(loaded => {
+      if (loaded || token !== captions.token || !captions.active || !captions.granted || textSource()) return;
+      return enableYoutubeCaptions(captions.lang, token).then(found => {
+        if (token !== captions.token || !captions.active || !captions.granted || textSource()) return;
+        if (found) startDomCaptions(); else fallbackToAudio();
+      });
     });
   }
 
@@ -1086,7 +1224,7 @@
   }
 
   /** Idempotente: Nexo reenvía la orden a cada marco que conecta sin reiniciar al dueño. */
-  function setCaptions(active, live, lang) {
+  function setCaptions(active, live, lang, target) {
     if (active !== true) {
       stopSources(false);
       captions.active = false;
@@ -1098,8 +1236,9 @@
     captions.active = true;
     captions.live = live === true;
     captions.lang = typeof lang === "string" && lang ? lang : "multi";
-    // Se añadió la clave mientras se esperaba: probar el audio.
-    if (captions.granted && liveChanged && captions.live && !captions.track && !captions.dom && !captions.recorder) startRecording();
+    captions.target = typeof target === "string" ? target.slice(0, 12) : "";
+    // El usuario eligió transcribir el audio mientras se esperaba: probarlo ahora.
+    if (captions.granted && liveChanged && captions.live && !textSource() && !captions.recorder) startRecording();
     discoverCaptions();
   }
 
@@ -1112,13 +1251,13 @@
   // Grabar solo mientras el video suena. La pista y el texto del reproductor siguen activos en pausa.
   ["pause", "ended", "emptied"].forEach(type => document.addEventListener(type, event => {
     if (!captions.active || !captions.granted || event.target !== captions.video) return;
-    if (captions.recorder || (!captions.track && !captions.dom)) release();
+    if (captions.recorder || !textSource()) release();
   }, true));
 
   // El usuario activa el sonido de un video que empezó silenciado: empezar a transcribir.
   document.addEventListener("volumechange", event => {
     if (!captions.active || !captions.granted || !captions.live || event.target !== captions.video) return;
-    if (!videoMuted(captions.video) && !captions.recorder && !captions.track && !captions.dom) startRecording();
+    if (!videoMuted(captions.video) && !captions.recorder && !textSource()) startRecording();
   }, true);
 
   // Otro video en el mismo reproductor (siguiente de YouTube, lista, etc.).
@@ -1276,14 +1415,14 @@
     }
 
     if (message.type === "captions") {
-      setCaptions(message.active === true, message.live === true, message.lang);
+      setCaptions(message.active === true, message.live === true, message.lang, message.target);
     }
 
     if (message.type === "captions_grant" && captions.active && !captions.granted) {
       captions.granted = true;
       chooseSource();
     }
-    if (message.type === "captions_restart" && captions.active && !captions.track && !captions.dom) {
+    if (message.type === "captions_restart" && captions.active && !textSource()) {
       stopRecording(false);
       startRecording();
     }
