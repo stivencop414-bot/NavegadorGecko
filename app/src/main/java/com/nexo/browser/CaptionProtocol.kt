@@ -31,7 +31,7 @@ object CaptionProtocol {
         val lang = language.takeIf { it.matches(Regex("[a-z]{2,5}(-[A-Za-z]{2,4})?|multi")) } ?: "multi"
         // Sin smart_format: añade espera a las frases finales; la puntuación basta para subtítulos.
         return "$LISTEN_ENDPOINT?model=$model&language=$lang&punctuate=true" +
-            "&interim_results=true&endpointing=300&utterance_end_ms=1000"
+            "&interim_results=true&endpointing=250&utterance_end_ms=1000"
     }
 
     data class Transcript(val text: String, val isFinal: Boolean, val speechFinal: Boolean)
@@ -163,9 +163,22 @@ object CaptionProtocol {
     val AI_ENDPOINTS = mapOf(
         "openai" to "https://api.openai.com/v1",
         "claude" to "https://api.anthropic.com/v1",
-        "openrouter" to "https://openrouter.ai/api/v1"
+        "openrouter" to "https://openrouter.ai/api/v1",
+        "gemini" to "https://generativelanguage.googleapis.com/v1beta/openai",
+        "groq" to "https://api.groq.com/openai/v1",
+        "deepseek" to "https://api.deepseek.com/v1",
+        "mistral" to "https://api.mistral.ai/v1",
+        "xai" to "https://api.x.ai/v1"
     )
+    /** Proveedores de traducción con IA para la interfaz (id, nombre). */
+    val AI_PROVIDERS = listOf("openai" to "ChatGPT", "claude" to "Claude", "openrouter" to "OpenRouter", "gemini" to "Gemini",
+        "groq" to "Groq", "deepseek" to "DeepSeek", "mistral" to "Mistral", "xai" to "xAI", "custom" to "Propio")
     val AI_MODELS = mapOf(
+        "gemini" to "gemini-2.5-flash",
+        "groq" to "llama-3.3-70b-versatile",
+        "deepseek" to "deepseek-chat",
+        "mistral" to "mistral-small-latest",
+        "xai" to "grok-3-mini",
         "openai" to "gpt-4.1-mini",
         "claude" to "claude-haiku-5-5",
         "openrouter" to "openai/gpt-4.1-mini"
@@ -319,7 +332,12 @@ data class CaptionDisplay(
  * Texto en vivo: últimas frases finalizadas (con su traducción si la hay)
  * más la frase en curso. Se limita a unas dos líneas.
  */
-class CaptionText(private val maxChars: Int = 150) {
+class CaptionText(var maxChars: Int = 150) {
+    companion object {
+        /** La última voz fue hace más de [delayMs]: el subtítulo ya no debe verse. */
+        fun expired(lastVoiceAt: Long, now: Long, delayMs: Long): Boolean = lastVoiceAt > 0L && now - lastVoiceAt > delayMs
+    }
+
     data class Segment(val id: Long, val original: String, var translated: String? = null, var provisional: Boolean = false)
 
     private val segments = ArrayDeque<Segment>()

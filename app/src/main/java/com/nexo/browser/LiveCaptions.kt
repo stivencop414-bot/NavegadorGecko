@@ -208,11 +208,20 @@ object LiveCaptions {
             return CaptionDisplay(primary, pending,
                 if (stream.message?.startsWith("No se pudo traducir") == true) stream.message.orEmpty() else secondary)
         }
+        // Red de seguridad: aunque se pierda el aviso programado, un subtítulo sin voz
+        // reciente no se vuelve a dibujar (el texto en vivo nunca se queda colgado).
+        if (!stream.domMode && !stream.text.isEmpty &&
+            CaptionText.expired(stream.lastResultAt, System.currentTimeMillis(), clearDelay(context) + 400L)) stream.text.clear()
         if (stream.text.isEmpty) return statusLine(stream)
+        // Longitud elegida en Ajustes: cuánto texto reciente se conserva en pantalla.
+        stream.text.maxChars = maxChars(BrowserPrefs.captionLines(context))
         return stream.text.view(mode, translating).let { view ->
             if (stream.message?.startsWith("No se pudo traducir") == true) view.copy(secondary = stream.message.orEmpty()) else view
         }.takeIf { !it.isEmpty }
     }
+
+    /** Caracteres visibles según las líneas elegidas (1: frase corta … 3: varias). */
+    fun maxChars(lines: Int): Int = when (lines) { 1 -> 64; 2 -> 120; else -> 170 }
 
     /** Minutos de audio enviados hoy y límite diario (0 = sin límite). */
     fun usageText(context: Context): String {
@@ -326,8 +335,7 @@ object LiveCaptions {
         return when {
             provider == BrowserPrefs.TRANSLATE_DEEPL &&
                 (BrowserPrefs.deeplKey(context).isBlank() || !CaptionProtocol.deeplSupports(target)) -> BrowserPrefs.TRANSLATE_GOOGLE
-            provider == BrowserPrefs.TRANSLATE_AI && BrowserPrefs.aiTranslateKey(context).isBlank() &&
-                BrowserPrefs.aiTranslateProvider(context) != "custom" -> BrowserPrefs.TRANSLATE_GOOGLE
+            provider == BrowserPrefs.TRANSLATE_AI && aiTranslators(context).isEmpty() -> BrowserPrefs.TRANSLATE_GOOGLE
             else -> provider
         }
     }
@@ -686,6 +694,11 @@ object LiveCaptions {
                 stream.dom.settle()?.let { applyTranscripts(app, stream, listOf(it)) }
                 notifyChanged(stream.session)
             }, stream, SystemClock.uptimeMillis() + DOM_SETTLE_MS)
+            // El reproductor dejó su texto fijo mucho rato (sin voz): no taparlo indefinidamente.
+            main.postAtTime({
+                stream.text.clear()
+                notifyChanged(stream.session)
+            }, stream, SystemClock.uptimeMillis() + maxOf(clearDelay(app) * 3, 9000L))
         }
         notifyChanged(session)
     }
@@ -767,10 +780,8 @@ object LiveCaptions {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 main.post {
                     if (active[stream.session] !== stream || stream.generation != generation) return@post
-                    if (CaptionProtocol.isUtteranceEnd(text)) {
-                        scheduleClear(stream)
-                        return@post
-                    }
+                    // Fin de frase: el borrado ya está programado desde el último texto con voz.
+                    if (CaptionProtocol.isUtteranceEnd(text)) return@post
                     CaptionProtocol.parseError(text)?.let {
                         onPageError(context, stream.session, "deepgram", "Deepgram: $it")
                         return@post
@@ -784,7 +795,10 @@ object LiveCaptions {
                     val segment = stream.text.onTranscript(transcript)
                     if (segment != null) enqueueLive(context, stream, segment)
                     else if (!transcript.isFinal) speculate(context, stream)
-                    main.removeCallbacksAndMessages(stream)
+                    // Solo la voz reprograma el borrado. Antes cualquier mensaje (Deepgram manda
+                    // resultados vacíos durante el silencio) lo cancelaba y el último subtítulo
+                    // se quedaba en pantalla minutos después de que dejaran de hablar.
+                    if (transcript.text.isNotBlank()) scheduleClear(stream, clearDelay(context))
                     notifyChanged(stream.session)
                 }
             }
@@ -889,7 +903,10 @@ object LiveCaptions {
         }
     }
 
-    /** Tras una pausa larga en el habla, el texto se borra para no tapar el video. */
+    /** Segundos sin voz tras los que se borra el subtítulo (Ajustes de CC). */
+    private fun clearDelay(context: Context): Long = BrowserPrefs.captionClearSeconds(context) * 1000L
+
+    /** Tras una pausa en el habla, el texto se borra para no tapar el video. */
     private fun scheduleClear(stream: Stream, delayMs: Long = 3500L) {
         main.removeCallbacksAndMessages(stream)
         main.postAtTime({
@@ -933,8 +950,9 @@ object LiveCaptions {
         val interim = stream.text.interimText
         val now = SystemClock.uptimeMillis()
         // El texto del reproductor ya es definitivo: vale la pena traducirlo antes y aunque sea corto.
-        val minLength = if (stream.domMode) 2 else 24
-        val interval = if (stream.domMode) 300L else 700L
+        // Menos espera: con frases a medias ya se adelanta la traducción (se corrige al llegar la final).
+        val minLength = if (stream.domMode) 2 else 14
+        val interval = if (stream.domMode) 300L else 450L
         if (interim.length < minLength || now - stream.lastSpeculation < interval) return
         val target = BrowserPrefs.captionTranslateTo(context)
         cache[cacheKey(BrowserPrefs.TRANSLATE_GOOGLE, target, interim)]?.let {
@@ -1073,23 +1091,8 @@ object LiveCaptions {
     private fun translateBatch(context: Context, stream: Stream, generation: Int, provider: String, lines: List<String>, target: String, textContext: List<String>): List<String>? {
         val form = "application/x-www-form-urlencoded".toMediaType()
         return when (provider) {
-            BrowserPrefs.TRANSLATE_AI -> {
-                val key = BrowserPrefs.aiTranslateKey(context)
-                val aiProvider = BrowserPrefs.aiTranslateProvider(context)
-                if (key.isBlank() && aiProvider != "custom") return null
-                val request = CaptionProtocol.aiRequest(
-                    aiProvider, BrowserPrefs.aiTranslateEndpoint(context), BrowserPrefs.aiTranslateModel(context), key,
-                    CaptionProtocol.LANGUAGE_NAMES[target] ?: target, lines, textContext
-                )
-                // Una clave nunca viaja sin cifrar (salvo a un servidor del propio teléfono).
-                if (!CaptionProtocol.isSafeKeyedEndpoint(request.url)) return null
-                val builder = Request.Builder().url(request.url)
-                    .post(request.body.toRequestBody("application/json".toMediaType()))
-                request.headers.forEach { (name, value) -> if (value.isNotBlank()) builder.header(name, value) }
-                withResponse(stream, generation, builder.build()) { response ->
-                    if (response.isSuccessful) CaptionProtocol.parseAiLines(limitedBody(response), lines.size) else null
-                }
-            }
+            BrowserPrefs.TRANSLATE_AI -> raceAi(stream, generation, aiTranslators(context),
+                CaptionProtocol.LANGUAGE_NAMES[target] ?: target, lines, textContext)
             BrowserPrefs.TRANSLATE_DEEPL -> {
                 val key = BrowserPrefs.deeplKey(context)
                 if (key.isBlank()) return null
@@ -1103,6 +1106,91 @@ object LiveCaptions {
             }
             else -> googleLines(stream, generation, lines, target)
         }
+    }
+
+
+    /** Un modelo de IA para traducir: el principal ("Modelo 1") o el segundo ("Modelo 2"). */
+    private data class AiTranslator(val label: String, val provider: String, val endpoint: String, val model: String, val key: String) {
+        val name: String get() = model.ifBlank { CaptionProtocol.AI_MODELS[provider].orEmpty() }.ifBlank { label }
+    }
+
+    /** Modelos configurados (con clave, o propio sin clave). */
+    private fun aiTranslators(context: Context): List<AiTranslator> {
+        val list = mutableListOf<AiTranslator>()
+        fun add(label: String, provider: String, endpoint: String, model: String, key: String) {
+            if (key.isNotBlank() || provider == "custom") list += AiTranslator(label, provider, endpoint, model, key)
+        }
+        add("Modelo 1", BrowserPrefs.aiTranslateProvider(context), BrowserPrefs.aiTranslateEndpoint(context),
+            BrowserPrefs.aiTranslateModel(context), BrowserPrefs.aiTranslateKey(context))
+        if (BrowserPrefs.aiTranslate2Enabled(context)) {
+            add("Modelo 2", BrowserPrefs.aiTranslate2Provider(context), BrowserPrefs.aiTranslate2Endpoint(context),
+                BrowserPrefs.aiTranslate2Model(context), BrowserPrefs.aiTranslate2Key(context))
+        }
+        return list
+    }
+
+    // Último modelo que ganó la carrera y cuánto tardó (para la hoja de CC).
+    @Volatile private var lastAiWinner: String? = null
+    @Volatile private var lastAiMs = 0L
+    private val aiWins = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    private fun aiCall(stream: Stream, generation: Int, translator: AiTranslator, targetName: String,
+                       lines: List<String>, textContext: List<String>): okhttp3.Call? {
+        val request = CaptionProtocol.aiRequest(translator.provider, translator.endpoint, translator.model, translator.key,
+            targetName, lines, textContext)
+        // Una clave nunca viaja sin cifrar (salvo a un servidor del propio teléfono).
+        if (!CaptionProtocol.isSafeKeyedEndpoint(request.url)) return null
+        val builder = Request.Builder().url(request.url).post(request.body.toRequestBody("application/json".toMediaType()))
+        request.headers.forEach { (name, value) -> if (value.isNotBlank()) builder.header(name, value) }
+        return synchronized(stream) {
+            if (stream.stopped || stream.translationGeneration != generation) null
+            else translateClient.newCall(builder.build()).also { stream.calls.add(it) }
+        }
+    }
+
+    /**
+     * Traducción con IA. Con dos modelos se piden los dos a la vez y se usa la
+     * primera respuesta válida; la otra se cancela. Si uno falla, se espera al
+     * otro. Así el subtítulo sale con el más rápido en cada momento y una caída
+     * de un proveedor no deja el video sin traducción.
+     */
+    private fun raceAi(stream: Stream, generation: Int, translators: List<AiTranslator>, targetName: String,
+                       lines: List<String>, textContext: List<String>): List<String>? {
+        if (translators.isEmpty()) return null
+        val started = SystemClock.uptimeMillis()
+        val result = FirstAnswer.race(translators.map { translator ->
+            { done: (List<String>?) -> Unit ->
+                aiCall(stream, generation, translator, targetName, lines, textContext)?.let { call ->
+                    call.enqueue(object : okhttp3.Callback {
+                        override fun onFailure(call: okhttp3.Call, e: java.io.IOException) { stream.calls.remove(call); done(null) }
+                        override fun onResponse(call: okhttp3.Call, response: Response) {
+                            val parsed = runCatching {
+                                response.use { if (it.isSuccessful) CaptionProtocol.parseAiLines(limitedBody(it), lines.size) else null }
+                            }.getOrNull()
+                            stream.calls.remove(call)
+                            done(parsed)
+                        }
+                    })
+                    FirstAnswer.Attempt { call.cancel(); stream.calls.remove(call) }
+                }
+            }
+        }, 26_000L)
+        if (result != null) {
+            val translator = translators[result.first]
+            lastAiWinner = translator.label + " · " + translator.name
+            lastAiMs = SystemClock.uptimeMillis() - started
+            aiWins.merge(translator.label, 1, Int::plus)
+        }
+        return result?.second
+    }
+
+    /** "Modelo 2 · gemini-2.5-flash · 0,8 s" (último en responder primero), si hubo carrera. */
+    fun aiTranslationWinner(context: Context): String? {
+        if (BrowserPrefs.translationProvider(context) != BrowserPrefs.TRANSLATE_AI) return null
+        val winner = lastAiWinner ?: return null
+        val wins = if (aiWins.size > 1 || BrowserPrefs.aiTranslate2Enabled(context))
+            " · gana ${aiWins["Modelo 1"] ?: 0}–${aiWins["Modelo 2"] ?: 0}" else ""
+        return "$winner · ${"%.1f".format(lastAiMs / 1000.0)} s$wins"
     }
 
     private fun notifyChanged(session: GeckoSession) {
