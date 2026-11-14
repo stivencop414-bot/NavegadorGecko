@@ -99,3 +99,37 @@ Ver `app/src/main/assets/extensions/phantomshield/README.md`:
 - retraso percibido;
 - la carrera con dos claves reales;
 - el diseño sin fondo sobre videos claros.
+
+## 0.29.1: traducción sin el idioma original primero
+
+### Qué pasaba
+
+Google traducía por adelantado la frase a medias. Pero al llegar la frase
+final esa traducción se descartaba, así que la frase se veía en inglés hasta
+que respondía el traductor (Google, DeepL o IA). Por eso siempre salía
+primero en inglés y luego traducida.
+
+### Cambios
+
+- **La traducción anticipada pasa a la frase final al instante**
+  (`CaptionText.carry`):
+  - Si corresponde a toda la frase, la frase ya sale traducida.
+  - Si solo cubre su comienzo, se muestra eso y la parte nueva llega con la
+    traducción final.
+  - La traducción del servicio elegido la sustituye al responder.
+- **«Mientras llega la traducción: Solo traducido»** (activado por defecto):
+  el idioma original no se muestra nunca antes que su traducción. La opción
+  «Mostrar el original» deja el comportamiento anterior.
+- **La traducción anticipada funciona con todos los servicios:**
+  - Antes no funcionaba con DeepL.
+  - Con IA o DeepL, Google da la versión rápida y el servicio elegido la
+    corrige.
+  - Más frecuente: cada 300 ms desde 10 caracteres.
+  - Se repite si la frase siguió creciendo.
+  - Si Google limita las peticiones, se pausa 3 s.
+- **Conexión con Google abierta al activar CC** (una petición HEAD, sin
+  texto): la primera traducción no paga el saludo TLS.
+
+### Pruebas
+
+`CaptionsLatencyTest`, con 2 pruebas nuevas.

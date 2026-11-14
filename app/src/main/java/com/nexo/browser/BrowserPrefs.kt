@@ -216,6 +216,9 @@ object BrowserPrefs {
     /** Líneas visibles (1–3): también fija cuánto texto se conserva en pantalla. */
     fun captionLines(c: Context) = p(c).getInt("caption_lines", 2).coerceIn(1, 3)
     fun setCaptionLines(c: Context, v: Int) = p(c).edit().putInt("caption_lines", v.coerceIn(1, 3)).apply()
+    /** Con traducción: no mostrar el idioma original mientras llega la traducción. */
+    fun captionHideOriginal(c: Context) = p(c).getBoolean("caption_hide_original", true)
+    fun setCaptionHideOriginal(c: Context, v: Boolean) = p(c).edit().putBoolean("caption_hide_original", v).apply()
     /** Segundos sin voz tras los que se borra el último subtítulo. */
     fun captionClearSeconds(c: Context) = p(c).getInt("caption_clear_seconds", 3).coerceIn(1, 10)
     fun setCaptionClearSeconds(c: Context, v: Int) = p(c).edit().putInt("caption_clear_seconds", v.coerceIn(1, 10)).apply()

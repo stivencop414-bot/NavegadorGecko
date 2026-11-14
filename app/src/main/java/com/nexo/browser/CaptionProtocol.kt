@@ -338,7 +338,12 @@ class CaptionText(var maxChars: Int = 150) {
         fun expired(lastVoiceAt: Long, now: Long, delayMs: Long): Boolean = lastVoiceAt > 0L && now - lastVoiceAt > delayMs
     }
 
-    data class Segment(val id: Long, val original: String, var translated: String? = null, var provisional: Boolean = false)
+    /**
+     * Frase terminada. [tail]: parte final del original que la traducción
+     * provisional aún no cubre (la traducción anticipada se hizo con la frase a medias).
+     */
+    data class Segment(val id: Long, val original: String, var translated: String? = null, var provisional: Boolean = false,
+                       var tail: String = "")
 
     private val segments = ArrayDeque<Segment>()
     private var interim = ""
@@ -363,11 +368,20 @@ class CaptionText(var maxChars: Int = 150) {
             if (!interim.startsWith(interimSource)) { interimSource = ""; interimTranslated = "" }
             return null
         }
+        // La traducción anticipada del texto provisional pasa a la frase final al instante:
+        // antes se descartaba y la frase salía en el idioma original hasta que respondía el
+        // traductor (el salto "primero en inglés, luego traducido").
+        val carried = carry(transcript.text)
         interim = ""
         interimSource = ""
         interimTranslated = ""
         if (transcript.text.isBlank()) return null
         val segment = Segment(nextId++, transcript.text)
+        if (carried != null) {
+            segment.translated = carried.first
+            segment.provisional = true
+            segment.tail = carried.second
+        }
         segments.addLast(segment)
         while (segments.size > 6) segments.removeFirst()
         return segment
@@ -379,11 +393,31 @@ class CaptionText(var maxChars: Int = 150) {
         if (provisional && segment.translated != null && !segment.provisional) return
         segment.translated = text
         segment.provisional = provisional
+        segment.tail = ""
+    }
+
+    private fun normalized(text: String) = text.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+
+    /**
+     * (traducción, parte del original sin cubrir) si la traducción anticipada
+     * corresponde a la frase final completa o a su comienzo.
+     */
+    private fun carry(final: String): Pair<String, String>? {
+        if (interimTranslated.isBlank() || interimSource.isBlank()) return null
+        val source = normalized(interimSource)
+        val whole = normalized(final)
+        if (source.isEmpty() || whole.isEmpty()) return null
+        if (source == whole) return interimTranslated to ""
+        if (!whole.startsWith("$source ")) return null
+        // Palabras del original que la traducción anticipada aún no incluye.
+        val covered = source.split(' ').size
+        val words = final.trim().split(Regex("\\s+"))
+        return interimTranslated to words.drop(covered).joinToString(" ")
     }
 
     /** Frases visibles, para volver a traducirlas al cambiar de idioma. */
     fun resetTranslations(): List<Segment> {
-        segments.forEach { it.translated = null; it.provisional = false }
+        segments.forEach { it.translated = null; it.provisional = false; it.tail = "" }
         interimSource = ""
         interimTranslated = ""
         return segments.toList()
@@ -407,7 +441,12 @@ class CaptionText(var maxChars: Int = 150) {
         return view.primary to view.pending
     }
 
-    fun view(mode: String, translating: Boolean): CaptionDisplay {
+    /**
+     * [hideOriginal]: con traducción, el texto en el idioma original no se
+     * muestra mientras llega su traducción (solo lo ya traducido).
+     */
+    fun view(mode: String, translating: Boolean, hideOriginal: Boolean = false): CaptionDisplay {
+        val hide = translating && hideOriginal
         val done = StringBuilder()
         val pending = StringBuilder()
         val originals = StringBuilder()
@@ -416,8 +455,9 @@ class CaptionText(var maxChars: Int = 150) {
             if (text != null) {
                 if (pending.isNotEmpty()) { done.append(pending).append(' '); pending.clear() }
                 done.append(text).append(' ')
+                if (translating && segment.tail.isNotEmpty() && !hide) done.append(segment.tail).append(' ')
                 if (translating) originals.append(segment.original).append(' ')
-            } else {
+            } else if (!hide) {
                 pending.append(segment.original).append(' ')
             }
         }
@@ -425,8 +465,8 @@ class CaptionText(var maxChars: Int = 150) {
             if (translating && interimTranslated.isNotBlank() && interim.startsWith(interimSource)) {
                 pending.append(interimTranslated)
                 val tail = interim.substring(interimSource.length).trim()
-                if (tail.isNotEmpty()) pending.append(' ').append(tail)
-            } else {
+                if (tail.isNotEmpty() && !hide) pending.append(' ').append(tail)
+            } else if (!hide) {
                 pending.append(interim)
             }
         }
