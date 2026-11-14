@@ -1152,9 +1152,10 @@ object ExtensionManager {
         return delivered
     }
 
-    fun sendBrowserState(context: Context) {
+    /** [only]: solo a ese marco (uno nuevo); sin él, a todos. */
+    fun sendBrowserState(context: Context, only: WebExtension.Port? = null) {
         val night = NightMode.effective(context)
-        ports.toList().forEach { port ->
+        (only?.let { listOf(it) } ?: ports.toList()).forEach { port ->
             // Por marco: la excepción depende del sitio principal de su pestaña.
             val host = port.sender.session?.let { TabManager.tabForSession(it) }?.url?.let { SuggestionIndex.hostOf(it) }
             val message = JSONObject().apply {
@@ -1680,7 +1681,9 @@ object ExtensionManager {
                     }
                 )
 
-                sendBrowserState(AppContext.get())
+                // Solo al marco nuevo: los demás ya tienen el estado (antes se reenviaba a todos
+                // en cada conexión, y las páginas con muchos iframes lo multiplicaban).
+                sendBrowserState(AppContext.get(), port)
                 port.sender.session?.let { session ->
                     // Solo al marco nuevo: la orden pudo llegar antes de que conectara. Los
                     // demás marcos siguen como estaban (sin reiniciar a quien tiene los subtítulos).

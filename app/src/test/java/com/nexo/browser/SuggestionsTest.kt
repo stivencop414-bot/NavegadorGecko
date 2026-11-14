@@ -123,3 +123,13 @@ class SecurityLimitsTest {
         org.junit.Assert.assertNotEquals(PermissionScope.origin("https://a.example.com/"), PermissionScope.origin("https://b.example.com/"))
     }
 }
+
+class PerfLogTest {
+    @org.junit.Test fun summaryGivesMedianAndP95() {
+        org.junit.Assert.assertNull(PerfLog.summary(emptyList()))
+        val (median, p95) = PerfLog.summary((1..20).map { it.toDouble() })!!
+        org.junit.Assert.assertEquals(10.0, median, 0.0)
+        org.junit.Assert.assertEquals(19.0, p95, 0.0)
+        org.junit.Assert.assertEquals(7.0 to 7.0, PerfLog.summary(listOf(7.0)))
+    }
+}

@@ -37,6 +37,12 @@ object HistoryStore {
 
     fun flush() { io.submit {}.get() }
 
+    /** Lee el historial y prepara el índice de sugerencias fuera del hilo principal (al arrancar). */
+    fun prewarm(context: Context) {
+        val app = context.applicationContext
+        io.execute { runCatching { index(app) } }
+    }
+
     /** Se llama al terminar cada carga: no bloquear el hilo principal. */
     fun add(context: Context, rawUrl: String, title: String) {
         val app = context.applicationContext

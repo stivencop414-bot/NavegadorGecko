@@ -152,6 +152,20 @@ class SettingsActivity : Activity() {
             visibility = if (packageName == LegacyImport.TARGET_PACKAGE) android.view.View.VISIBLE else android.view.View.GONE
             setOnClickListener { LegacyImport.showManual(this@SettingsActivity) { recreate() } }
         }
+        findViewById<Button>(R.id.perfLogButton).setOnClickListener {
+            val report = PerfLog.report(this)
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Mediciones de rendimiento")
+                .setMessage(report + "\n\nMide igual antes y después: mismas páginas, red y batería; al menos 10 ejecuciones (cierra Nexo del todo entre arranques).")
+                .setPositiveButton("Copiar") { _, _ ->
+                    getSystemService(android.content.ClipboardManager::class.java)
+                        .setPrimaryClip(android.content.ClipData.newPlainText("Nexo rendimiento", report))
+                    Toast.makeText(this, "Copiado", Toast.LENGTH_SHORT).show()
+                }
+                .setNeutralButton("Borrar") { _, _ -> PerfLog.clear(this) }
+                .setNegativeButton("Cerrar", null)
+                .show()
+        }
         populate()
         applyTheme()
         findViewById<Button>(R.id.saveSettingsButton).setOnClickListener { save() }

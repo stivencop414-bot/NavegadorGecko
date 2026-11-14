@@ -188,11 +188,16 @@
   // Búsqueda de video
   // ---------------------------------------------------------------
 
+  // Límite por pasada: una página enorme no bloquea el hilo buscando Shadow DOM.
+  const SHADOW_SCAN_BUDGET = 20000;
+  let shadowBudget = 0;
+
   function collectShadowVideos(root, output, depth) {
-    if (!root || depth > 8) return;
+    if (!root || depth > 8 || shadowBudget <= 0) return;
 
     try {
       for (const element of root.querySelectorAll("*")) {
+        if (--shadowBudget <= 0) return;
         const shadow = element.shadowRoot;
         if (!shadow) continue;
 
@@ -214,6 +219,9 @@
     if (now - lastShadowScanAt >= shadowScanInterval) {
       lastShadowScanAt = now;
       const found = [];
+      shadowBudget = SHADOW_SCAN_BUDGET;
+      // Pestaña oculta: no se recorre el DOM (se conserva lo último encontrado).
+      if (document.visibilityState === "hidden") return shadowVideos.filter(video => video.isConnected);
       collectShadowVideos(document, found, 0);
       shadowVideos = found;
       shadowScanInterval = found.length

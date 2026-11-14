@@ -147,3 +147,65 @@ test('actual Nexo visibility protection and Phantom monitoring coexist without a
   h.visibility('visible'); h.timeupdate(); h.tick(300);
   assert.equal(h.active(), 1); assert.ok(h.scans() > scans);
 });
+
+function cosmeticPage() {
+  let id = 0, time = 0, queries = 0;
+  const timers = new Map(), observers = [], sent = [];
+  class Element {
+    constructor() { this.isConnected = true; this.id = ''; this.className = 'x'; this.classList = ['c' + (++id)]; this.nodeType = 1; }
+    querySelectorAll() { queries++; return []; }
+    setAttribute() {} appendChild() {} remove() {}
+  }
+  const document = new EventTarget();
+  Object.assign(document, { visibilityState: 'visible', documentElement: new Element(), createElement: () => new Element(), head: null });
+  document.documentElement.appendChild = () => {};
+  const schedule = (fn, delay) => { timers.set(++id, { fn, at: time + delay }); return id; };
+  const context = vm.createContext({
+    document, location: { hostname: 'news.example.com' }, Element, Node: { ELEMENT_NODE: 1 }, Date: { now: () => time },
+    getComputedStyle: () => ({ display: 'none' }), globalThis: {},
+    browser: { runtime: { sendMessage: message => { sent.push(message); return Promise.resolve(message.type === 'GET_COSMETIC' ? { enabled: true, generic: true, injected: true } : { enabled: true, injected: true }); } },
+      storage: { onChanged: { addListener() {} } } },
+    setTimeout: schedule, clearTimeout: value => timers.delete(value),
+    MutationObserver: class { constructor(fn) { this.fn = fn; observers.push(this); } observe() {} disconnect() {} }
+  });
+  context.globalThis = context;
+  vm.runInContext(fs.readFileSync(path.join(content, 'cosmetic-filter.js'), 'utf8'), context);
+  function tick(ms) {
+    const end = time + ms;
+    while (true) {
+      const next = [...timers].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      const [value, task] = next; time = task.at; timers.delete(value); task.fn();
+    }
+    time = end;
+  }
+  function step() {
+    const next = [...timers].sort((a, b) => a[1].at - b[1].at)[0];
+    if (!next) return;
+    const [value, task] = next; time = Math.max(time, task.at); timers.delete(value); task.fn();
+  }
+  return { tick, step, Element, observers, queries: () => queries, document,
+    add: n => observers[0].fn([{ addedNodes: Array.from({ length: n }, () => new Element()) }]),
+    visibility: value => { document.visibilityState = value; document.dispatchEvent(new Event('visibilitychange')); } };
+}
+
+test('cosmetic survey of added nodes is incremental, bounded and paused in hidden tabs', async () => {
+  const h = cosmeticPage();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.observers.length, 1, 'observer started');
+  h.tick(10);
+  const base = h.queries();
+  h.add(5000);
+  assert.equal(h.queries(), base, 'nothing is surveyed synchronously inside the mutation callback');
+  h.step();
+  const first = h.queries() - base;
+  assert.ok(first > 0 && first <= 1500, `first slice bounded (${first})`);
+  h.visibility('hidden');
+  const hidden = h.queries();
+  h.tick(1000);
+  assert.equal(h.queries(), hidden, 'no work while hidden');
+  h.visibility('visible');
+  h.tick(1000);
+  assert.ok(h.queries() > hidden, 'resumes when visible');
+  assert.ok(h.queries() - base <= 4000, 'queue capped');
+});

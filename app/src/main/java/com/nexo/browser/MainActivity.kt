@@ -139,6 +139,9 @@ class MainActivity :
         ThemeManager.applyWindow(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        // Historial e índice de sugerencias listos sin leer disco en el hilo principal.
+        HistoryStore.prewarm(this)
+        PerfLog.attach(this)
 
         CrashLog.consume(this)?.let { crash ->
             // Tras actualizar se muestra el cierre guardado por la versión

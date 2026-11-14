@@ -718,6 +718,11 @@
             </LinearLayout>
 
             <Button
+                android:id="@+id/perfLogButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Mediciones de rendimiento" />
+            <Button
                 android:id="@+id/legacyImportButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

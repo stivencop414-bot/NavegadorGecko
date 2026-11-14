@@ -1152,6 +1152,7 @@ object TabManager {
                     if (tab.session !== session) return
                     if (TabRouting.bootstrap(session,url) || TabRouting.preparing(session)) return
                     TabRouting.targetStarted(session)
+                    PerfLog.onPageStart(session)
                     windowPrompt?.dismiss()
                     // Una página nueva no hereda los subtítulos (ni su consumo de Deepgram).
                     if (LiveCaptions.isActive(session)) LiveCaptions.stop(session)
@@ -1186,6 +1187,7 @@ object TabManager {
                     if (tab.session !== session) return
                     if(TabRouting.synthetic(session)) return
                     if(success) TabRouting.targetFinished(session)
+                    PerfLog.onPageStop(requireContext(), session, success)
                     tab.isLoading = false
                     persist()
                     listener?.onProgress(tab, 100, false)
