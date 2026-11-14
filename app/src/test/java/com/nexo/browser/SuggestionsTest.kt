@@ -133,3 +133,14 @@ class PerfLogTest {
         org.junit.Assert.assertEquals(7.0 to 7.0, PerfLog.summary(listOf(7.0)))
     }
 }
+
+class CaptionErrorsTest {
+    @org.junit.Test fun deepgramFailuresAreDistinguished() {
+        val key = CaptionProtocol.errorFor(401); val quota = CaptionProtocol.errorFor(402)
+        val language = CaptionProtocol.errorFor(400); val limit = CaptionProtocol.errorFor(429)
+        val network = CaptionProtocol.errorFor(null)
+        org.junit.Assert.assertEquals(5, setOf(key, quota, language, limit, network).size)
+        org.junit.Assert.assertTrue(key.contains("clave")); org.junit.Assert.assertTrue(quota.contains("saldo"))
+        org.junit.Assert.assertTrue(language.contains("idioma")); org.junit.Assert.assertTrue(network.contains("conexión"))
+    }
+}
