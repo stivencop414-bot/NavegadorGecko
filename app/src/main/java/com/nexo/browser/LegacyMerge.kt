@@ -52,7 +52,7 @@ object LegacyMerge {
         require(rawHistory.length() <= MAX_HISTORY * 2)
         for (i in 0 until rawHistory.length()) {
             val h = rawHistory.getJSONObject(i)
-            val url = h.getString("url")
+            val url = UrlSafety.forHistory(h.getString("url"))
             if (!UrlSafety.isWebUrl(url) || url.length > 8192) continue
             history.put(JSONObject().put("url", url).put("title", h.optString("title").take(1024)).put("timestamp", h.optLong("timestamp")))
         }
@@ -61,7 +61,7 @@ object LegacyMerge {
         val rawLinks = json.optJSONArray("customLinks") ?: JSONArray()
         require(rawLinks.length() <= 500)
         for (i in 0 until rawLinks.length()) {
-            val url = rawLinks.getJSONObject(i).getString("url")
+            val url = UrlSafety.stripCredentials(rawLinks.getJSONObject(i).getString("url"))
             if (UrlSafety.isWebUrl(url) && url.length <= 2048) links.put(JSONObject().put("url", url))
         }
         val hidden = json.optJSONArray("hiddenLinks")?.let { array ->
@@ -73,7 +73,7 @@ object LegacyMerge {
         val rawTabs = JSONArray(TransferSchema.tabs((json.optJSONArray("tabs") ?: JSONArray()).toString()))
         for (i in 0 until minOf(rawTabs.length(), MAX_TABS)) {
             val t = rawTabs.getJSONObject(i)
-            val url = t.getString("url")
+            val url = UrlSafety.stripCredentials(t.getString("url"))
             if (!UrlSafety.isWebUrl(url)) continue
             tabs += Tab(url, t.optString("title").take(512), TabGroupRules.name(t.optString("groupName")), t.optBoolean("desktopMode"))
         }

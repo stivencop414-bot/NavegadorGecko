@@ -46,6 +46,7 @@ class SettingsActivity : Activity() {
     private lateinit var queryStripping: Switch
     private lateinit var clearOnExit: Switch
     private lateinit var remoteDebug: Switch
+    private lateinit var isolatedTabs: Switch
     private lateinit var captionsEnabled: Switch
 
     private val textSizes = listOf(80, 90, 100, 110, 120, 135, 150, 175)
@@ -142,6 +143,7 @@ class SettingsActivity : Activity() {
         queryStripping = findViewById(R.id.queryStrippingSwitch)
         clearOnExit = findViewById(R.id.clearOnExitSwitch)
         remoteDebug = findViewById(R.id.remoteDebugSwitch)
+        isolatedTabs = findViewById(R.id.isolatedTabsSwitch)
         captionsEnabled = findViewById(R.id.captionsEnabledSwitch)
 
         findViewById<Button>(R.id.transferProfileButton).setOnClickListener { MigrationMode.enter(this) }
@@ -149,6 +151,20 @@ class SettingsActivity : Activity() {
         findViewById<Button>(R.id.legacyImportButton).apply {
             visibility = if (packageName == LegacyImport.TARGET_PACKAGE) android.view.View.VISIBLE else android.view.View.GONE
             setOnClickListener { LegacyImport.showManual(this@SettingsActivity) { recreate() } }
+        }
+        findViewById<Button>(R.id.perfLogButton).setOnClickListener {
+            val report = PerfLog.report(this)
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Mediciones de rendimiento")
+                .setMessage(report + "\n\nMide igual antes y después: mismas páginas, red y batería; al menos 10 ejecuciones (cierra Nexo del todo entre arranques).")
+                .setPositiveButton("Copiar") { _, _ ->
+                    getSystemService(android.content.ClipboardManager::class.java)
+                        .setPrimaryClip(android.content.ClipData.newPlainText("Nexo rendimiento", report))
+                    Toast.makeText(this, "Copiado", Toast.LENGTH_SHORT).show()
+                }
+                .setNeutralButton("Borrar") { _, _ -> PerfLog.clear(this) }
+                .setNegativeButton("Cerrar", null)
+                .show()
         }
         populate()
         applyTheme()
@@ -225,6 +241,7 @@ class SettingsActivity : Activity() {
         queryStripping.isChecked = BrowserPrefs.queryStripping(this)
         clearOnExit.isChecked = BrowserPrefs.clearOnExit(this)
         remoteDebug.isChecked = BrowserPrefs.remoteDebugging(this)
+        isolatedTabs.isChecked = BrowserPrefs.isolatedTabs(this)
         strictTracking.isEnabled = BrowserPrefs.trackingProtection(this)
         tracking.setOnCheckedChangeListener { _, on -> strictTracking.isEnabled = on }
         findViewById<TextView>(R.id.aboutText).text = aboutText()
@@ -285,6 +302,7 @@ class SettingsActivity : Activity() {
         BrowserPrefs.setQueryStripping(this, queryStripping.isChecked)
         BrowserPrefs.setClearOnExit(this, clearOnExit.isChecked)
         BrowserPrefs.setRemoteDebugging(this, remoteDebug.isChecked)
+        BrowserPrefs.setIsolatedTabs(this, isolatedTabs.isChecked)
         BrowserPrefs.setCaptionsEnabled(this, captionsEnabled.isChecked)
         BrowserPrefs.setTranslatorTarget(
             this,
@@ -360,7 +378,7 @@ class SettingsActivity : Activity() {
         listOf(
             restore, tracking, gpc, httpsOnly, freeSearch, nexoHome, smartPip, backgroundMedia,
             forceZoom, pullToRefresh, dockGestures, parallelDownloads, desktopDefault, javascript, strictTracking, safeBrowsing,
-            fingerprinting, queryStripping, clearOnExit, remoteDebug, captionsEnabled
+            fingerprinting, queryStripping, clearOnExit, remoteDebug, isolatedTabs, captionsEnabled
         ).forEach {
             ThemeManager.styleSwitch(this, it)
         }

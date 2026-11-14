@@ -53,6 +53,7 @@ class MainActivity :
     private var lastCaptionMessage: String? = null
     private lateinit var geckoView: GeckoView
     private lateinit var omnibox: EditText
+    private lateinit var suggestions: OmniboxSuggestions
     private lateinit var progress: ProgressBar
     private lateinit var tabButton: Button
     private lateinit var backButton: ImageButton
@@ -138,6 +139,9 @@ class MainActivity :
         ThemeManager.applyWindow(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        // Historial e índice de sugerencias listos sin leer disco en el hilo principal.
+        HistoryStore.prewarm(this)
+        PerfLog.attach(this)
 
         CrashLog.consume(this)?.let { crash ->
             // Tras actualizar se muestra el cierre guardado por la versión
@@ -283,11 +287,21 @@ class MainActivity :
             omnibox.requestFocus()
         }
 
+        suggestions = OmniboxSuggestions(this, findViewById(R.id.omniboxSuggestions)) { pick ->
+            when (pick) {
+                is OmniboxSuggestion.History -> viewModel.navigate(pick.entry.url)
+                is OmniboxSuggestion.Search -> viewModel.navigate(SearchResolver.searchUrl(this, pick.query))
+            }
+            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(omnibox.windowToken, 0)
+            omnibox.clearFocus()
+        }
+
         omnibox.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 clearOmniboxButton.visibility =
                     if (omnibox.hasFocus() && !s.isNullOrEmpty()) View.VISIBLE else View.GONE
+                refreshSuggestions(s?.toString())
             }
             override fun afterTextChanged(s: Editable?) = Unit
         })
@@ -313,6 +327,7 @@ class MainActivity :
                     if (omnibox.text.isNullOrEmpty()) View.GONE else View.VISIBLE
             } else {
                 clearOmniboxButton.visibility = View.GONE
+                suggestions.hide()
                 tab?.let { renderOmnibox(it) }
             }
         }
@@ -380,6 +395,17 @@ class MainActivity :
                 { findCount.text = "" }
             )
         }
+    }
+
+    /**
+     * Sugerencias solo mientras se escribe (no al mostrar la dirección actual).
+     * El buscador nunca recibe lo escrito en privado, Burner o con proxy.
+     */
+    private fun refreshSuggestions(text: String?) {
+        val tab = TabManager.activeTab()
+        if (!omnibox.hasFocus() || text.isNullOrBlank() || text == tab?.url) { suggestions.hide(); return }
+        val remoteAllowed = tab != null && !tab.isPrivate && tab.burnerId == null && tab.networkProfile == null
+        suggestions.update(text, remoteAllowed)
     }
 
     private fun navigateOmnibox() {
@@ -1016,6 +1042,8 @@ class MainActivity :
             hideFindBar()
             // Los subtítulos son de la pestaña visible: no seguir transcribiendo otra.
             attachedSession?.let { LiveCaptions.stop(it) }
+            // Un permiso pedido desde otra pestaña no se concede desde esta.
+            attachedSession?.let { SitePermissions.cancelFor(it) }
             if (attachedSession != null) geckoView.releaseSession()
             // Fondo del tema mientras la página pinta (evita el destello blanco).
             runCatching {

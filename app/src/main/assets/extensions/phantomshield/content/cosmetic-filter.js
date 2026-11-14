@@ -15,6 +15,11 @@
   const MAX_TOKENS = 12000;          // clases + ids recordados por documento
   const MAX_SURVEY_NODES = 6000;     // elementos revisados por pasada
   const FLUSH_DELAY_MS = 350;
+  // Trabajo incremental: los nodos añadidos se revisan por tramos, con un
+  // presupuesto de elementos y de tiempo por pasada, y nada en pestañas ocultas.
+  const SLICE_NODES = 1500;
+  const SLICE_MS = 8;
+  const MAX_QUEUE = 4000;
 
   let enabled = false;
   let generic = false;
@@ -28,6 +33,9 @@
   const seen = new Set();
   let pendingClasses = [];
   let pendingIds = [];
+  let surveyQueue = [];
+  let surveyTimer = null;
+  let surveyBudget = 0;
 
   function hostMatches(domain) {
     return hostname === domain || hostname.endsWith('.' + domain);
@@ -126,9 +134,35 @@
     if (!generic || !(root instanceof Element) || seen.size >= MAX_TOKENS) return;
     note(root);
     const elements = root.querySelectorAll('[class],[id]');
-    const limit = Math.min(elements.length, MAX_SURVEY_NODES);
+    const limit = Math.min(elements.length, MAX_SURVEY_NODES, Math.max(0, surveyBudget));
     for (let i = 0; i < limit; i++) note(elements[i]);
+    surveyBudget -= limit + 1;
     if (pendingClasses.length || pendingIds.length) scheduleFlush();
+  }
+
+  /** Encola raíces a revisar; se procesan después, por tramos. */
+  function queueSurvey(node) {
+    if (!generic || seen.size >= MAX_TOKENS) return;
+    if (surveyQueue.length >= MAX_QUEUE) return; // ráfaga enorme: el resto ya lo cubre la pasada siguiente
+    surveyQueue.push(node);
+    scheduleSurvey();
+  }
+
+  function scheduleSurvey() {
+    if (surveyTimer !== null || !surveyQueue.length || document.visibilityState === 'hidden') return;
+    surveyTimer = setTimeout(runSurvey, 0);
+  }
+
+  function runSurvey() {
+    surveyTimer = null;
+    if (!enabled || document.visibilityState === 'hidden') return;
+    const started = Date.now();
+    surveyBudget = SLICE_NODES;
+    while (surveyQueue.length && surveyBudget > 0 && Date.now() - started < SLICE_MS) {
+      const node = surveyQueue.shift();
+      if (node && node.isConnected !== false) survey(node);
+    }
+    if (surveyQueue.length) scheduleSurvey();
   }
 
   function scheduleFlush() {
@@ -173,13 +207,14 @@
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
           if (!(node instanceof Element)) continue;
+          // Ocultar un anuncio evidente no espera: es barato y evita el parpadeo.
           if (nodeLooksLikeAd(node)) hideElement(node);
-          survey(node);
+          queueSurvey(node);
         }
       }
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
-    survey(document.documentElement);
+    queueSurvey(document.documentElement);
   }
 
   function stopObserver() {
@@ -187,9 +222,17 @@
     observer = null;
     clearTimeout(flushTimer);
     flushTimer = null;
+    clearTimeout(surveyTimer);
+    surveyTimer = null;
+    surveyQueue = [];
     pendingClasses = [];
     pendingIds = [];
   }
+
+  // Pestaña oculta: la cola espera; al volver se retoma donde quedó.
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState !== 'hidden') scheduleSurvey();
+  });
 
   /**
    * ¿La hoja insertada por el navegador está activa? Un elemento de prueba con

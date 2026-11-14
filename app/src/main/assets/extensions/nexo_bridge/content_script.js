@@ -85,6 +85,101 @@
   function applyState(state) {
     if (!state || typeof state !== "object") return;
     backgroundMedia = state.backgroundMedia !== false;
+    // Solo los mensajes que traen el modo nocturno lo cambian (otras respuestas parciales no lo apagan).
+    if (typeof state.night === "boolean") setNight(state.night, typeof state.nightBackground === "string" ? state.nightBackground : "");
+  }
+
+  // ---------------------------------------------------------------
+  // Modo nocturno (Dark Reader, cargado bajo demanda)
+  // ---------------------------------------------------------------
+
+  /*
+   * Con Midnight, OLED o el tema oscuro del sistema, las páginas claras se
+   * oscurecen con el motor dinámico de Dark Reader (también contenido que
+   * aparece después e iframes: cada marco decide por sí mismo). Las páginas
+   * que ya son oscuras se respetan. Imágenes y videos conservan sus colores.
+   * El motor solo se carga en el marco que lo necesita; al desactivarlo se
+   * retiran sus estilos y observadores.
+   */
+  const night = { want: false, background: "#0c1222", active: false, loading: null, waiting: false };
+
+  function parseColor(value) {
+    const match = /rgba?\(([^)]+)\)/.exec(String(value || ""));
+    if (!match) return null;
+    const parts = match[1].split(/[ ,/]+/).filter(Boolean).map(Number);
+    return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 };
+  }
+
+  /** La página ya es oscura (fondo oscuro o solo esquema oscuro): no se toca. */
+  function pageAlreadyDark() {
+    try {
+      const meta = document.querySelector && document.querySelector('meta[name="color-scheme"]');
+      const scheme = String(meta && meta.content || "").toLowerCase();
+      if (/\bdark\b/.test(scheme) && !/\blight\b/.test(scheme)) return true;
+      for (const element of [document.body, document.documentElement]) {
+        if (!element) continue;
+        const color = parseColor(getComputedStyle(element).backgroundColor);
+        if (!color || color.a < 0.5) continue;
+        const luminance = (0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b) / 255;
+        return luminance < 0.35;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function darkReaderReady() {
+    return typeof DarkReader !== "undefined" && DarkReader && typeof DarkReader.enable === "function";
+  }
+
+  function loadDarkReader() {
+    if (darkReaderReady()) return Promise.resolve(true);
+    if (night.loading) return night.loading;
+    let request;
+    try {
+      request = browser.runtime.sendMessage({ type: "nexo_dark_load" });
+    } catch (_) { request = null; }
+    night.loading = Promise.resolve(request).then(() => darkReaderReady(), () => false)
+      .then(ok => { if (!ok) night.loading = null; return ok; });
+    return night.loading;
+  }
+
+  function enableNight() {
+    if (!night.want || night.active) return;
+    if (pageAlreadyDark()) return;
+    loadDarkReader().then(ok => {
+      if (!ok || !night.want || night.active || pageAlreadyDark()) return;
+      try {
+        // fetch del script (principal de la extensión): puede leer hojas de estilo de otros
+        // orígenes; window.fetch sería el de la página, limitado por CORS.
+        DarkReader.setFetchMethod(url => fetch(url, { credentials: "omit" }));
+        DarkReader.enable({ brightness: 100, contrast: 95, sepia: 0,
+          darkSchemeBackgroundColor: night.background, darkSchemeTextColor: "#e8e6e3" });
+        night.active = true;
+      } catch (_) {}
+    });
+  }
+
+  function setNight(want, background) {
+    if (/^#[0-9a-f]{6}$/i.test(background)) night.background = background;
+    night.want = want;
+    if (!want) {
+      if (night.active && darkReaderReady()) { try { DarkReader.disable(); } catch (_) {} }
+      night.active = false;
+      return;
+    }
+    if (night.active) {
+      // Cambió el tema (Midnight ↔ OLED): mismos estilos, otro fondo.
+      try { DarkReader.enable({ brightness: 100, contrast: 95, sepia: 0,
+        darkSchemeBackgroundColor: night.background, darkSchemeTextColor: "#e8e6e3" }); } catch (_) {}
+      return;
+    }
+    // Los colores de la página solo se conocen con el documento cargado.
+    if (document.readyState === "loading") {
+      if (!night.waiting) {
+        night.waiting = true;
+        document.addEventListener("DOMContentLoaded", () => { night.waiting = false; enableNight(); }, { once: true });
+      }
+    } else enableNight();
   }
 
   installVisibilityGuard();
@@ -93,11 +188,16 @@
   // Búsqueda de video
   // ---------------------------------------------------------------
 
+  // Límite por pasada: una página enorme no bloquea el hilo buscando Shadow DOM.
+  const SHADOW_SCAN_BUDGET = 20000;
+  let shadowBudget = 0;
+
   function collectShadowVideos(root, output, depth) {
-    if (!root || depth > 8) return;
+    if (!root || depth > 8 || shadowBudget <= 0) return;
 
     try {
       for (const element of root.querySelectorAll("*")) {
+        if (--shadowBudget <= 0) return;
         const shadow = element.shadowRoot;
         if (!shadow) continue;
 
@@ -119,6 +219,9 @@
     if (now - lastShadowScanAt >= shadowScanInterval) {
       lastShadowScanAt = now;
       const found = [];
+      shadowBudget = SHADOW_SCAN_BUDGET;
+      // Pestaña oculta: no se recorre el DOM (se conserva lo último encontrado).
+      if (document.visibilityState === "hidden") return shadowVideos.filter(video => video.isConnected);
       collectShadowVideos(document, found, 0);
       shadowVideos = found;
       shadowScanInterval = found.length
@@ -624,7 +727,7 @@
       context.resume().catch(() => {});
       const floats = typeof Float32Array === "function" ? new Float32Array(analyser.fftSize) : null;
       const bytes = new Uint8Array(analyser.fftSize);
-      let silentChecks = 0, mutedReported = false, lastTime = -1;
+      let silentChecks = 0, mutedReported = false, lastTime = -1, heardOnce = false, quietReported = false;
       const check = () => {
         if (captions.recorder !== recorder) return;
         if (context.state !== "running") {
@@ -636,13 +739,22 @@
           if (!mutedReported) { mutedReported = true; sendToNexo({ type: "captions_status", code: "muted" }); }
           silentChecks = 0;
         } else if (peakLevel(analyser, floats, bytes) > 0.003) {
-          sendToNexo({ type: "captions_status", code: "signal" }); return;
+          // La señal se sigue midiendo: solo se avisa al aparecer (o volver tras un silencio).
+          if (!heardOnce || quietReported) sendToNexo({ type: "captions_status", code: "signal" });
+          heardOnce = true; quietReported = false; silentChecks = 0; mutedReported = false;
         } else {
           mutedReported = false;
           const time = video ? Number(video.currentTime) : 0;
           const advancing = video && !video.paused && !video.ended && time !== lastTime;
           lastTime = time;
-          if (advancing && ++silentChecks >= SILENCE_LIMIT_CHECKS) { captionError("silent"); return; }
+          if (advancing) ++silentChecks;
+          // Sin haber oído nada nunca: la captura no funciona. Tras oír voz, un silencio largo
+          // solo se avisa (pausa en la conversación, anuncio, reproductor cambiado).
+          if (!heardOnce && silentChecks >= SILENCE_LIMIT_CHECKS) { captionError("silent"); return; }
+          if (heardOnce && !quietReported && silentChecks >= SILENCE_LIMIT_CHECKS * 2) {
+            quietReported = true;
+            sendToNexo({ type: "captions_status", code: "quiet" });
+          }
         }
         captions.silentTimer = setTimeout(check, SILENCE_CHECK_MS);
       };
@@ -1203,9 +1315,34 @@
     });
   }
 
+  /*
+   * Pistas tardías: hls.js, Shaka y JW añaden la pista de subtítulos cuando
+   * leen el manifiesto, a veces segundos después de empezar. Si llega una
+   * mientras se usa el audio u otra fuente, se pasa a la pista (gratis y exacta).
+   */
+  let lateTrackTimer = 0;
+  function onLateTrack(event) {
+    const track = event && event.track;
+    if (!track || (track.kind !== "subtitles" && track.kind !== "captions")) return;
+    if (!captions.active || !captions.granted || captions.track) return;
+    clearTimeout(lateTrackTimer);
+    lateTrackTimer = setTimeout(() => {
+      if (captions.active && captions.granted && !captions.track) chooseSource();
+    }, 300);
+  }
+  let watchedTracks = null;
+  function watchLateTracks(video) {
+    const list = video ? video.textTracks : null;
+    if (watchedTracks === list) return;
+    try { watchedTracks?.removeEventListener?.("addtrack", onLateTrack); } catch (_) {}
+    watchedTracks = list;
+    try { list?.addEventListener?.("addtrack", onLateTrack); } catch (_) {}
+  }
+
   function chooseSource() {
     stopSources(false);
     captions.video = captionVideo();
+    watchLateTracks(captions.video);
     if (!captions.video) { release(); return; }
     if (useTextTrack(captions.video)) return;
     fallbackAfterTrack();
@@ -1227,6 +1364,8 @@
   function setCaptions(active, live, lang, target) {
     if (active !== true) {
       stopSources(false);
+      watchLateTracks(null);
+      clearTimeout(lateTrackTimer);
       captions.active = false;
       captions.granted = false;
       captions.video = null;

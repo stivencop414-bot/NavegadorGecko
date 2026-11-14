@@ -186,3 +186,5 @@ La memoria y el diagnóstico de IA se explican en [aprendizaje local](docs/IA-ME
 Consulta [transferencia cifrada del perfil](docs/TRANSFERENCIA-PERFIL.md) para la actualización de transición `-PnexoTransition`, importación y recuperación. El [diagnóstico de subtítulos](docs/DIAGNOSTICO-SUBTITULOS.md) explica la captura, sus estados y las verificaciones reales pendientes.
 
 Los cambios de [estabilidad de pestañas y captura de reproducción de Android](docs/ESTABILIDAD-Y-AUDIO-ANDROID.md) explican la confirmación de ventanas, la opción nativa de CC y sus permisos/límites.
+
+La [versión 0.28.0](docs/VERSION-0.28.0.md) reúne la captura de Android que ya no cancela la página, el modo nocturno con Dark Reader, las sugerencias de la barra, la revisión de seguridad y las mediciones de rendimiento, con lo que falta validar en el teléfono.

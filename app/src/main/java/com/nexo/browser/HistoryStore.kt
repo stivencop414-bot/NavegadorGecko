@@ -22,7 +22,26 @@ object HistoryStore {
     /** Copia en memoria: la página de inicio y cada carga no vuelven a leer el JSON. */
     @Volatile private var cache: List<HistoryEntry>? = null
 
+    /** Cambia con cada modificación: el índice de sugerencias se reconstruye solo entonces. */
+    @Volatile var version = 0L
+        private set
+    @Volatile private var index: Pair<Long, SuggestionIndex>? = null
+
+    /** Índice en memoria de las mismas entradas; se reconstruye al cambiar el historial. */
+    fun index(context: Context): SuggestionIndex {
+        val entries = list(context)
+        val current = version
+        index?.takeIf { it.first == current }?.let { return it.second }
+        return SuggestionIndex(entries).also { index = current to it }
+    }
+
     fun flush() { io.submit {}.get() }
+
+    /** Lee el historial y prepara el índice de sugerencias fuera del hilo principal (al arrancar). */
+    fun prewarm(context: Context) {
+        val app = context.applicationContext
+        io.execute { runCatching { index(app) } }
+    }
 
     /** Se llama al terminar cada carga: no bloquear el hilo principal. */
     fun add(context: Context, rawUrl: String, title: String) {
@@ -36,7 +55,7 @@ object HistoryStore {
         if (!UrlSafety.isWebUrl(rawUrl)) return
 
         // No guardar en disco tokens OAuth, ids de sesión, firmas, etc.
-        val url = UrlSafety.redactSensitiveQuery(rawUrl)
+        val url = UrlSafety.forHistory(rawUrl)
 
         val items = list(context).toMutableList()
         items.removeAll { it.url == url }
@@ -66,16 +85,19 @@ object HistoryStore {
             }
         }.getOrDefault(emptyList())
             .filter { UrlSafety.isWebUrl(it.url) }
-            .also { cache = it }
+            // Entradas guardadas por versiones anteriores: sin credenciales al leerlas.
+            .map { if (UrlSafety.forHistory(it.url) == it.url) it else it.copy(url = UrlSafety.forHistory(it.url)) }
+            .also { cache = it; version++ }
     }
 
     /** Sustituye el historial completo (al traer los datos de la app anterior). */
     @Synchronized
     fun replaceAll(context: Context, entries: JSONArray) {
         val items = (0 until entries.length()).mapNotNull { i ->
-            entries.optJSONObject(i)?.let { HistoryEntry(it.optString("url"), it.optString("title"), it.optLong("timestamp")) }
-        }.filter { UrlSafety.isWebUrl(it.url) }.take(MAX)
-        cache = items
+            // Mismo saneamiento que al navegar: el historial importado no trae credenciales.
+            entries.optJSONObject(i)?.let { HistoryEntry(UrlSafety.forHistory(it.optString("url")), it.optString("title"), it.optLong("timestamp")) }
+        }.filter { UrlSafety.isWebUrl(it.url) }.distinctBy { it.url }.take(MAX)
+        cache = items; version++
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(KEY, JSONArray().apply {
             items.forEach { put(JSONObject().put("url", it.url).put("title", it.title).put("timestamp", it.timestamp)) }
         }.toString()).commit()
@@ -83,7 +105,7 @@ object HistoryStore {
 
     @Synchronized
     fun clear(context: Context) {
-        cache = emptyList()
+        cache = emptyList(); version++
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putString(KEY, "[]").apply()
     }
@@ -96,7 +118,7 @@ object HistoryStore {
     }
 
     private fun save(context: Context, items: List<HistoryEntry>) {
-        cache = items
+        cache = items; version++
         val arr = JSONArray()
         items.forEach {
             arr.put(JSONObject().apply {

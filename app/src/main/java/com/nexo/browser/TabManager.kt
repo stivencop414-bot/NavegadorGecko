@@ -376,6 +376,7 @@ object TabManager {
 
         val removed = tabs[index]
         val wasActive = removed.id == activeId
+        removed.session?.let { SitePermissions.cancelFor(it) }
         // Burner no se reabre: al cerrar su última pestaña se borran sus datos.
         if (removed.burnerId == null && !BrowserPrefs.isNexoHome(removed.url) && UrlSafety.isAppNavigable(removed.url)) {
             recentlyClosed.addLast(ClosedTab(
@@ -445,6 +446,8 @@ object TabManager {
 
         tab.url = target
         tab.navigationEpoch++
+        // Los permisos pedidos por la página anterior ya no valen.
+        tab.session?.let { SitePermissions.cancelFor(it) }
         tab.lastUsed = System.currentTimeMillis()
 
         if(tab.networkProfile == null && tab.burnerId == null) GeckoRuntimeHolder.speculativeConnect(requireContext(),target)
@@ -987,10 +990,20 @@ object TabManager {
                 ) {
                     if (tab.session !== session || TabRouting.synthetic(session) || url == null || !isSafeAppNavigationUrl(url)) return
                     if (tab.url != url) {
-                        if (LiveCaptions.usingDeviceAudio(session)) LiveCaptions.stop(session)
-                        else PlaybackAudioCapture.cancel(session)
+                        // Un cambio solo de "#…" (reproductores, pestañas internas) no es otra página:
+                        // los subtítulos y la captura de Android siguen.
+                        // Otro sitio principal: su excepción de modo nocturno puede ser distinta.
+                        if (SuggestionIndex.hostOf(tab.url) != SuggestionIndex.hostOf(url)) {
+                            mainHandler.post { ExtensionManager.sendBrowserState(AppContext.get()) }
+                        }
+                        if (tab.url.substringBefore('#') != url.substringBefore('#')) {
+                            if (LiveCaptions.pageSuspended(session)) LiveCaptions.stop(session)
+                            else PlaybackAudioCapture.cancel(session)
+                        }
                         tab.sessionState = null
                         tab.navigationEpoch++
+                        // Los permisos pedidos por la página anterior ya no valen.
+                        tab.session?.let { SitePermissions.cancelFor(it) }
                         windowPrompt?.dismiss()
                     }
                     tab.url = url
@@ -1139,10 +1152,13 @@ object TabManager {
                     if (tab.session !== session) return
                     if (TabRouting.bootstrap(session,url) || TabRouting.preparing(session)) return
                     TabRouting.targetStarted(session)
+                    PerfLog.onPageStart(session)
                     windowPrompt?.dismiss()
                     // Una página nueva no hereda los subtítulos (ni su consumo de Deepgram).
                     if (LiveCaptions.isActive(session)) LiveCaptions.stop(session)
                     tab.navigationEpoch++
+                    // Los permisos pedidos por la página anterior ya no valen.
+                    tab.session?.let { SitePermissions.cancelFor(it) }
                     TranslatorManager.forget(session)
                     PagePrompts.onPageStart(session)
                     BrowserMediaController.resetVideo(tab.id)
@@ -1171,6 +1187,7 @@ object TabManager {
                     if (tab.session !== session) return
                     if(TabRouting.synthetic(session)) return
                     if(success) TabRouting.targetFinished(session)
+                    PerfLog.onPageStop(requireContext(), session, success)
                     tab.isLoading = false
                     persist()
                     listener?.onProgress(tab, 100, false)

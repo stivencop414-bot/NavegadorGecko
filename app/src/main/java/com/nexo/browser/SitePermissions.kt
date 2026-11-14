@@ -25,6 +25,55 @@ object SitePermissions : PermissionDelegate {
         Manifest.permission.ACCESS_COARSE_LOCATION
     )
 
+    /**
+     * Solicitud abierta, ligada a su pestaña, al sitio principal y a la
+     * navegación en la que se pidió. Si el usuario cambia de página o de
+     * pestaña, se cierra (rechazada); un "Permitir" tardío ya no vale.
+     */
+    private class Pending(val session: GeckoSession, val epoch: Long, val origin: String, val dialog: AlertDialog)
+    private val pending = mutableListOf<Pending>()
+
+    private fun topOrigin(session: GeckoSession): String? =
+        TabManager.tabForSession(session)?.url?.let { PermissionScope.origin(it) }
+
+    /** La pestaña sigue en la misma página que pidió el permiso y es la visible. */
+    private fun stillValid(session: GeckoSession, epoch: Long, origin: String): Boolean {
+        val tab = TabManager.tabForSession(session) ?: return false
+        return TabManager.activeSession() === session && tab.navigationEpoch == epoch &&
+            PermissionScope.origin(tab.url) == origin
+    }
+
+    /** Al abandonar la página o la pestaña: cierra (rechaza) sus solicitudes pendientes. */
+    fun cancelFor(session: GeckoSession) {
+        pending.filter { it.session === session }.forEach { runCatching { it.dialog.dismiss() } }
+        pending.removeAll { it.session === session }
+    }
+
+    /** Muestra el diálogo registrado; [onAllow]/[onDeny] solo se llaman una vez. */
+    private fun ask(activity: android.app.Activity, session: GeckoSession, message: String, onAllow: () -> Unit, onDeny: () -> Unit): Boolean {
+        val tab = TabManager.tabForSession(session) ?: return false
+        val origin = topOrigin(session) ?: return false
+        if (TabManager.activeSession() !== session) return false
+        val epoch = tab.navigationEpoch
+        var answered = false
+        lateinit var entry: Pending
+        val dialog = AlertDialog.Builder(activity)
+            .setTitle("Permiso del sitio")
+            .setMessage(message)
+            .setNegativeButton("Bloquear") { _, _ -> if (!answered) { answered = true; onDeny() } }
+            .setPositiveButton("Permitir") { _, _ ->
+                if (answered) return@setPositiveButton
+                answered = true
+                if (stillValid(session, epoch, origin)) onAllow() else onDeny()
+            }
+            .setOnDismissListener { pending.remove(entry); if (!answered) { answered = true; onDeny() } }
+            .create()
+        entry = Pending(session, epoch, origin, dialog)
+        pending += entry
+        dialog.show()
+        return true
+    }
+
     private fun host(uri: String?): String =
         runCatching { Uri.parse(uri.orEmpty()).host }.getOrNull()
             ?.removePrefix("www.")
@@ -42,7 +91,8 @@ object SitePermissions : PermissionDelegate {
             callback.grant()
             return
         }
-        if (host == null) {
+        // Solo para la pestaña visible: una pestaña de fondo no abre permisos de Android.
+        if (host == null || TabManager.activeSession() !== session) {
             callback.reject()
             return
         }
@@ -110,23 +160,12 @@ object SitePermissions : PermissionDelegate {
             ?: return GeckoResult.fromValue(ContentPermission.VALUE_DENY)
 
         val result = GeckoResult<Int>()
-        var answered = false
-        fun answer(value: Int) {
-            if (answered) return
-            answered = true
-            result.complete(value)
-        }
-
-        runCatching {
-            AlertDialog.Builder(activity)
-                .setTitle("Permiso del sitio")
-                .setMessage("${host(perm.uri)} quiere $description.")
-                .setNegativeButton("Bloquear") { _, _ -> answer(ContentPermission.VALUE_DENY) }
-                .setPositiveButton("Permitir") { _, _ -> answer(ContentPermission.VALUE_ALLOW) }
-                .setOnDismissListener { answer(ContentPermission.VALUE_DENY) }
-                .show()
-        }.onFailure { answer(ContentPermission.VALUE_DENY) }
-
+        val shown = runCatching {
+            ask(activity, session, "${host(perm.uri)} quiere $description.",
+                onAllow = { result.complete(ContentPermission.VALUE_ALLOW) },
+                onDeny = { result.complete(ContentPermission.VALUE_DENY) })
+        }.getOrDefault(false)
+        if (!shown) result.complete(ContentPermission.VALUE_DENY)
         return result
     }
 
@@ -152,21 +191,11 @@ object SitePermissions : PermissionDelegate {
             else -> "usar tu micrófono"
         }
 
-        var answered = false
-        runCatching {
-            AlertDialog.Builder(activity)
-                .setTitle("Permiso del sitio")
-                .setMessage("${host(uri)} quiere $what.")
-                .setNegativeButton("Bloquear") { _, _ ->
-                    answered = true
-                    callback.reject()
-                }
-                .setPositiveButton("Permitir") { _, _ ->
-                    answered = true
-                    callback.grant(camera, microphone)
-                }
-                .setOnDismissListener { if (!answered) callback.reject() }
-                .show()
-        }.onFailure { callback.reject() }
+        val shown = runCatching {
+            ask(activity, session, "${host(uri)} quiere $what.",
+                onAllow = { callback.grant(camera, microphone) },
+                onDeny = { callback.reject() })
+        }.getOrDefault(false)
+        if (!shown) callback.reject()
     }
 }

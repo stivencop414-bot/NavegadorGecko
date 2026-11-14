@@ -1115,7 +1115,7 @@ object ExtensionManager {
     }
 
     fun restoreCaptions(session: GeckoSession) {
-        if (LiveCaptions.isActive(session) && !LiveCaptions.usingDeviceAudio(session)) postCaptions(session, captionsOn(session))
+        if (LiveCaptions.isActive(session) && !LiveCaptions.pageSuspended(session)) postCaptions(session, captionsOn(session))
     }
 
     /** Avisa al puente de que la app pasa a segundo plano o vuelve (recuperación de video). */
@@ -1152,17 +1152,23 @@ object ExtensionManager {
         return delivered
     }
 
-    fun sendBrowserState(context: Context) {
-        val message = JSONObject().apply {
-            put("type", "browser_state")
-            put("accent", BrowserPrefs.accent(context))
-            put("theme", BrowserPrefs.theme(context))
-            put("showBadge", false)
-            put("backgroundMedia", BrowserPrefs.backgroundMedia(context))
-            put("smartPip", BrowserPrefs.smartPip(context))
-        }
-
-        ports.toList().forEach { port ->
+    /** [only]: solo a ese marco (uno nuevo); sin él, a todos. */
+    fun sendBrowserState(context: Context, only: WebExtension.Port? = null) {
+        val night = NightMode.effective(context)
+        (only?.let { listOf(it) } ?: ports.toList()).forEach { port ->
+            // Por marco: la excepción depende del sitio principal de su pestaña.
+            val host = port.sender.session?.let { TabManager.tabForSession(it) }?.url?.let { SuggestionIndex.hostOf(it) }
+            val message = JSONObject().apply {
+                put("type", "browser_state")
+                put("accent", BrowserPrefs.accent(context))
+                put("theme", BrowserPrefs.theme(context))
+                put("showBadge", false)
+                put("backgroundMedia", BrowserPrefs.backgroundMedia(context))
+                put("smartPip", BrowserPrefs.smartPip(context))
+                put("night", night != null && !BrowserPrefs.isNightException(context, host))
+                put("nightException", BrowserPrefs.isNightException(context, host))
+                put("nightBackground", night ?: "")
+            }
             runCatching { port.postMessage(message) }
         }
     }
@@ -1593,7 +1599,7 @@ object ExtensionManager {
                             message: Any,
                             port: WebExtension.Port
                         ) {
-                            val json = message as? JSONObject
+                            val json = (message as? JSONObject)?.takeIf { BridgeLimits.accept(it) }
                             if (json?.optString("type") == "video_state" && port.sender.isTopLevel()) {
                                 val tab = port.sender.session?.let { TabManager.tabForSession(it) }
                                 if (tab != null) {
@@ -1616,7 +1622,7 @@ object ExtensionManager {
                             val session = port.sender.session
                             // Con la captura de Android activa la página no participa: un marco nuevo
                             // (anuncio, reproductor recargado) no puede reiniciarla ni cancelarla.
-                            if (json != null && session != null && LiveCaptions.isActive(session) && !LiveCaptions.usingDeviceAudio(session)) {
+                            if (json != null && session != null && LiveCaptions.isActive(session) && !LiveCaptions.pageSuspended(session)) {
                                 val type = json.optString("type")
                                 if (type == "captions_offer" && captionOwners[session] == null) {
                                     val pending = captionOffers[session]
@@ -1632,6 +1638,7 @@ object ExtensionManager {
                                             if (selected != null) {
                                                 captionOwners[session] = selected
                                                 runCatching { selected.postMessage(JSONObject().put("type", "captions_grant")) }
+                                                    .onSuccess { LiveCaptions.onVideoGranted(session) }
                                                     .onFailure { captionOwners.remove(session) }
                                             }
                                         }, 200L)
@@ -1674,11 +1681,13 @@ object ExtensionManager {
                     }
                 )
 
-                sendBrowserState(AppContext.get())
+                // Solo al marco nuevo: los demás ya tienen el estado (antes se reenviaba a todos
+                // en cada conexión, y las páginas con muchos iframes lo multiplicaban).
+                sendBrowserState(AppContext.get(), port)
                 port.sender.session?.let { session ->
                     // Solo al marco nuevo: la orden pudo llegar antes de que conectara. Los
                     // demás marcos siguen como estaban (sin reiniciar a quien tiene los subtítulos).
-                    if (LiveCaptions.isActive(session) && !LiveCaptions.usingDeviceAudio(session)) {
+                    if (LiveCaptions.isActive(session) && !LiveCaptions.pageSuspended(session)) {
                         runCatching { port.postMessage(captionsOn(session)) }
                         LiveCaptions.onBridgeConnected(session)
                     }

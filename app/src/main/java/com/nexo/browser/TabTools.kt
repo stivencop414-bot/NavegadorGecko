@@ -30,6 +30,16 @@ object TabTools {
         val host = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull()?.removePrefix("www.").orEmpty()
         val body = NexoUi.column(activity)
 
+        // --- Modo nocturno de este sitio ------------------------------------
+        if (host.isNotBlank() && UrlSafety.isWebUrl(tab.url) && NightMode.effective(activity) != null) {
+            val excluded = BrowserPrefs.isNightException(activity, host)
+            body.addView(NexoUi.switchRow(activity, "Modo nocturno en $host",
+                if (excluded) "Desactivado en este sitio: se ve con sus colores originales."
+                else "Las páginas claras se oscurecen; las imágenes y videos conservan sus colores.", !excluded) { on ->
+                NightMode.toggleSite(activity, host, excluded = !on)
+            })
+        }
+
         // --- Grupo ---------------------------------------------------------
         body.addView(NexoUi.section(activity, "Grupo de esta pestaña"))
         fun groupChips(): View {

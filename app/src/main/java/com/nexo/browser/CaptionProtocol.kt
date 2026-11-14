@@ -144,6 +144,22 @@ object CaptionProtocol {
 
     data class AiRequest(val url: String, val headers: Map<String, String>, val body: String)
 
+    /**
+     * Destino aceptable para una petición con clave: HTTPS con host, sin
+     * credenciales en la URL; HTTP solo hacia el propio teléfono (127.0.0.1,
+     * localhost, ::1), p. ej. un modelo local.
+     */
+    fun isSafeKeyedEndpoint(url: String): Boolean {
+        val uri = runCatching { java.net.URI(url.trim()) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase()?.trim('[', ']') ?: return false
+        if (uri.rawUserInfo != null || uri.isOpaque) return false
+        return when (uri.scheme?.lowercase()) {
+            "https" -> true
+            "http" -> host == "localhost" || host == "127.0.0.1" || host == "::1"
+            else -> false
+        }
+    }
+
     val AI_ENDPOINTS = mapOf(
         "openai" to "https://api.openai.com/v1",
         "claude" to "https://api.anthropic.com/v1",
