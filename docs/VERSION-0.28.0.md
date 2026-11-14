@@ -25,7 +25,7 @@ Cambios:
 | Colas acotadas (página ≤ 40 trozos, Android ≤ 40 envíos al hilo principal, Deepgram ≤ 256 KB). Al apagar CC se liberan grabador, proyección y conexión. | idem | Revisión. |
 | Pistas de subtítulos que el reproductor añade tarde (hls.js) sustituyen a la fuente provisional. | `content_script.js` `watchLateTracks` | Prueba JS «late track». |
 | Un cambio solo de `#` en la dirección no detiene los subtítulos. | `TabManager` | Revisión. |
-| Pestañas en procesos aislados de Android (Ajustes › Avanzado, activado por defecto; se aplica al reiniciar). | `GeckoRuntimeHolder` | Necesita el teléfono. |
+| ~~Pestañas en procesos aislados de Android~~ **Retirado en 0.28.1**: también aislaba el proceso de extensiones y las dejaba sin arrancar (ver abajo). | `GeckoRuntimeHolder` | Fallo confirmado en el POCO. |
 | Latencias de audio de 0.27.2 tras un interruptor (CC › Más ajustes › «Audio compatible con la captura de Android») para compararlas con y sin. Siguen activas por defecto mientras no haya una comparación en el teléfono. | `GeckoRuntimeHolder.applyAudioPrefs` | Comparación controlada pendiente en el POCO. |
 | La captura de Android se mantiene como alternativa explícita: el aviso dice que puede incluir otras apps y que nunca usa el micrófono. | `PlaybackAudioCapture` | Revisión de textos. |
 
@@ -152,3 +152,26 @@ resultados y corregir regresiones antes de integrar.
 
 Se conservan el paquete (`com.nexo.browser`), los datos y la actualización
 sobre la versión instalada.
+
+## 0.28.1: extensiones rotas por los procesos aislados
+
+**Fallo confirmado en el POCO con 0.28.0.** Al pulsar PhantomShield se veía
+un panel gris vacío. Tampoco aparecían las extensiones instaladas ni el
+catálogo de la tienda.
+
+Causa: 0.28.0 activó por defecto `isolatedProcessEnabled`. En GeckoView el
+proceso de extensiones también es de contenido, así que pasó a uno aislado
+(`isolatedTab`) y las extensiones no arrancaban. Por eso la carga de
+PhantomShield (`ensureBuiltIn`) nunca terminaba. La lista de instaladas y la
+tienda esperaban esa carga antes de mostrar nada, así que se quedaban vacías
+para siempre.
+
+Cambios:
+
+- Procesos aislados desactivados siempre, como hasta 0.27.2. El interruptor
+  de Ajustes › Avanzado se ha retirado.
+- `ExtensionManager.list` espera a PhantomShield como mucho 5 s. Pasado ese
+  tiempo, o si su carga falla, muestra igualmente las instaladas y la tienda.
+
+Las extensiones instaladas y sus datos no se borraron: vuelven a aparecer al
+instalar 0.28.1 encima.

@@ -35,9 +35,10 @@ object GeckoRuntimeHolder {
                     .largeKeepaliveFactor(2)
                     // Los sitios con modo oscuro siguen el tema de Nexo.
                     .preferredColorScheme(colorScheme(context))
-                    // Pestañas en procesos aislados de Android (sin permisos ni datos de la app).
-                    // La captura de Android ya no filtra por UID, así que no le afecta.
-                    .isolatedProcessEnabled(BrowserPrefs.isolatedTabs(context))
+                    // Sin procesos aislados: en GeckoView el proceso de extensiones también
+                    // es de contenido y, aislado, las extensiones no arrancan (0.28.0 dejó sin
+                    // PhantomShield, sin lista de instaladas y sin tienda).
+                    .isolatedProcessEnabled(false)
 
 
                 GeckoRuntime.create(

@@ -705,16 +705,6 @@
                     android:switchPadding="16dp"
                     android:text="Depuración remota (USB)"
                     android:textSize="15sp" />
-                <Switch
-                    android:id="@+id/isolatedTabsSwitch"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
-                    android:text="Aislar las pestañas en procesos sin permisos (se aplica al reiniciar Nexo)"
-                    android:textSize="15sp" />
             </LinearLayout>
 
             <Button

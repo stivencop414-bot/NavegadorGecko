@@ -328,10 +328,20 @@ object ExtensionManager {
         onError: (Throwable) -> Unit
     ) {
         if (!initialized) initialize(AppContext.get())
-        phantomInstallation?.accept(
-            { listInstalled(onSuccess, onError) },
-            { onError(IllegalStateException("No se pudo cargar PhantomShield integrado", it)) }
-        ) ?: listInstalled(onSuccess, onError)
+        val installation = phantomInstallation ?: return listInstalled(onSuccess, onError)
+        // Se espera a PhantomShield para que aparezca en la lista, pero nunca
+        // indefinidamente: si su carga se atasca, las instaladas y la tienda
+        // deben mostrarse igual (antes se quedaban vacías para siempre).
+        val done = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun once() { if (done.compareAndSet(false, true)) listInstalled(onSuccess, onError) }
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ once() }, 5_000L)
+        installation.accept(
+            { once() },
+            { error ->
+                android.util.Log.e("NexoExtensions", "PhantomShield integrado", error)
+                once()
+            }
+        )
     }
 
     private fun listInstalled(
