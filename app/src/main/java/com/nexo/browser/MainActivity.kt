@@ -1039,6 +1039,8 @@ class MainActivity :
             hideFindBar()
             // Los subtítulos son de la pestaña visible: no seguir transcribiendo otra.
             attachedSession?.let { LiveCaptions.stop(it) }
+            // Un permiso pedido desde otra pestaña no se concede desde esta.
+            attachedSession?.let { SitePermissions.cancelFor(it) }
             if (attachedSession != null) geckoView.releaseSession()
             // Fondo del tema mientras la página pinta (evita el destello blanco).
             runCatching {

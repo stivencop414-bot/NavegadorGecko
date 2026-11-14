@@ -116,6 +116,8 @@ object LiveCaptions {
     }
     private val client by lazy {
         OkHttpClient.Builder()
+            // Las peticiones llevan claves: nunca seguir una redirección a otro destino.
+            .followRedirects(false).followSslRedirects(false)
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .build()
@@ -333,6 +335,13 @@ object LiveCaptions {
     private fun cacheKey(provider: String, target: String, text: String) = provider + "\u0000" + target + "\u0000" + text
 
     private fun warmUp(context: Context) { /* No provider request before actual text. */ }
+
+    /** Cuerpo de respuesta de un servicio con clave, como mucho 1 MB (si no, vacío). */
+    private fun limitedBody(response: Response, max: Long = 1_000_000L): String {
+        val source = response.body?.source() ?: return ""
+        source.request(max + 1)
+        return if (source.buffer.size > max) "" else source.buffer.readUtf8()
+    }
 
     private inline fun <T> withResponse(stream: Stream, generation: Int, request: Request, block: (Response) -> T): T {
         val call = synchronized(stream) {
@@ -1050,7 +1059,7 @@ object LiveCaptions {
         val aligned = withResponse(stream, generation, request) { response ->
             // Error de red o del servicio: no multiplicar peticiones.
             if (!response.isSuccessful) throw java.io.IOException("HTTP ${response.code}")
-            val text = response.body?.string().orEmpty()
+            val text = limitedBody(response)
             CaptionProtocol.parseGoogleLines(text, lines.size)
                 ?: if (lines.size == 1) CaptionProtocol.parseGoogle(text)?.let { listOf(it) } else null
         }
@@ -1072,11 +1081,13 @@ object LiveCaptions {
                     aiProvider, BrowserPrefs.aiTranslateEndpoint(context), BrowserPrefs.aiTranslateModel(context), key,
                     CaptionProtocol.LANGUAGE_NAMES[target] ?: target, lines, textContext
                 )
+                // Una clave nunca viaja sin cifrar (salvo a un servidor del propio teléfono).
+                if (!CaptionProtocol.isSafeKeyedEndpoint(request.url)) return null
                 val builder = Request.Builder().url(request.url)
                     .post(request.body.toRequestBody("application/json".toMediaType()))
                 request.headers.forEach { (name, value) -> if (value.isNotBlank()) builder.header(name, value) }
                 withResponse(stream, generation, builder.build()) { response ->
-                    if (response.isSuccessful) CaptionProtocol.parseAiLines(response.body?.string().orEmpty(), lines.size) else null
+                    if (response.isSuccessful) CaptionProtocol.parseAiLines(limitedBody(response), lines.size) else null
                 }
             }
             BrowserPrefs.TRANSLATE_DEEPL -> {
@@ -1087,7 +1098,7 @@ object LiveCaptions {
                     .post(CaptionProtocol.deeplBatchBody(lines, target).toRequestBody(form))
                     .build()
                 withResponse(stream, generation, request) { response ->
-                    if (response.isSuccessful) CaptionProtocol.parseDeeplLines(response.body?.string().orEmpty(), lines.size) else null
+                    if (response.isSuccessful) CaptionProtocol.parseDeeplLines(limitedBody(response), lines.size) else null
                 }
             }
             else -> googleLines(stream, generation, lines, target)

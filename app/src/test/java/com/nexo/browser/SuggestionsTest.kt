@@ -94,3 +94,32 @@ class SuggestionsTest {
         assertEquals("https://host.com/p", UrlSafety.forHistory("https://a:b@host.com/p?access_token=zzz"))
     }
 }
+
+class SecurityLimitsTest {
+    @org.junit.Test fun keyedEndpointsMustBeHttpsOrLoopback() {
+        listOf("https://api.openai.com/v1/chat/completions", "http://127.0.0.1:8080/v1/chat", "http://localhost/v1", "http://[::1]:1234/x")
+            .forEach { org.junit.Assert.assertTrue(it, CaptionProtocol.isSafeKeyedEndpoint(it)) }
+        listOf("http://api.example.com/v1", "https://user:pw@api.example.com/v1", "ftp://x/y", "javascript:alert(1)", "https:///nohost", "")
+            .forEach { org.junit.Assert.assertFalse(it, CaptionProtocol.isSafeKeyedEndpoint(it)) }
+    }
+
+    @org.junit.Test fun bridgeMessagesAreBounded() {
+        fun msg(vararg pairs: Pair<String, Any>) = org.json.JSONObject().apply { pairs.forEach { (k, v) -> put(k, v) } }
+        org.junit.Assert.assertTrue(BridgeLimits.accept(msg("type" to "captions_text", "text" to "hola")))
+        org.junit.Assert.assertTrue(BridgeLimits.accept(msg("type" to "captions_audio", "data" to "A".repeat(300_000))))
+        org.junit.Assert.assertFalse(BridgeLimits.accept(msg("type" to "captions_audio", "data" to "A".repeat(400_000))))
+        org.junit.Assert.assertFalse(BridgeLimits.accept(msg("type" to "captions_text", "text" to "x".repeat(5_000))))
+        org.junit.Assert.assertFalse(BridgeLimits.accept(msg("type" to "captions_cues", "cues" to org.json.JSONArray((0..300).toList()))))
+        org.junit.Assert.assertFalse(BridgeLimits.accept(msg("type" to "x", "nested" to org.json.JSONObject())))
+        org.junit.Assert.assertFalse(BridgeLimits.accept(msg("nada" to 1)))
+        org.junit.Assert.assertFalse(BridgeLimits.accept(org.json.JSONObject((0..20).associate { "k$it" to it }).put("type", "x")))
+    }
+
+    @org.junit.Test fun permissionsAreScopedToTheTopOrigin() {
+        org.junit.Assert.assertEquals("https://example.com", PermissionScope.origin("https://Example.com:443/a?b#c"))
+        org.junit.Assert.assertEquals("https://example.com:8443", PermissionScope.origin("https://example.com:8443/"))
+        org.junit.Assert.assertEquals("https://example.com", PermissionScope.origin("https://u:p@example.com/"))
+        org.junit.Assert.assertEquals(null, PermissionScope.origin("about:blank"))
+        org.junit.Assert.assertNotEquals(PermissionScope.origin("https://a.example.com/"), PermissionScope.origin("https://b.example.com/"))
+    }
+}

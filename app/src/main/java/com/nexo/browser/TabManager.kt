@@ -376,6 +376,7 @@ object TabManager {
 
         val removed = tabs[index]
         val wasActive = removed.id == activeId
+        removed.session?.let { SitePermissions.cancelFor(it) }
         // Burner no se reabre: al cerrar su última pestaña se borran sus datos.
         if (removed.burnerId == null && !BrowserPrefs.isNexoHome(removed.url) && UrlSafety.isAppNavigable(removed.url)) {
             recentlyClosed.addLast(ClosedTab(
@@ -445,6 +446,8 @@ object TabManager {
 
         tab.url = target
         tab.navigationEpoch++
+        // Los permisos pedidos por la página anterior ya no valen.
+        tab.session?.let { SitePermissions.cancelFor(it) }
         tab.lastUsed = System.currentTimeMillis()
 
         if(tab.networkProfile == null && tab.burnerId == null) GeckoRuntimeHolder.speculativeConnect(requireContext(),target)
@@ -999,6 +1002,8 @@ object TabManager {
                         }
                         tab.sessionState = null
                         tab.navigationEpoch++
+                        // Los permisos pedidos por la página anterior ya no valen.
+                        tab.session?.let { SitePermissions.cancelFor(it) }
                         windowPrompt?.dismiss()
                     }
                     tab.url = url
@@ -1151,6 +1156,8 @@ object TabManager {
                     // Una página nueva no hereda los subtítulos (ni su consumo de Deepgram).
                     if (LiveCaptions.isActive(session)) LiveCaptions.stop(session)
                     tab.navigationEpoch++
+                    // Los permisos pedidos por la página anterior ya no valen.
+                    tab.session?.let { SitePermissions.cancelFor(it) }
                     TranslatorManager.forget(session)
                     PagePrompts.onPageStart(session)
                     BrowserMediaController.resetVideo(tab.id)

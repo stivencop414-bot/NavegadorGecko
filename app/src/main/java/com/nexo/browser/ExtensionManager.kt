@@ -1598,7 +1598,7 @@ object ExtensionManager {
                             message: Any,
                             port: WebExtension.Port
                         ) {
-                            val json = message as? JSONObject
+                            val json = (message as? JSONObject)?.takeIf { BridgeLimits.accept(it) }
                             if (json?.optString("type") == "video_state" && port.sender.isTopLevel()) {
                                 val tab = port.sender.session?.let { TabManager.tabForSession(it) }
                                 if (tab != null) {

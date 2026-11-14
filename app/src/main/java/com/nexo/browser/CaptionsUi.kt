@@ -378,8 +378,9 @@ object CaptionsUi {
             }
             if (target.isNotBlank() && provider == BrowserPrefs.TRANSLATE_AI) {
                 val endpoint = aiEndpointField.text.toString().trim()
-                if (aiProvider == "custom" && !endpoint.startsWith("https://")) {
-                    error.text = "La dirección de la API debe empezar por https://."; error.visibility = View.VISIBLE; return@button
+                if (aiProvider == "custom" && !CaptionProtocol.isSafeKeyedEndpoint(endpoint)) {
+                    error.text = "La dirección de la API debe ser https:// (o http:// solo hacia este teléfono), sin usuario ni contraseña."
+                    error.visibility = View.VISIBLE; return@button
                 }
                 if (aiProvider != "custom" && aiKeyField.text.isBlank()) {
                     error.text = "Escribe la clave del modelo de IA."; error.visibility = View.VISIBLE; return@button
