@@ -54,6 +54,12 @@ object LiveCaptions {
         var deviceSignalSince = 0L
         var devicePlaying = false
         var deviceNudged = false
+        // El usuario eligió la captura de Android y Android aún pide permiso: la página queda
+        // fuera para que un error suyo (p. ej. "no deja grabar") no cancele la solicitud.
+        var deviceRequested = false
+        // Etapas para el diagnóstico (hoja de CC).
+        var videoFound = false
+        var socketOpenedAt = 0L
         // Motivo del último fallo de la captura en la página y si ya se ofreció la de Android.
         var pageFailure: String? = null
         var offeredDevice = false
@@ -374,6 +380,7 @@ object LiveCaptions {
         val stream = active[session] ?: return
         val app = context.applicationContext
         stream.delivered = true
+        stream.videoFound = true
         if (!CaptionProtocol.supportedMime(mime)) {
             onPageError(context, session, "mime", "El reproductor no entrega Opus en WebM/Ogg.")
             return
@@ -400,9 +407,66 @@ object LiveCaptions {
     fun matchesCapture(session: GeckoSession, token: Any): Boolean = active[session] === token
     fun usingDeviceAudio(session: GeckoSession?): Boolean = session?.let { active[it]?.deviceAudio } == true
 
+    /** La página no participa: captura de Android activa o pidiendo permiso. */
+    fun pageSuspended(session: GeckoSession?): Boolean =
+        session?.let { active[it] }?.let { it.deviceAudio || it.deviceRequested } == true
+
+    /**
+     * El usuario aceptó la captura de Android: se apaga la captura de la
+     * página (sus errores ya no llegan) mientras Android pide permiso.
+     */
+    fun beginDeviceRequest(session: GeckoSession, token: Any): Boolean {
+        val stream = active[session] ?: return false
+        if (stream !== token) return false
+        stream.deviceRequested = true
+        stream.pageFailure = null
+        ExtensionManager.setCaptions(session, false)
+        close(stream)
+        setState(stream, State.WAITING, "Esperando la autorización de Android para escuchar el video…")
+        notifyChanged(session)
+        return true
+    }
+
+    /** Android no llegó a capturar (permiso denegado, cancelado…): se explica y la página vuelve a buscar texto. */
+    fun endDeviceRequest(context: Context, session: GeckoSession, message: String) {
+        val stream = active[session] ?: return
+        if (!stream.deviceRequested || stream.deviceAudio) return
+        stream.deviceRequested = false
+        // Sin volver a ofrecer lo mismo en bucle: solo pistas y texto del reproductor.
+        stream.offeredDevice = true
+        stream.audioAllowed = false
+        setState(stream, State.WAITING, message)
+        deliver(context.applicationContext, stream)
+        notifyChanged(session)
+    }
+
+    /** Etapas de los subtítulos para la hoja de CC: qué funciona y dónde se corta. */
+    fun stages(session: GeckoSession?): List<Pair<String, Boolean?>> {
+        val stream = session?.let { active[it] } ?: return emptyList()
+        val text = stream.lastResultAt > 0L || !stream.text.isEmpty || stream.cues.isNotEmpty()
+        val textSource = stream.trackMode || stream.domMode
+        val list = mutableListOf<Pair<String, Boolean?>>()
+        list += (if (stream.deviceAudio) "Captura de Android activa" else "Reproductor encontrado") to (stream.deviceAudio || stream.videoFound || textSource || stream.startedAt > 0)
+        if (textSource) {
+            list += (if (stream.trackMode) "Pista de subtítulos del video" else "Texto del reproductor") to true
+            list += "Texto recibido" to text
+            return list
+        }
+        list += "Pista de subtítulos del video" to false
+        if (!stream.deviceAudio && stream.startedAt == 0L) {
+            list += "Audio" to (if (audioAllowed(stream)) null else false)
+            return list
+        }
+        list += (if (stream.deviceAudio) "Señal de audio (nivel ${stream.deviceLevel} %)" else "Señal de audio") to (if (stream.receivedBytes == 0L) null else stream.signal)
+        list += "Conexión con Deepgram" to (if (stream.opened) true else if (stream.state == State.ERROR) false else null)
+        list += "Texto recibido" to (if (text) true else if (stream.socketOpenedAt > 0 && System.currentTimeMillis() - stream.socketOpenedAt > 20_000 && stream.signal) false else null)
+        return list
+    }
+
     fun startDeviceAudio(session: GeckoSession, token: Any): Boolean {
         val stream = active[session] ?: return false
         if (stream !== token || limitReached(AppContext.get())) return false
+        stream.deviceRequested = false
         ExtensionManager.setCaptions(session,false)
         close(stream); resetSource(stream)
         stream.deviceAudio = true
@@ -496,6 +560,8 @@ object LiveCaptions {
 
     fun onRecordingStopped(session: GeckoSession) {
         val stream = active[session] ?: return
+        // La captura de Android no depende de la página: que un marco se desconecte no la corta.
+        if (stream.deviceAudio || stream.deviceRequested) return
         close(stream)
         invalidateTranslations(stream)
         stream.trackMode = false
@@ -550,8 +616,14 @@ object LiveCaptions {
         return true
     }
 
+    /** Errores que vienen de la captura de Android o de Deepgram (no de la página). */
+    private val NATIVE_ERRORS = setOf("android_capture", "deepgram", "closed", "limit", "buffer", "need_deepgram", "header", "mime")
+
     fun onPageError(context: Context, session: GeckoSession, code: String, message: String) {
         val stream = active[session] ?: return
+        // Con Android capturando o pidiendo permiso, un error de la página no cancela nada.
+        if ((stream.deviceAudio || stream.deviceRequested) && code !in NATIVE_ERRORS) return
+        stream.deviceRequested = false
         stream.delivered = true
         stream.pageFailure = code
         PlaybackAudioCapture.cancel(session)
@@ -676,6 +748,7 @@ object LiveCaptions {
                         webSocket.close(1000, null); return@post
                     }
                     stream.opened = true
+                    stream.socketOpenedAt = System.currentTimeMillis()
                     setState(stream, State.LISTENING)
                     while (stream.queue.isNotEmpty()) webSocket.send(stream.queue.removeFirst())
                     notifyChanged(stream.session)
@@ -754,9 +827,13 @@ object LiveCaptions {
 
     fun onStatus(session: GeckoSession, code: String) {
         val stream = active[session] ?: return
+        if (code in setOf("signal", "quiet", "paused", "muted", "meter_unavailable")) stream.videoFound = true
         if (code == "signal") stream.signal = true
+        // Con texto en pantalla los avisos de señal sobran (el texto ya prueba que hay audio).
+        if (code == "signal" && stream.lastResultAt > 0L) return
         stream.message = when (code) {
             "signal" -> "Audio con señal detectada · esperando transcripción…"
+            "quiet" -> "No llega sonido del video desde hace un rato (¿pausa, anuncio o reproductor cambiado?). Nexo sigue escuchando."
             "meter_unavailable" -> "Audio capturado; medidor no disponible. Esperando transcripción…"
             "paused" -> "Esperando reproducción…"
             "muted" -> "El video está en silencio: activa su sonido y Nexo empezará a transcribir."
@@ -772,6 +849,11 @@ object LiveCaptions {
             else -> stream.message
         }
         notifyChanged(session)
+    }
+
+    /** La app concedió el video de un marco a los subtítulos (diagnóstico). */
+    fun onVideoGranted(session: GeckoSession) {
+        active[session]?.videoFound = true
     }
 
     fun reapply(context: Context) {

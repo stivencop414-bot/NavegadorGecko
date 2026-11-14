@@ -171,6 +171,12 @@ object BrowserPrefs {
     /** false (por defecto): sin subtítulos de texto, Nexo pregunta antes de enviar el audio a Deepgram. */
     fun captionAudioAuto(c: Context) = p(c).getBoolean("caption_audio_auto", false)
     fun setCaptionAudioAuto(c: Context, v: Boolean) = p(c).edit().putBoolean("caption_audio_auto", v).apply()
+    /** Audio de Gecko por el mezclador de Android (latencia ~100 ms) para que la captura lo oiga. */
+    fun captureFriendlyAudio(c: Context) = p(c).getBoolean("capture_friendly_audio", true)
+    fun setCaptureFriendlyAudio(c: Context, v: Boolean) = p(c).edit().putBoolean("capture_friendly_audio", v).apply()
+    /** Pestañas en procesos aislados de Android (sin permisos propios). Se aplica al reiniciar. */
+    fun isolatedTabs(c: Context) = p(c).getBoolean("isolated_tabs", true)
+    fun setIsolatedTabs(c: Context, v: Boolean) = p(c).edit().putBoolean("isolated_tabs", v).apply()
     fun captionDailyLimit(c: Context) = p(c).getInt("caption_daily_limit", 120).coerceIn(0, 1440)
     fun setCaptionDailyLimit(c: Context, v: Int) = p(c).edit().putInt("caption_daily_limit", v.coerceIn(0, 1440)).apply()
     private fun today(): String = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())

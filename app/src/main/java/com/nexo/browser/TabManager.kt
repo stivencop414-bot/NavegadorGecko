@@ -987,8 +987,12 @@ object TabManager {
                 ) {
                     if (tab.session !== session || TabRouting.synthetic(session) || url == null || !isSafeAppNavigationUrl(url)) return
                     if (tab.url != url) {
-                        if (LiveCaptions.usingDeviceAudio(session)) LiveCaptions.stop(session)
-                        else PlaybackAudioCapture.cancel(session)
+                        // Un cambio solo de "#…" (reproductores, pestañas internas) no es otra página:
+                        // los subtítulos y la captura de Android siguen.
+                        if (tab.url.substringBefore('#') != url.substringBefore('#')) {
+                            if (LiveCaptions.pageSuspended(session)) LiveCaptions.stop(session)
+                            else PlaybackAudioCapture.cancel(session)
+                        }
                         tab.sessionState = null
                         tab.navigationEpoch++
                         windowPrompt?.dismiss()

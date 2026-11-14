@@ -624,7 +624,7 @@
       context.resume().catch(() => {});
       const floats = typeof Float32Array === "function" ? new Float32Array(analyser.fftSize) : null;
       const bytes = new Uint8Array(analyser.fftSize);
-      let silentChecks = 0, mutedReported = false, lastTime = -1;
+      let silentChecks = 0, mutedReported = false, lastTime = -1, heardOnce = false, quietReported = false;
       const check = () => {
         if (captions.recorder !== recorder) return;
         if (context.state !== "running") {
@@ -636,13 +636,22 @@
           if (!mutedReported) { mutedReported = true; sendToNexo({ type: "captions_status", code: "muted" }); }
           silentChecks = 0;
         } else if (peakLevel(analyser, floats, bytes) > 0.003) {
-          sendToNexo({ type: "captions_status", code: "signal" }); return;
+          // La señal se sigue midiendo: solo se avisa al aparecer (o volver tras un silencio).
+          if (!heardOnce || quietReported) sendToNexo({ type: "captions_status", code: "signal" });
+          heardOnce = true; quietReported = false; silentChecks = 0; mutedReported = false;
         } else {
           mutedReported = false;
           const time = video ? Number(video.currentTime) : 0;
           const advancing = video && !video.paused && !video.ended && time !== lastTime;
           lastTime = time;
-          if (advancing && ++silentChecks >= SILENCE_LIMIT_CHECKS) { captionError("silent"); return; }
+          if (advancing) ++silentChecks;
+          // Sin haber oído nada nunca: la captura no funciona. Tras oír voz, un silencio largo
+          // solo se avisa (pausa en la conversación, anuncio, reproductor cambiado).
+          if (!heardOnce && silentChecks >= SILENCE_LIMIT_CHECKS) { captionError("silent"); return; }
+          if (heardOnce && !quietReported && silentChecks >= SILENCE_LIMIT_CHECKS * 2) {
+            quietReported = true;
+            sendToNexo({ type: "captions_status", code: "quiet" });
+          }
         }
         captions.silentTimer = setTimeout(check, SILENCE_CHECK_MS);
       };
@@ -1203,9 +1212,34 @@
     });
   }
 
+  /*
+   * Pistas tardías: hls.js, Shaka y JW añaden la pista de subtítulos cuando
+   * leen el manifiesto, a veces segundos después de empezar. Si llega una
+   * mientras se usa el audio u otra fuente, se pasa a la pista (gratis y exacta).
+   */
+  let lateTrackTimer = 0;
+  function onLateTrack(event) {
+    const track = event && event.track;
+    if (!track || (track.kind !== "subtitles" && track.kind !== "captions")) return;
+    if (!captions.active || !captions.granted || captions.track) return;
+    clearTimeout(lateTrackTimer);
+    lateTrackTimer = setTimeout(() => {
+      if (captions.active && captions.granted && !captions.track) chooseSource();
+    }, 300);
+  }
+  let watchedTracks = null;
+  function watchLateTracks(video) {
+    const list = video ? video.textTracks : null;
+    if (watchedTracks === list) return;
+    try { watchedTracks?.removeEventListener?.("addtrack", onLateTrack); } catch (_) {}
+    watchedTracks = list;
+    try { list?.addEventListener?.("addtrack", onLateTrack); } catch (_) {}
+  }
+
   function chooseSource() {
     stopSources(false);
     captions.video = captionVideo();
+    watchLateTracks(captions.video);
     if (!captions.video) { release(); return; }
     if (useTextTrack(captions.video)) return;
     fallbackAfterTrack();
@@ -1227,6 +1261,8 @@
   function setCaptions(active, live, lang, target) {
     if (active !== true) {
       stopSources(false);
+      watchLateTracks(null);
+      clearTimeout(lateTrackTimer);
       captions.active = false;
       captions.granted = false;
       captions.video = null;

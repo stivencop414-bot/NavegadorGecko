@@ -35,10 +35,9 @@ object GeckoRuntimeHolder {
                     .largeKeepaliveFactor(2)
                     // Los sitios con modo oscuro siguen el tema de Nexo.
                     .preferredColorScheme(colorScheme(context))
-                    // Las pestañas en procesos con el UID de Nexo (el valor por defecto actual):
-                    // la captura de audio de Android para subtítulos filtra por ese UID y, con
-                    // procesos aislados, solo recibiría silencio.
-                    .isolatedProcessEnabled(false)
+                    // Pestañas en procesos aislados de Android (sin permisos ni datos de la app).
+                    // La captura de Android ya no filtra por UID, así que no le afecta.
+                    .isolatedProcessEnabled(BrowserPrefs.isolatedTabs(context))
 
 
                 GeckoRuntime.create(
@@ -53,7 +52,7 @@ object GeckoRuntimeHolder {
 
                     executor = GeckoWebExecutor(it)
                     applyRuntimePrefs(context)
-                    applyAudioPrefs()
+                    applyAudioPrefs(context)
                 }
             }
         }
@@ -91,10 +90,17 @@ object GeckoRuntimeHolder {
      * si solo es un valor por defecto (las de arranque lo son).
      */
     @androidx.annotation.OptIn(markerClass = [org.mozilla.geckoview.ExperimentalGeckoViewApi::class])
-    private fun applyAudioPrefs() {
+    fun applyAudioPrefs(context: Context) {
+        if (runtime == null) return
         runCatching {
-            GeckoPreferenceController.setGeckoPref("media.cubeb_latency_mtg_frames", 4800, GeckoPreferenceController.PREF_BRANCH_USER)
-            GeckoPreferenceController.setGeckoPref("media.cubeb_latency_playback_ms", 150, GeckoPreferenceController.PREF_BRANCH_USER)
+            if (BrowserPrefs.captureFriendlyAudio(context)) {
+                GeckoPreferenceController.setGeckoPref("media.cubeb_latency_mtg_frames", 4800, GeckoPreferenceController.PREF_BRANCH_USER)
+                GeckoPreferenceController.setGeckoPref("media.cubeb_latency_playback_ms", 150, GeckoPreferenceController.PREF_BRANCH_USER)
+            } else {
+                // Comparación controlada: vuelve a los valores de Gecko.
+                GeckoPreferenceController.clearGeckoUserPref("media.cubeb_latency_mtg_frames")
+                GeckoPreferenceController.clearGeckoUserPref("media.cubeb_latency_playback_ms")
+            }
         }
     }
 

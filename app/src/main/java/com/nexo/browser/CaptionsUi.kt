@@ -214,6 +214,13 @@ object CaptionsUi {
                 }
             }))
         }
+        // Diagnóstico por etapas: dónde se corta (reproductor, pista, señal, Deepgram, texto).
+        LiveCaptions.stages(session).takeIf { it.isNotEmpty() }?.let { stages ->
+            body.addView(NexoUi.section(activity, "Estado"))
+            body.addView(NexoUi.note(activity, stages.joinToString("\n") { (label, ok) ->
+                (when (ok) { true -> "✓ "; false -> "✗ "; null -> "… " }) + label
+            }))
+        }
         body.addView(NexoUi.section(activity, "Traducir a"))
         body.addView(targetRow)
         body.addView(modeRow)
@@ -242,7 +249,7 @@ object CaptionsUi {
         }
         if (activity is MainActivity && android.os.Build.VERSION.SDK_INT >= 29) {
             body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Capturar audio con Android",
-                "Para reproductores que bloquean la captura web · requiere Deepgram y autorización") {
+                "Si la página no da su audio · capta el audio multimedia del teléfono (puede incluir otras apps), con tu autorización") {
                 sheet.dismiss(); PlaybackAudioCapture.request(activity)
             })
         }
@@ -341,6 +348,11 @@ object CaptionsUi {
             "Si el video no trae subtítulos de texto, enviar su audio a Deepgram directamente. Apagado: Nexo pregunta antes.", audioAuto) {
             audioAuto = it
         })
+        var friendlyAudio = BrowserPrefs.captureFriendlyAudio(activity)
+        body.addView(NexoUi.switchRow(activity, "Audio compatible con la captura de Android",
+            "Los reproductores con Web Audio suenan por la vía que Android puede capturar (~0,1 s más de retardo en juegos web). Apágalo para comparar si la captura no lo necesita.", friendlyAudio) {
+            friendlyAudio = it
+        })
         body.addView(NexoUi.section(activity, "Límite diario de Deepgram"))
         val limitRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         chips(limitRow, listOf("30" to "30 min", "60" to "1 h", "120" to "2 h", "240" to "4 h", "0" to "Sin límite"), { limit.toString() }) { limit = it.toInt() }
@@ -382,6 +394,10 @@ object CaptionsUi {
             BrowserPrefs.setCaptionMode(activity, mode)
             BrowserPrefs.setCaptionDailyLimit(activity, limit)
             BrowserPrefs.setCaptionAudioAuto(activity, audioAuto)
+            if (friendlyAudio != BrowserPrefs.captureFriendlyAudio(activity)) {
+                BrowserPrefs.setCaptureFriendlyAudio(activity, friendlyAudio)
+                GeckoRuntimeHolder.applyAudioPrefs(activity)
+            }
             BrowserPrefs.setAiTranslateProvider(activity, aiProvider)
             BrowserPrefs.setAiTranslateModel(activity, aiModelField.text.toString())
             BrowserPrefs.setAiTranslateEndpoint(activity, if (aiProvider == "custom") aiEndpointField.text.toString() else "")
