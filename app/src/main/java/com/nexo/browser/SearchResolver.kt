@@ -46,6 +46,9 @@ object SearchResolver {
         return search(context, input)
     }
 
+    /** Búsqueda directa (sugerencias): nunca se interpreta como dirección. */
+    fun searchUrl(context: Context, query: String): String = search(context, query.trim())
+
     private fun search(context: Context, input: String): String {
         val q = URLEncoder.encode(input, "UTF-8")
         val free = BrowserPrefs.freeSearch(context)

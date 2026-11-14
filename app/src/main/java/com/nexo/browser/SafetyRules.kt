@@ -80,6 +80,42 @@ object UrlSafety {
     }
 
     /**
+     * Quita usuario y contraseña de la autoridad ("https://user:pass@host/…"
+     * → "https://host/…"). Nunca se guardan ni se reenvían credenciales en URLs.
+     */
+    fun stripCredentials(url: String): String {
+        val schemeEnd = url.indexOf("://")
+        if (schemeEnd < 0) return url
+        val start = schemeEnd + 3
+        var end = url.length
+        for (i in start until url.length) if (url[i] == '/' || url[i] == '?' || url[i] == '#') { end = i; break }
+        val at = url.lastIndexOf('@', end - 1)
+        if (at < start) return url
+        return url.substring(0, start) + url.substring(at + 1)
+    }
+
+    /** Lo que se guarda en el historial: sin credenciales en la autoridad ni en la consulta. */
+    fun forHistory(url: String): String = redactSensitiveQuery(stripCredentials(url))
+
+    /**
+     * Texto que no debe salir hacia un servicio de sugerencias: direcciones
+     * (con esquema, dominio o IP), nombres locales y cualquier cosa con
+     * credenciales o parámetros sensibles.
+     */
+    fun isPrivateQuery(input: String): Boolean {
+        val text = input.trim()
+        if (text.isEmpty()) return true
+        if (scheme(text) != null && text.contains(':')) return true
+        if (text.contains("://") || text.contains('@') && !text.contains(' ')) return true
+        val first = text.substringBefore(' ').substringBefore('/').lowercase()
+        if (!text.contains(' ') && (first.contains('.') || first.contains(':'))) return true
+        if (first == "localhost" || first.endsWith(".local") || first.endsWith(".lan") || first.endsWith(".internal")) return true
+        if (Regex("^\\d{1,3}(\\.\\d{1,3}){1,3}").containsMatchIn(first)) return true
+        if (Regex("(?i)\\b(password|passwd|token|api[_-]?key|secret)\\s*[=:]").containsMatchIn(text)) return true
+        return false
+    }
+
+    /**
      * Quita de la URL los parámetros que suelen llevar credenciales
      * (tokens OAuth, sesiones, firmas) y los fragmentos con pares clave=valor.
      * Se usa antes de guardar el historial en disco.
