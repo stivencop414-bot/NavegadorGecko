@@ -85,6 +85,101 @@
   function applyState(state) {
     if (!state || typeof state !== "object") return;
     backgroundMedia = state.backgroundMedia !== false;
+    // Solo los mensajes que traen el modo nocturno lo cambian (otras respuestas parciales no lo apagan).
+    if (typeof state.night === "boolean") setNight(state.night, typeof state.nightBackground === "string" ? state.nightBackground : "");
+  }
+
+  // ---------------------------------------------------------------
+  // Modo nocturno (Dark Reader, cargado bajo demanda)
+  // ---------------------------------------------------------------
+
+  /*
+   * Con Midnight, OLED o el tema oscuro del sistema, las páginas claras se
+   * oscurecen con el motor dinámico de Dark Reader (también contenido que
+   * aparece después e iframes: cada marco decide por sí mismo). Las páginas
+   * que ya son oscuras se respetan. Imágenes y videos conservan sus colores.
+   * El motor solo se carga en el marco que lo necesita; al desactivarlo se
+   * retiran sus estilos y observadores.
+   */
+  const night = { want: false, background: "#0c1222", active: false, loading: null, waiting: false };
+
+  function parseColor(value) {
+    const match = /rgba?\(([^)]+)\)/.exec(String(value || ""));
+    if (!match) return null;
+    const parts = match[1].split(/[ ,/]+/).filter(Boolean).map(Number);
+    return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 };
+  }
+
+  /** La página ya es oscura (fondo oscuro o solo esquema oscuro): no se toca. */
+  function pageAlreadyDark() {
+    try {
+      const meta = document.querySelector && document.querySelector('meta[name="color-scheme"]');
+      const scheme = String(meta && meta.content || "").toLowerCase();
+      if (/\bdark\b/.test(scheme) && !/\blight\b/.test(scheme)) return true;
+      for (const element of [document.body, document.documentElement]) {
+        if (!element) continue;
+        const color = parseColor(getComputedStyle(element).backgroundColor);
+        if (!color || color.a < 0.5) continue;
+        const luminance = (0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b) / 255;
+        return luminance < 0.35;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function darkReaderReady() {
+    return typeof DarkReader !== "undefined" && DarkReader && typeof DarkReader.enable === "function";
+  }
+
+  function loadDarkReader() {
+    if (darkReaderReady()) return Promise.resolve(true);
+    if (night.loading) return night.loading;
+    let request;
+    try {
+      request = browser.runtime.sendMessage({ type: "nexo_dark_load" });
+    } catch (_) { request = null; }
+    night.loading = Promise.resolve(request).then(() => darkReaderReady(), () => false)
+      .then(ok => { if (!ok) night.loading = null; return ok; });
+    return night.loading;
+  }
+
+  function enableNight() {
+    if (!night.want || night.active) return;
+    if (pageAlreadyDark()) return;
+    loadDarkReader().then(ok => {
+      if (!ok || !night.want || night.active || pageAlreadyDark()) return;
+      try {
+        // fetch del script (principal de la extensión): puede leer hojas de estilo de otros
+        // orígenes; window.fetch sería el de la página, limitado por CORS.
+        DarkReader.setFetchMethod(url => fetch(url, { credentials: "omit" }));
+        DarkReader.enable({ brightness: 100, contrast: 95, sepia: 0,
+          darkSchemeBackgroundColor: night.background, darkSchemeTextColor: "#e8e6e3" });
+        night.active = true;
+      } catch (_) {}
+    });
+  }
+
+  function setNight(want, background) {
+    if (/^#[0-9a-f]{6}$/i.test(background)) night.background = background;
+    night.want = want;
+    if (!want) {
+      if (night.active && darkReaderReady()) { try { DarkReader.disable(); } catch (_) {} }
+      night.active = false;
+      return;
+    }
+    if (night.active) {
+      // Cambió el tema (Midnight ↔ OLED): mismos estilos, otro fondo.
+      try { DarkReader.enable({ brightness: 100, contrast: 95, sepia: 0,
+        darkSchemeBackgroundColor: night.background, darkSchemeTextColor: "#e8e6e3" }); } catch (_) {}
+      return;
+    }
+    // Los colores de la página solo se conocen con el documento cargado.
+    if (document.readyState === "loading") {
+      if (!night.waiting) {
+        night.waiting = true;
+        document.addEventListener("DOMContentLoaded", () => { night.waiting = false; enableNight(); }, { once: true });
+      }
+    } else enableNight();
   }
 
   installVisibilityGuard();

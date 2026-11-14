@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Nexo Browser Core",
-  "version": "1.13.1",
+  "version": "1.14.0",
   "description": "Funciones internas de Nexo Browser.",
   "browser_specific_settings": {
     "gecko": {
@@ -11,7 +11,8 @@
   "permissions": [
     "nativeMessaging",
     "nativeMessagingFromContent",
-    "geckoViewAddons"
+    "geckoViewAddons",
+    "<all_urls>"
   ],
   "content_scripts": [
     {
@@ -28,5 +29,10 @@
         "pip.css"
       ]
     }
-  ]
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  }
 }

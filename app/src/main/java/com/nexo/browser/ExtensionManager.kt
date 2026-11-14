@@ -1153,16 +1153,21 @@ object ExtensionManager {
     }
 
     fun sendBrowserState(context: Context) {
-        val message = JSONObject().apply {
-            put("type", "browser_state")
-            put("accent", BrowserPrefs.accent(context))
-            put("theme", BrowserPrefs.theme(context))
-            put("showBadge", false)
-            put("backgroundMedia", BrowserPrefs.backgroundMedia(context))
-            put("smartPip", BrowserPrefs.smartPip(context))
-        }
-
+        val night = NightMode.effective(context)
         ports.toList().forEach { port ->
+            // Por marco: la excepción depende del sitio principal de su pestaña.
+            val host = port.sender.session?.let { TabManager.tabForSession(it) }?.url?.let { SuggestionIndex.hostOf(it) }
+            val message = JSONObject().apply {
+                put("type", "browser_state")
+                put("accent", BrowserPrefs.accent(context))
+                put("theme", BrowserPrefs.theme(context))
+                put("showBadge", false)
+                put("backgroundMedia", BrowserPrefs.backgroundMedia(context))
+                put("smartPip", BrowserPrefs.smartPip(context))
+                put("night", night != null && !BrowserPrefs.isNightException(context, host))
+                put("nightException", BrowserPrefs.isNightException(context, host))
+                put("nightBackground", night ?: "")
+            }
             runCatching { port.postMessage(message) }
         }
     }

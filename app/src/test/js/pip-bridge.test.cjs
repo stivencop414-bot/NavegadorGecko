@@ -668,3 +668,41 @@ test('a subtitle track added late by the player replaces the fallback source', a
   assert.ok(h.reports.some(x => x.type === 'captions_track'), 'switches to the late track');
   assert.equal(track.mode, 'hidden');
 });
+
+function nightHarness({ background = 'rgb(255, 255, 255)', loaded = true } = {}) {
+  const calls = [], sent = [];
+  const DarkReader = { enable: theme => calls.push(['enable', theme.darkSchemeBackgroundColor]), disable: () => calls.push(['disable']),
+    setFetchMethod: () => calls.push(['fetch']) };
+  const extra = {
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', backgroundColor: background }),
+    fetch: () => Promise.reject(new Error('no')),
+  };
+  if (loaded) extra.DarkReader = DarkReader;
+  const h = harness(extra);
+  return { h, calls, sent };
+}
+
+test('night mode darkens a light page and removes itself when turned off', async () => {
+  const { h, calls } = nightHarness();
+  h.document.body.backgroundColor = 'white';
+  h.message({ type: 'browser_state', night: true, nightBackground: '#000000' });
+  await flush(); await flush();
+  assert.deepEqual(calls.filter(c => c[0] === 'enable'), [['enable', '#000000']]);
+  h.message({ type: 'browser_state', night: false, nightBackground: '' });
+  assert.deepEqual(calls.at(-1), ['disable']);
+});
+
+test('night mode leaves pages that are already dark untouched', async () => {
+  const { h, calls } = nightHarness({ background: 'rgb(18, 18, 18)' });
+  h.message({ type: 'browser_state', night: true, nightBackground: '#0c1222' });
+  await flush(); await flush();
+  assert.equal(calls.length, 0);
+});
+
+test('night mode switches background when the theme changes without reloading', async () => {
+  const { h, calls } = nightHarness();
+  h.message({ type: 'browser_state', night: true, nightBackground: '#0c1222' });
+  await flush(); await flush();
+  h.message({ type: 'browser_state', night: true, nightBackground: '#000000' });
+  assert.deepEqual(calls.filter(c => c[0] === 'enable').map(c => c[1]), ['#0c1222', '#000000']);
+});

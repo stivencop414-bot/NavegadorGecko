@@ -989,6 +989,10 @@ object TabManager {
                     if (tab.url != url) {
                         // Un cambio solo de "#…" (reproductores, pestañas internas) no es otra página:
                         // los subtítulos y la captura de Android siguen.
+                        // Otro sitio principal: su excepción de modo nocturno puede ser distinta.
+                        if (SuggestionIndex.hostOf(tab.url) != SuggestionIndex.hostOf(url)) {
+                            mainHandler.post { ExtensionManager.sendBrowserState(AppContext.get()) }
+                        }
                         if (tab.url.substringBefore('#') != url.substringBefore('#')) {
                             if (LiveCaptions.pageSuspended(session)) LiveCaptions.stop(session)
                             else PlaybackAudioCapture.cancel(session)
