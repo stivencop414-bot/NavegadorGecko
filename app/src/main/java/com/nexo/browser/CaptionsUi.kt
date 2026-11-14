@@ -344,6 +344,14 @@ object CaptionsUi {
         translateBox.addView(NexoUi.section(activity, "Mostrar"))
         chips(modeRow, listOf("translated" to "Traducido", "both" to "Ambos", "original" to "Original"), { mode }) { mode = it }
         translateBox.addView(modeRow)
+        var hideOriginal = BrowserPrefs.captionHideOriginal(activity)
+        translateBox.addView(NexoUi.section(activity, "Mientras llega la traducción"))
+        val hideRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        chips(hideRow, listOf("hide" to "Solo traducido", "show" to "Mostrar el original"), { if (hideOriginal) "hide" else "show" }) {
+            hideOriginal = it == "hide"
+        }
+        translateBox.addView(hideRow)
+        translateBox.addView(NexoUi.note(activity, "«Solo traducido» nunca enseña el idioma original antes que la traducción. Google adelanta la frase a medias y el servicio elegido la corrige al terminar."))
         translateBox.addView(NexoUi.section(activity, "Servicio de traducción"))
         chips(providerRow, listOf(
             BrowserPrefs.TRANSLATE_GOOGLE to "Google (sin clave)",
@@ -471,6 +479,7 @@ object CaptionsUi {
             BrowserPrefs.setCaptionLines(activity, lines)
             BrowserPrefs.setCaptionClearSeconds(activity, clearSeconds)
             BrowserPrefs.setCaptionMode(activity, mode)
+            BrowserPrefs.setCaptionHideOriginal(activity, hideOriginal)
             BrowserPrefs.setCaptionDailyLimit(activity, limit)
             BrowserPrefs.setCaptionAudioAuto(activity, audioAuto)
             if (friendlyAudio != BrowserPrefs.captureFriendlyAudio(activity)) {

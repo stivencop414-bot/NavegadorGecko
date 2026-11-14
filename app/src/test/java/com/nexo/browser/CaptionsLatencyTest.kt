@@ -70,4 +70,35 @@ class CaptionsLatencyTest {
         }
         assertTrue(CaptionProtocol.listenUrl("es").contains("endpointing=250"))
     }
+
+    @Test fun theAdvanceTranslationCarriesIntoTheFinalSentenceWithoutShowingEnglish() {
+        val text = CaptionText()
+        text.onTranscript(CaptionProtocol.Transcript("I think that we should go", false, false))
+        text.setInterimTranslation("I think that we should go", "Creo que deberíamos irnos")
+        // Frase final igual (con puntuación): traducida al instante, antes de responder el traductor.
+        val segment = text.onTranscript(CaptionProtocol.Transcript("I think that we should go.", true, true))!!
+        assertEquals("Creo que deberíamos irnos", text.view("translated", translating = true, hideOriginal = true).primary)
+        assertTrue(segment.provisional)
+        text.setTranslation(segment.id, "Creo que deberíamos irnos.")
+        assertFalse(segment.provisional)
+
+        // Frase final más larga: lo no cubierto no se enseña en inglés con "Solo traducido".
+        text.onTranscript(CaptionProtocol.Transcript("Tomorrow we will", false, false))
+        text.setInterimTranslation("Tomorrow we will", "Mañana vamos a")
+        text.onTranscript(CaptionProtocol.Transcript("Tomorrow we will travel to Madrid", true, true))
+        val hidden = text.view("translated", translating = true, hideOriginal = true).primary
+        assertTrue(hidden.endsWith("Mañana vamos a"))
+        assertFalse(hidden.contains("Madrid"))
+        assertTrue(text.view("translated", translating = true, hideOriginal = false).primary.endsWith("Mañana vamos a travel to Madrid"))
+    }
+
+    @Test fun hideOriginalNeverShowsUntranslatedTextWhileWaiting() {
+        val text = CaptionText()
+        text.onTranscript(CaptionProtocol.Transcript("Hello everyone.", true, true))
+        text.onTranscript(CaptionProtocol.Transcript("Today we", false, false))
+        assertTrue(text.view("translated", translating = true, hideOriginal = true).isEmpty)
+        assertEquals("Hello everyone. Today we", text.view("translated", translating = true, hideOriginal = false).pending)
+        // Sin traducción activa el original se ve siempre.
+        assertEquals("Hello everyone.", text.view("original", translating = false, hideOriginal = true).primary)
+    }
 }

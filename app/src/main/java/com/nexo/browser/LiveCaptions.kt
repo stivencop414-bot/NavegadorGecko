@@ -95,6 +95,7 @@ object LiveCaptions {
         // Traducción anticipada del texto provisional.
         var lastSpeculation = 0L
         var speculating = false
+        var speculateBackoffUntil = 0L
         // Cambia al cambiar de idioma o servicio: invalida traducciones en vuelo (no el audio).
         @Volatile var translationGeneration = 0
         // Texto dibujado por el reproductor de la página (YouTube, Netflix…).
@@ -203,7 +204,7 @@ object LiveCaptions {
             if (lines.isEmpty()) return statusLine(stream)
             val done = lines.filter { !translating || it.translated != null }
             val primary = done.joinToString("\n") { if (translating) it.translated!! else it.text }
-            val pending = if (translating) lines.filter { it.translated == null }.joinToString("\n") { it.text } else ""
+            val pending = if (translating && !BrowserPrefs.captionHideOriginal(context)) lines.filter { it.translated == null }.joinToString("\n") { it.text } else ""
             val secondary = if (translating && mode == "both") done.joinToString("\n") { it.text } else ""
             return CaptionDisplay(primary, pending,
                 if (stream.message?.startsWith("No se pudo traducir") == true) stream.message.orEmpty() else secondary)
@@ -215,7 +216,7 @@ object LiveCaptions {
         if (stream.text.isEmpty) return statusLine(stream)
         // Longitud elegida en Ajustes: cuánto texto reciente se conserva en pantalla.
         stream.text.maxChars = maxChars(BrowserPrefs.captionLines(context))
-        return stream.text.view(mode, translating).let { view ->
+        return stream.text.view(mode, translating, BrowserPrefs.captionHideOriginal(context)).let { view ->
             if (stream.message?.startsWith("No se pudo traducir") == true) view.copy(secondary = stream.message.orEmpty()) else view
         }.takeIf { !it.isEmpty }
     }
@@ -342,7 +343,18 @@ object LiveCaptions {
 
     private fun cacheKey(provider: String, target: String, text: String) = provider + "\u0000" + target + "\u0000" + text
 
-    private fun warmUp(context: Context) { /* No provider request before actual text. */ }
+    /**
+     * Con traducción activa se abre ya la conexión con Google (solo una petición
+     * HEAD, sin texto): la primera traducción no paga el saludo TLS (~0,2–0,4 s).
+     */
+    private fun warmUp(context: Context) {
+        if (!translating(context)) return
+        fast.execute {
+            runCatching {
+                translateClient.newCall(Request.Builder().url("https://translate.googleapis.com/").head().build()).execute().close()
+            }
+        }
+    }
 
     /** Cuerpo de respuesta de un servicio con clave, como mucho 1 MB (si no, vacío). */
     private fun limitedBody(response: Response, max: Long = 1_000_000L): String {
@@ -945,15 +957,16 @@ object LiveCaptions {
      */
     private fun speculate(context: Context, stream: Stream) {
         if (!translating(context) || stream.speculating) return
-        val provider = effectiveProvider(context)
-        if (provider == BrowserPrefs.TRANSLATE_DEEPL) return
         val interim = stream.text.interimText
         val now = SystemClock.uptimeMillis()
         // El texto del reproductor ya es definitivo: vale la pena traducirlo antes y aunque sea corto.
         // Menos espera: con frases a medias ya se adelanta la traducción (se corrige al llegar la final).
-        val minLength = if (stream.domMode) 2 else 14
-        val interval = if (stream.domMode) 300L else 450L
-        if (interim.length < minLength || now - stream.lastSpeculation < interval) return
+        // Con cualquier servicio (también DeepL e IA) Google adelanta una traducción provisional
+        // de la frase a medias; el servicio elegido da la definitiva. Así casi nunca se ve el
+        // idioma original antes que la traducción.
+        val minLength = if (stream.domMode) 2 else 10
+        val interval = if (stream.domMode) 250L else 300L
+        if (interim.length < minLength || now - stream.lastSpeculation < interval || now < stream.speculateBackoffUntil) return
         val target = BrowserPrefs.captionTranslateTo(context)
         cache[cacheKey(BrowserPrefs.TRANSLATE_GOOGLE, target, interim)]?.let {
             stream.text.setInterimTranslation(interim, it)
@@ -967,10 +980,15 @@ object LiveCaptions {
             main.post {
                 if (active[stream.session] !== stream || stream.translationGeneration != generation) return@post
                 stream.speculating = false
-                if (translated.isNullOrBlank()) return@post
+                // Google limitó o falló: unos segundos sin anticipar (la traducción final sigue).
+                if (translated.isNullOrBlank()) { stream.speculateBackoffUntil = SystemClock.uptimeMillis() + 3000L; return@post }
                 cache[cacheKey(BrowserPrefs.TRANSLATE_GOOGLE, target, interim)] = translated
                 stream.text.setInterimTranslation(interim, translated)
                 notifyChanged(stream.session)
+                // La frase siguió creciendo mientras se traducía: adelantar también lo nuevo.
+                if (stream.text.interimText != interim) {
+                    main.postDelayed({ if (active[stream.session] === stream) speculate(context, stream) }, interval)
+                }
             }
         }
     }
