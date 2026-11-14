@@ -36,26 +36,36 @@ object PlaybackAudioCapture {
             ToastMessage.show(activity, "Configura Deepgram para reconocer el audio. Google o IA solo traducen texto."); return
         }
         // Una solicitud anterior sin respuesta (diálogo cerrado por Android) no bloquea para siempre.
-        pending?.let { if (SystemClock.uptimeMillis() - it.at < 60_000L) return else pending = null }
+        pending?.let {
+            if (SystemClock.uptimeMillis() - it.at < 60_000L) return
+            pending = null
+            LiveCaptions.deviceConsentFailed(it.session, it.token, "La autorización caducó. Vuelve a intentarlo desde CC.")
+        }
+        if (!LiveCaptions.prepareDeviceAudio(session, token)) return
+        pending = Request(session, token)
         AlertDialog.Builder(activity).setTitle(if (reason != null) "¿Escuchar el video con Android?" else "Capturar el audio de Nexo")
-            .setMessage((reason?.let { "No se pudo tomar el audio desde la página: $it\n\nAndroid sí puede escucharlo directamente. " } ?: "") +
+            .setMessage((reason?.let { "No se pudo tomar el audio desde la página: $it\n\nPodemos intentar capturar la reproducción con Android. " } ?: "") +
                 "Android pedirá permiso de captura y de grabación de audio. Nexo escuchará el audio multimedia que suene en el teléfono (nunca el micrófono): pausa la música u otras apps y pestañas que estén sonando. Enviará ese audio a Deepgram para transcribirlo. Se detiene al apagar CC, cambiar de página/pestaña o salir de Nexo (salvo PiP). DRM y algunos reproductores pueden impedirlo.")
-            .setNegativeButton(if (reason != null) "Ahora no" else "Cancelar", null)
+            .setNegativeButton(if (reason != null) "Ahora no" else "Cancelar") { _, _ -> cancel(session) }
+            .setOnCancelListener { cancel(session) }
             .setPositiveButton(if (reason != null) "Usar captura de Android" else "Continuar") { _, _ ->
                 if (!LiveCaptions.matchesCapture(session, token) || TabManager.activeSession() !== session) {
                     ToastMessage.show(activity, "Los subtítulos de esta pestaña cambiaron. Vuelve a elegir la captura de Android desde CC."); return@setPositiveButton
                 }
-                pending = Request(session, token)
                 activity.requestAndroidPermissions(arrayOf(Manifest.permission.RECORD_AUDIO)) { allowed ->
                     if (pending?.token !== token) return@requestAndroidPermissions
-                    if (activity.isFinishing || activity.isDestroyed) { pending = null; return@requestAndroidPermissions }
+                    if (activity.isFinishing || activity.isDestroyed) {
+                        pending = null; LiveCaptions.deviceConsentFailed(session, token, "Captura cancelada al cerrar Nexo."); return@requestAndroidPermissions
+                    }
                     if (!allowed) {
                         pending = null
+                        LiveCaptions.deviceConsentFailed(session, token, "Android no recibió permiso para capturar la reproducción.")
                         ToastMessage.show(activity, "Sin el permiso de audio Android no deja capturar la reproducción. Actívalo en Ajustes de Android › Apps › Nexo › Permisos.")
                         return@requestAndroidPermissions
                     }
                     if (!LiveCaptions.matchesCapture(session, token) || TabManager.activeSession() !== session) {
                         pending = null
+                        LiveCaptions.deviceConsentFailed(session, token, "La pestaña cambió durante la autorización.")
                         ToastMessage.show(activity, "Los subtítulos de esta pestaña cambiaron. Vuelve a elegir la captura de Android desde CC.")
                         return@requestAndroidPermissions
                     }
@@ -67,7 +77,10 @@ object PlaybackAudioCapture {
                             manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
                         else manager.createScreenCaptureIntent()
                         activity.startActivityForResult(intent, REQUEST)
-                    } catch (_: Exception) { pending = null; ToastMessage.show(activity,"Android no pudo abrir la autorización de captura.") }
+                    } catch (_: Exception) {
+                        pending = null
+                        LiveCaptions.deviceConsentFailed(session, token, "Android no pudo abrir la autorización de captura.")
+                    }
                 }
             }.show()
     }
@@ -75,19 +88,25 @@ object PlaybackAudioCapture {
         val request = pending; pending = null
         if (request == null) return
         if (resultCode != Activity.RESULT_OK || data == null) {
-            ToastMessage.show(activity, "Captura de Android cancelada."); return
+            LiveCaptions.deviceConsentFailed(request.session, request.token, "Captura de Android cancelada. Puedes volver a intentarlo desde CC."); return
         }
         if (!LiveCaptions.matchesCapture(request.session, request.token) || TabManager.activeSession() !== request.session) {
+            LiveCaptions.deviceConsentFailed(request.session, request.token, "La pestaña cambió durante la autorización.")
             ToastMessage.show(activity, "Los subtítulos de esta pestaña cambiaron mientras Android pedía permiso. Vuelve a intentarlo desde CC."); return
         }
         grant = Grant(request.session, request.token, data)
         try { activity.startForegroundService(Intent(activity, PlaybackCaptureService::class.java)) }
-        catch (_: Exception) { grant = null; ToastMessage.show(activity,"Android no permitió iniciar la captura. Vuelve a intentarlo con Nexo visible.") }
+        catch (_: Exception) {
+            grant = null
+            LiveCaptions.deviceConsentFailed(request.session, request.token, "Android no permitió iniciar la captura. Vuelve a intentarlo con Nexo visible.")
+        }
     }
     internal fun takeGrant(): Grant? = grant.also { grant = null }
     fun cancel(session: GeckoSession) {
+        val token = pending?.takeIf { it.session === session }?.token ?: grant?.takeIf { it.session === session }?.token
         if (pending?.session === session) pending = null
         if (grant?.session === session) grant = null
+        if (token != null) LiveCaptions.deviceConsentFailed(session, token, "Captura de Android cancelada. Puedes volver a intentarlo desde CC.")
         service?.takeIf { it.session === session }?.finishCapture()
     }
 }
@@ -110,7 +129,8 @@ class PlaybackCaptureService : Service() {
     private val playbackWatch = object : Runnable {
         override fun run() {
             val current = session ?: return
-            mediaPlaying = TabManager.tabForSession(current)?.let { BrowserMediaController.isPlaying(it.id) } ?: true
+            mediaPlaying = ExtensionManager.anyFramePlaying(current) ||
+                (TabManager.tabForSession(current)?.let { BrowserMediaController.isPlaying(it.id) } == true)
             if (running) main.postDelayed(this, 1000L)
         }
     }
@@ -176,6 +196,7 @@ class PlaybackCaptureService : Service() {
                 var signal = false
                 var playingSilenceMs = 0L
                 var quietReported = false
+                val queued = java.util.concurrent.atomic.AtomicInteger(0)
                 // Diagnóstico en pantalla: pico del último segundo (antes de la ganancia).
                 var levelPeak = 0
                 var levelBytes = 0
@@ -194,18 +215,28 @@ class PlaybackCaptureService : Service() {
                         }
                         val heard = PlaybackPcm.hasSignal(bytes)
                         signal = signal || heard
-                        if (heard) gain.apply(bytes)
-                        main.post {
-                            if (running && LiveCaptions.matchesCapture(grant.session,grant.token)) LiveCaptions.onDeviceAudio(grant.session,bytes)
+                        if (heard) {
+                            playingSilenceMs = 0L; quietReported = false
+                            gain.apply(bytes)
                         }
-                        if (signal) continue
+                        if (queued.incrementAndGet() > 8) {
+                            queued.decrementAndGet()
+                            main.post { if (running) fail("No se puede procesar el audio a tiempo. Vuelve a activar CC.") }
+                            break
+                        }
+                        main.post {
+                            try {
+                                if (running && LiveCaptions.matchesCapture(grant.session,grant.token)) LiveCaptions.onDeviceAudio(grant.session,bytes)
+                            } finally { queued.decrementAndGet() }
+                        }
+                        if (heard) continue
                         // El silencio solo cuenta con el video sonando: en pausa no se da por perdido.
                         if (mediaPlaying) playingSilenceMs += size * 1000L / (PlaybackPcm.SAMPLE_RATE * 2)
                         if (!quietReported && playingSilenceMs > 6000) {
                             quietReported = true
                             main.post { if (running) LiveCaptions.onStatus(grant.session,"device_quiet") }
                         }
-                        if (playingSilenceMs > 25000) {
+                        if (!signal && playingSilenceMs > 25000) {
                             main.post { if (running) fail("Android solo recibió silencio aunque el video suena (nivel 0 %). El video puede estar silenciado, protegido (DRM) o sonar por una vía que Android no deja capturar. Prueba a adelantarlo unos segundos, otro servidor o los subtítulos instantáneos de Android.") }; break
                         }
                     }

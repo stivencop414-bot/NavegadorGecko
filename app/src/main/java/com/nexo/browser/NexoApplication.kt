@@ -119,7 +119,7 @@ object CrashLog {
 
         clean = webUrl.replace(clean) { match ->
             runCatching {
-                val uri = Uri.parse(match.value)
+                val uri = Uri.parse(UrlSafety.redactSensitiveQuery(match.value))
                 uri.buildUpon()
                     .clearQuery()
                     .fragment(null)

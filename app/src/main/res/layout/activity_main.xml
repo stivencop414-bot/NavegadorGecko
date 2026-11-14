@@ -158,6 +158,14 @@
         </LinearLayout>
     </com.nexo.browser.PullRefreshLayout>
 
+    <LinearLayout
+        android:id="@+id/omniboxSuggestions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="8dp"
+        android:orientation="vertical"
+        android:visibility="gone" />
+
     <!-- Floating dock adapted from the supplied prototype; web content keeps its full viewport. -->
     <com.nexo.browser.GestureDock
         android:id="@+id/browserDock"

@@ -46,6 +46,9 @@ object LiveCaptions {
     )
 
     private class Stream(val session: GeckoSession) {
+        var bridgeGeneration = nextBridgeGeneration++
+        val sourceGate = CaptionSourceGate()
+        var settingsKey = ""
         @Volatile var stopped = false
         val calls = java.util.concurrent.ConcurrentHashMap.newKeySet<okhttp3.Call>()
         var deviceAudio = false
@@ -99,6 +102,7 @@ object LiveCaptions {
         var stateChangedAt = SystemClock.uptimeMillis()
     }
 
+    private var nextBridgeGeneration = 1L
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     // Peticiones rápidas (Google): anticipadas y respaldo mientras responde el modelo de IA.
@@ -111,6 +115,8 @@ object LiveCaptions {
     private val client by lazy {
         OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .build()
     }
@@ -222,6 +228,7 @@ object LiveCaptions {
         val app = context.applicationContext
         val stream = Stream(session).apply {
             language = BrowserPrefs.captionLanguage(app)
+            settingsKey = settingsKey(app)
             batcher = newBatcher(app)
         }
         active[session] = stream
@@ -242,6 +249,7 @@ object LiveCaptions {
 
     /** Envía la orden a la página; si el puente aún no conecta, se reenvía al conectar. */
     private fun deliver(context: Context, stream: Stream) {
+        if (!stream.sourceGate.acceptsPage) return
         // Texto primero (pista, reproductor, archivo .vtt/.srt). El audio solo con permiso explícito.
         stream.delivered = ExtensionManager.setCaptions(
             stream.session,
@@ -329,6 +337,7 @@ object LiveCaptions {
     private fun warmUp(context: Context) { /* No provider request before actual text. */ }
 
     private inline fun <T> withResponse(stream: Stream, generation: Int, request: Request, block: (Response) -> T): T {
+        require(UrlSafety.isSecureServiceUrl(request.url.toString())) { "La API requiere HTTPS sin credenciales en la URL" }
         val call = synchronized(stream) {
             if (stream.stopped || stream.translationGeneration != generation) throw java.io.InterruptedIOException()
             translateClient.newCall(request).also { stream.calls.add(it) }
@@ -356,6 +365,7 @@ object LiveCaptions {
     /** Cambia el idioma del audio: nueva conexión con Deepgram (grabación nueva). */
     fun relisten(context: Context, session: GeckoSession?) {
         val stream = session?.let { active[it] } ?: return
+        if (stream.sourceGate.pending) return
         stream.language = BrowserPrefs.captionLanguage(context)
         if (stream.deviceAudio) { close(stream); connect(context.applicationContext,stream,CaptionProtocol.modelFor(stream.language)) }
         else if (!stream.trackMode && !stream.domMode) ExtensionManager.restartCaptions(stream.session)
@@ -372,6 +382,7 @@ object LiveCaptions {
 
     fun onRecordingStarted(context: Context, session: GeckoSession, mime: String) {
         val stream = active[session] ?: return
+        if (!audioAllowed(stream) || stream.deviceAudio) return
         val app = context.applicationContext
         stream.delivered = true
         if (!CaptionProtocol.supportedMime(mime)) {
@@ -397,12 +408,35 @@ object LiveCaptions {
     }
 
     fun captureToken(session: GeckoSession): Any? = active[session]
+    fun bridgeGeneration(session: GeckoSession?): Long = session?.let { active[it]?.bridgeGeneration } ?: 0L
     fun matchesCapture(session: GeckoSession, token: Any): Boolean = active[session] === token
     fun usingDeviceAudio(session: GeckoSession?): Boolean = session?.let { active[it]?.deviceAudio } == true
+    fun acceptsPageCaptions(session: GeckoSession): Boolean = active[session]?.sourceGate?.acceptsPage == true
+
+    fun prepareDeviceAudio(session: GeckoSession, token: Any): Boolean {
+        val stream = active[session] ?: return false
+        if (stream !== token || stream.deviceAudio || stream.sourceGate.pending) return false
+        stream.sourceGate.requestAndroid()
+        stream.pageFailure = null
+        stream.bridgeGeneration = nextBridgeGeneration++
+        ExtensionManager.setCaptions(session, false)
+        close(stream); resetSource(stream)
+        setState(stream, State.WAITING, "Esperando autorización de captura de Android…")
+        notifyChanged(session)
+        return true
+    }
+
+    fun deviceConsentFailed(session: GeckoSession, token: Any, message: String) {
+        val stream = active[session] ?: return
+        if (stream !== token || !stream.sourceGate.pending) return
+        stream.sourceGate.reset()
+        setState(stream, State.ERROR, message)
+        notifyChanged(session)
+    }
 
     fun startDeviceAudio(session: GeckoSession, token: Any): Boolean {
         val stream = active[session] ?: return false
-        if (stream !== token || limitReached(AppContext.get())) return false
+        if (stream !== token || limitReached(AppContext.get()) || !stream.sourceGate.startAndroid()) return false
         ExtensionManager.setCaptions(session,false)
         close(stream); resetSource(stream)
         stream.deviceAudio = true
@@ -481,13 +515,13 @@ object LiveCaptions {
         val socket = stream.socket
         if (stream.opened && socket != null) {
             // Control de flujo: con la red atascada se descarta audio en vez de acumularlo.
-            if (socket.queueSize() < MAX_SOCKET_QUEUE) socket.send(chunk)
+            if (socket.queueSize() + bytes.size <= MAX_SOCKET_QUEUE && socket.send(chunk)) Unit
             else {
                 close(stream)
                 stream.message = "La red no puede enviar el audio. Reiniciando captura…"
                 restartAudio(stream)
             }
-        } else if (stream.queue.size < 40) {
+        } else if (stream.queue.size < 40 && stream.queue.sumOf { it.size } + bytes.size <= MAX_SOCKET_QUEUE) {
             stream.queue.addLast(chunk)
         } else {
             onPageError(AppContext.get(), session, "buffer", "La conexión tarda demasiado en aceptar audio. Apaga y activa CC para reintentar.")
@@ -556,6 +590,7 @@ object LiveCaptions {
         stream.pageFailure = code
         PlaybackAudioCapture.cancel(session)
         stream.deviceAudio = false
+        stream.sourceGate.reset()
         if (code == "need_key") {
             // La página sigue vigilando: si el usuario enciende el CC del reproductor, Nexo lo toma solo.
             setState(stream, State.ERROR,
@@ -620,7 +655,7 @@ object LiveCaptions {
     fun onCues(context: Context, session: GeckoSession, cues: JSONArray) {
         val stream = active[session] ?: return
         if (!stream.trackMode) return
-        for (i in 0 until cues.length()) {
+        for (i in 0 until minOf(cues.length(), 500)) {
             if (stream.cues.size >= MAX_CUES) break
             val item = cues.optJSONObject(i) ?: continue
             val id = item.optInt("i", -1)
@@ -634,7 +669,7 @@ object LiveCaptions {
     fun onActiveCues(context: Context, session: GeckoSession, ids: JSONArray) {
         val stream = active[session] ?: return
         if (!stream.trackMode) return
-        stream.activeCues = (0 until ids.length()).map { ids.optInt(it, -1) }.filter { it >= 0 }.take(4)
+        stream.activeCues = (0 until minOf(ids.length(), 16)).map { ids.optInt(it, -1) }.filter { it >= 0 }.take(4)
         queueAhead(context.applicationContext, stream)
         notifyChanged(session)
     }
@@ -683,6 +718,7 @@ object LiveCaptions {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.length > 256 * 1024) { webSocket.cancel(); return }
                 main.post {
                     if (active[stream.session] !== stream || stream.generation != generation) return@post
                     if (CaptionProtocol.isUtteranceEnd(text)) {
@@ -759,6 +795,7 @@ object LiveCaptions {
             "signal" -> "Audio con señal detectada · esperando transcripción…"
             "meter_unavailable" -> "Audio capturado; medidor no disponible. Esperando transcripción…"
             "paused" -> "Esperando reproducción…"
+            "quiet" -> "Captura activa · esperando voz…"
             "muted" -> "El video está en silencio: activa su sonido y Nexo empezará a transcribir."
             "device_quiet" -> {
                 // Silencio con el video sonando: puede seguir en la vía de baja latencia que
@@ -774,10 +811,26 @@ object LiveCaptions {
         notifyChanged(session)
     }
 
+    private fun settingsKey(context: Context): String = listOf(
+        BrowserPrefs.captionLanguage(context), BrowserPrefs.captionTranslateTo(context),
+        BrowserPrefs.translationProvider(context), BrowserPrefs.captionMode(context),
+        BrowserPrefs.deepgramKey(context), BrowserPrefs.deeplKey(context),
+        BrowserPrefs.aiTranslateProvider(context), BrowserPrefs.aiTranslateEndpoint(context),
+        BrowserPrefs.aiTranslateModel(context), BrowserPrefs.aiTranslateKey(context),
+        BrowserPrefs.captionAudioAuto(context).toString()
+    ).joinToString("\u0000")
+
     fun reapply(context: Context) {
         active.keys.toList().forEach { session ->
             if (!BrowserPrefs.captionsEnabled(context)) stop(session)
-            else { retarget(context, session); relisten(context, session); ExtensionManager.restoreCaptions(session) }
+            else active[session]?.let { stream ->
+                val key = settingsKey(context)
+                if (!stream.sourceGate.pending && key != stream.settingsKey) {
+                    stream.settingsKey = key
+                    retarget(context, session); relisten(context, session)
+                    if (stream.state != State.ERROR) ExtensionManager.restoreCaptions(session)
+                }
+            }
         }
     }
 
@@ -968,7 +1021,7 @@ object LiveCaptions {
         val aligned = withResponse(stream, generation, request) { response ->
             // Error de red o del servicio: no multiplicar peticiones.
             if (!response.isSuccessful) throw java.io.IOException("HTTP ${response.code}")
-            val text = response.body?.string().orEmpty()
+            val text = response.body?.boundedText().orEmpty()
             CaptionProtocol.parseGoogleLines(text, lines.size)
                 ?: if (lines.size == 1) CaptionProtocol.parseGoogle(text)?.let { listOf(it) } else null
         }
@@ -994,7 +1047,7 @@ object LiveCaptions {
                     .post(request.body.toRequestBody("application/json".toMediaType()))
                 request.headers.forEach { (name, value) -> if (value.isNotBlank()) builder.header(name, value) }
                 withResponse(stream, generation, builder.build()) { response ->
-                    if (response.isSuccessful) CaptionProtocol.parseAiLines(response.body?.string().orEmpty(), lines.size) else null
+                    if (response.isSuccessful) CaptionProtocol.parseAiLines(response.body?.boundedText().orEmpty(), lines.size) else null
                 }
             }
             BrowserPrefs.TRANSLATE_DEEPL -> {
@@ -1005,7 +1058,7 @@ object LiveCaptions {
                     .post(CaptionProtocol.deeplBatchBody(lines, target).toRequestBody(form))
                     .build()
                 withResponse(stream, generation, request) { response ->
-                    if (response.isSuccessful) CaptionProtocol.parseDeeplLines(response.body?.string().orEmpty(), lines.size) else null
+                    if (response.isSuccessful) CaptionProtocol.parseDeeplLines(response.body?.boundedText().orEmpty(), lines.size) else null
                 }
             }
             else -> googleLines(stream, generation, lines, target)

@@ -174,6 +174,7 @@ object CaptionProtocol {
         context: List<String>
     ): AiRequest {
         val base = endpoint.ifBlank { AI_ENDPOINTS[provider].orEmpty() }.trimEnd('/')
+        require(UrlSafety.isSecureServiceUrl(base)) { "La API requiere HTTPS sin credenciales en la URL" }
         val user = JSONObject()
             .put("context", JSONArray(context.takeLast(4)))
             .put("lines", JSONArray(lines))

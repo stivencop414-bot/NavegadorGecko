@@ -85,6 +85,7 @@
   function applyState(state) {
     if (!state || typeof state !== "object") return;
     backgroundMedia = state.backgroundMedia !== false;
+    globalThis.NexoNight?.apply(state.night);
   }
 
   installVisibilityGuard();
@@ -93,20 +94,48 @@
   // Búsqueda de video
   // ---------------------------------------------------------------
 
+  let shadowScanRunning = false;
   function collectShadowVideos(root, output, depth) {
     if (!root || depth > 8) return;
-
-    try {
-      for (const element of root.querySelectorAll("*")) {
-        const shadow = element.shadowRoot;
-        if (!shadow) continue;
-
-        for (const video of shadow.querySelectorAll("video")) {
-          if (!output.includes(video)) output.push(video);
+    // Compatibility for environments without TreeWalker.
+    if (typeof document.createTreeWalker !== "function") {
+      try {
+        for (const element of root.querySelectorAll("*")) {
+          const shadow = element.shadowRoot;
+          if (!shadow) continue;
+          for (const video of shadow.querySelectorAll("video")) if (!output.includes(video)) output.push(video);
+          collectShadowVideos(shadow, output, depth + 1);
         }
-        collectShadowVideos(shadow, output, depth + 1);
+      } catch (_) {}
+      return;
+    }
+    if (shadowScanRunning) return;
+    shadowScanRunning = true;
+    const roots = [{ root, depth }];
+    let walker = null, level = depth;
+    const slice = () => {
+      if (document.visibilityState === "hidden" && !pipActive) { shadowScanRunning = false; return; }
+      let budget = 300;
+      while (budget-- > 0) {
+        if (!walker) {
+          const next = roots.shift();
+          if (!next) {
+            shadowScanRunning = false;
+            shadowVideos = output;
+            shadowScanInterval = output.length ? SHADOW_SCAN_INTERVAL_MS : Math.min(shadowScanInterval * 2, SHADOW_SCAN_MAX_INTERVAL_MS);
+            return;
+          }
+          level = next.depth;
+          walker = document.createTreeWalker(next.root, 1 /* SHOW_ELEMENT */);
+        }
+        const element = walker.nextNode();
+        if (!element) { walker = null; continue; }
+        if (element.localName === "video" && output.length < 256) output.push(element);
+        if (element.shadowRoot && level < 8 && roots.length < 64) roots.push({ root: element.shadowRoot, depth: level + 1 });
       }
-    } catch (_) {}
+      setTimeout(slice, 16);
+    };
+    setTimeout(slice, 0);
   }
 
   function collectVideos() {
@@ -116,14 +145,14 @@
     // El recorrido completo del DOM es caro: hacerlo con poca frecuencia
     // y cada vez menos si la página no tiene videos en Shadow DOM.
     const now = Date.now();
-    if (now - lastShadowScanAt >= shadowScanInterval) {
+    if (!shadowScanRunning && now - lastShadowScanAt >= shadowScanInterval) {
       lastShadowScanAt = now;
       const found = [];
       collectShadowVideos(document, found, 0);
-      shadowVideos = found;
-      shadowScanInterval = found.length
-        ? SHADOW_SCAN_INTERVAL_MS
-        : Math.min(shadowScanInterval * 2, SHADOW_SCAN_MAX_INTERVAL_MS);
+      if (!shadowScanRunning) {
+        shadowVideos = found;
+        shadowScanInterval = found.length ? SHADOW_SCAN_INTERVAL_MS : Math.min(shadowScanInterval * 2, SHADOW_SCAN_MAX_INTERVAL_MS);
+      }
     }
 
     return shadowVideos.filter(video => video.isConnected);
@@ -527,7 +556,7 @@
    */
   const CAPTION_SLICE_MS = 250;
   const captions = {
-    active: false, live: false, lang: "multi", granted: false, choosing: false, token: 0,
+    generation: 0, active: false, live: false, lang: "multi", granted: false, choosing: false, token: 0,
     video: null, recorder: null, silentTimer: 0, epoch: 0, stream: null, meter: null,
     track: null, trackMode: "", trackTimer: 0, knownCues: 0,
     dom: false, domTimer: 0, domText: "", domWatch: 0, domChecks: 0, ytEnabled: false,
@@ -542,7 +571,7 @@
 
   function sendToNexo(message) {
     if (!port) return false;
-    try { port.postMessage(message); return true; } catch (_) { return false; }
+    try { port.postMessage({ ...message, generation: captions.generation }); return true; } catch (_) { return false; }
   }
 
   function captionError(code) {
@@ -624,7 +653,7 @@
       context.resume().catch(() => {});
       const floats = typeof Float32Array === "function" ? new Float32Array(analyser.fftSize) : null;
       const bytes = new Uint8Array(analyser.fftSize);
-      let silentChecks = 0, mutedReported = false, lastTime = -1;
+      let silentChecks = 0, mutedReported = false, lastTime = -1, heard = false;
       const check = () => {
         if (captions.recorder !== recorder) return;
         if (context.state !== "running") {
@@ -636,13 +665,19 @@
           if (!mutedReported) { mutedReported = true; sendToNexo({ type: "captions_status", code: "muted" }); }
           silentChecks = 0;
         } else if (peakLevel(analyser, floats, bytes) > 0.003) {
-          sendToNexo({ type: "captions_status", code: "signal" }); return;
+          silentChecks = 0;
+          if (!heard) sendToNexo({ type: "captions_status", code: "signal" });
+          heard = true;
         } else {
           mutedReported = false;
           const time = video ? Number(video.currentTime) : 0;
           const advancing = video && !video.paused && !video.ended && time !== lastTime;
           lastTime = time;
-          if (advancing && ++silentChecks >= SILENCE_LIMIT_CHECKS) { captionError("silent"); return; }
+          if (advancing && ++silentChecks >= SILENCE_LIMIT_CHECKS) {
+            if (!heard) { captionError("silent"); return; }
+            sendToNexo({ type: "captions_status", code: "quiet" });
+            silentChecks = 0;
+          }
         }
         captions.silentTimer = setTimeout(check, SILENCE_CHECK_MS);
       };
@@ -667,7 +702,7 @@
         clearTimeout(timer);
         if (!captions.active || epoch !== captions.epoch) { finish(null); return; }
         const tracks = stream.getAudioTracks();
-        if (tracks.length || ++attempts >= 31) { finish(tracks); return; }
+        if (tracks.length || ++attempts >= 81) { finish(tracks); return; }
         timer = setTimeout(check, 100);
       };
       captions.waitCancel = cancel;
@@ -1433,6 +1468,11 @@
     if (message.type === "media_nudge") nudgeMedia();
 
     if (message.type === "captions") {
+      const generation = Number.isSafeInteger(message.generation) ? message.generation : 0;
+      if (captions.generation !== generation) {
+        stopSources(false); captions.granted = false;
+        captions.generation = generation;
+      }
       setCaptions(message.active === true, message.live === true, message.lang, message.target);
     }
 

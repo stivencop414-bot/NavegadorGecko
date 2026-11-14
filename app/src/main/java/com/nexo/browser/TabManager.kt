@@ -261,6 +261,7 @@ object TabManager {
             }
 
             old?.session?.let { session ->
+                SitePermissions.cancel(session)
                 val backgroundEnabled = BrowserPrefs.backgroundMedia(requireContext())
                 val keepMediaAlive =
                     backgroundEnabled &&
@@ -692,6 +693,7 @@ object TabManager {
     }
 
     private fun closeSession(session: GeckoSession) {
+        SitePermissions.cancel(session)
         // Includes a killed/crashed session: stop capture before waiting for recovery.
         LiveCaptions.stop(session)
         // Intentional closes must never call recovery or open another window.
@@ -987,6 +989,7 @@ object TabManager {
                 ) {
                     if (tab.session !== session || TabRouting.synthetic(session) || url == null || !isSafeAppNavigationUrl(url)) return
                     if (tab.url != url) {
+                        SitePermissions.cancel(session)
                         if (LiveCaptions.usingDeviceAudio(session)) LiveCaptions.stop(session)
                         else PlaybackAudioCapture.cancel(session)
                         tab.sessionState = null
@@ -994,6 +997,7 @@ object TabManager {
                         windowPrompt?.dismiss()
                     }
                     tab.url = url
+                    ExtensionManager.sendBrowserState(requireContext(), session)
                     persist()
                     listener?.onTabChanged(tab)
                 }
@@ -1145,8 +1149,10 @@ object TabManager {
                     tab.navigationEpoch++
                     TranslatorManager.forget(session)
                     PagePrompts.onPageStart(session)
+                    SitePermissions.cancel(session)
                     BrowserMediaController.resetVideo(tab.id)
                     tab.url = url
+                    ExtensionManager.sendBrowserState(requireContext(), session)
                     tab.isLoading = true
                     tab.lastUsed = System.currentTimeMillis()
                     persist()

@@ -53,6 +53,7 @@ class MainActivity :
     private var lastCaptionMessage: String? = null
     private lateinit var geckoView: GeckoView
     private lateinit var omnibox: EditText
+    private lateinit var suggestions: OmniboxSuggestions
     private lateinit var progress: ProgressBar
     private lateinit var tabButton: Button
     private lateinit var backButton: ImageButton
@@ -215,6 +216,14 @@ class MainActivity :
         }
         browserFrame.onRefresh = { TabManager.reload() }
         omnibox = findViewById(R.id.omnibox)
+        suggestions = OmniboxSuggestions(this, omnibox, findViewById(R.id.omniboxSuggestions)) { result ->
+            val target = when (result) {
+                is OmniboxResult.History -> result.url
+                is OmniboxResult.Search -> SearchResolver.search(this, result.query)
+            }
+            omnibox.setText(target)
+            navigateOmnibox()
+        }
         progress = findViewById(R.id.pageProgress)
         tabButton = findViewById(R.id.tabButton)
         backButton = findViewById(R.id.backButton)
@@ -288,6 +297,7 @@ class MainActivity :
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 clearOmniboxButton.visibility =
                     if (omnibox.hasFocus() && !s.isNullOrEmpty()) View.VISIBLE else View.GONE
+                suggestions.update()
             }
             override fun afterTextChanged(s: Editable?) = Unit
         })
@@ -313,6 +323,7 @@ class MainActivity :
                     if (omnibox.text.isNullOrEmpty()) View.GONE else View.VISIBLE
             } else {
                 clearOmniboxButton.visibility = View.GONE
+                suggestions.hide()
                 tab?.let { renderOmnibox(it) }
             }
         }
@@ -383,6 +394,7 @@ class MainActivity :
     }
 
     private fun navigateOmnibox() {
+        suggestions.hide()
         viewModel.navigate(omnibox.text?.toString().orEmpty())
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(omnibox.windowToken, 0)
@@ -1013,6 +1025,8 @@ class MainActivity :
 
     override fun onActiveTabChanged(tab: BrowserTab, session: GeckoSession) {
         if (attachedSession !== session) {
+            if (::suggestions.isInitialized) suggestions.hide()
+            omnibox.clearFocus()
             hideFindBar()
             // Los subtítulos son de la pestaña visible: no seguir transcribiendo otra.
             attachedSession?.let { LiveCaptions.stop(it) }
@@ -1272,6 +1286,8 @@ class MainActivity :
 
     override fun onStop() {
         if (MigrationMode.enabled(this)) { super.onStop(); return }
+        suggestions.hide()
+        SitePermissions.cancelAll()
         // Sin captura aquí: al parar la superficie se destruye y la imagen sale en negro.
         geckoView.removeCallbacks(idlePreview)
 
@@ -1880,6 +1896,8 @@ class MainActivity :
 
     override fun onDestroy() {
         if (MigrationMode.enabled(this)) { super.onDestroy(); return }
+        suggestions.destroy()
+        SitePermissions.cancelAll()
         pendingPipEntry?.let { geckoView.removeCallbacks(it) }
         if (!isInPictureInPictureMode) ExtensionManager.setPipMode(attachedSession, false)
         runCatching { unregisterReceiver(pipControlReceiver) }
@@ -1908,6 +1926,7 @@ class MainActivity :
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        if (omnibox.hasFocus()) { suggestions.hide(); omnibox.clearFocus(); return }
         if (findBar.visibility == View.VISIBLE) {
             hideFindBar()
             return

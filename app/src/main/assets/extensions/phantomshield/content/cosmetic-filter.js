@@ -122,13 +122,47 @@
     }
   }
 
+  const surveyRoots = new Set();
+  let surveyWalker = null, surveyTimer = null, surveyed = 0;
+  function drainSurvey() {
+    surveyTimer = null;
+    if (!enabled || !generic || document.visibilityState === 'hidden') return;
+    let budget = 300;
+    while (budget-- > 0 && seen.size < MAX_TOKENS) {
+      if (!surveyWalker) {
+        const root = surveyRoots.values().next().value;
+        if (!root) break;
+        surveyRoots.delete(root);
+        if (!root.isConnected) continue;
+        note(root);
+        surveyWalker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        surveyed = 0;
+      }
+      const node = surveyWalker.nextNode();
+      if (!node || ++surveyed > MAX_SURVEY_NODES) { surveyWalker = null; continue; }
+      note(node);
+    }
+    if (pendingClasses.length || pendingIds.length) scheduleFlush();
+    if ((surveyWalker || surveyRoots.size) && seen.size < MAX_TOKENS)
+      surveyTimer = setTimeout(drainSurvey, 16);
+  }
   function survey(root) {
     if (!generic || !(root instanceof Element) || seen.size >= MAX_TOKENS) return;
-    note(root);
-    const elements = root.querySelectorAll('[class],[id]');
-    const limit = Math.min(elements.length, MAX_SURVEY_NODES);
-    for (let i = 0; i < limit; i++) note(elements[i]);
-    if (pendingClasses.length || pendingIds.length) scheduleFlush();
+    // Minimal DOM implementations (including old extension test harnesses).
+    if (typeof document.createTreeWalker !== 'function') {
+      note(root);
+      const elements = root.querySelectorAll('[class],[id]');
+      for (let i = 0; i < Math.min(elements.length, MAX_SURVEY_NODES); i++) note(elements[i]);
+      if (pendingClasses.length || pendingIds.length) scheduleFlush();
+      return;
+    }
+    for (const queued of surveyRoots) {
+      if (queued.contains(root)) return;
+      if (root.contains(queued)) surveyRoots.delete(queued);
+    }
+    if (surveyRoots.size >= 64) { surveyRoots.clear(); surveyRoots.add(document.documentElement); }
+    else surveyRoots.add(root);
+    if (surveyTimer === null) surveyTimer = setTimeout(drainSurvey, 16);
   }
 
   function scheduleFlush() {
@@ -153,6 +187,14 @@
   // Elementos añadidos después de cargar
   // ---------------------------------------------------------------
 
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') stopObserver();
+    else if (enabled) startObserver();
+  });
+  window.addEventListener('pagehide', stopObserver);
+  window.addEventListener('pageshow', () => { if (enabled) startObserver(); });
+  window.addEventListener('focus', () => { if (enabled) startObserver(); });
+
   function hideElement(element) {
     if (element && element.nodeType === Node.ELEMENT_NODE) {
       element.setAttribute(hiddenAttribute, 'true');
@@ -168,8 +210,9 @@
   }
 
   function startObserver() {
-    if (!enabled || observer || !document.documentElement) return;
+    if (!enabled || observer || !document.documentElement || document.visibilityState === 'hidden') return;
     observer = new MutationObserver(function(mutations) {
+      if (document.visibilityState === 'hidden') { stopObserver(); return; }
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
           if (!(node instanceof Element)) continue;
@@ -189,6 +232,8 @@
     flushTimer = null;
     pendingClasses = [];
     pendingIds = [];
+    clearTimeout(surveyTimer); surveyTimer = null;
+    surveyWalker = null; surveyRoots.clear();
   }
 
   /**

@@ -46,6 +46,8 @@ object ExtensionManager {
     private val captionOffers = java.util.WeakHashMap<GeckoSession, MutableMap<WebExtension.Port, Int>>()
     private val captionOwners = java.util.WeakHashMap<GeckoSession, WebExtension.Port>()
     private val ports = mutableSetOf<WebExtension.Port>()
+    private val playingFrames = mutableSetOf<WebExtension.Port>()
+    fun anyFramePlaying(session: GeckoSession): Boolean = playingFrames.any { it.sender.session === session }
     private data class PipState(val resume: Boolean, val isolate: Boolean = true)
     private val pipStates = java.util.WeakHashMap<GeckoSession, PipState>()
     private var initialized = false
@@ -1069,6 +1071,7 @@ object ExtensionManager {
     fun setCaptions(session: GeckoSession?, active: Boolean, live: Boolean = false, language: String = "multi", target: String = ""): Boolean =
         postCaptions(session, JSONObject().apply {
             put("type", "captions")
+            put("generation", LiveCaptions.bridgeGeneration(session))
             put("active", active)
             // Idioma de destino: si la página tiene un archivo de subtítulos en ese idioma, se prefiere.
             put("target", target.takeIf { it.matches(Regex("[a-zA-Z]{2,3}(-[A-Za-z]{2,4})?")) } ?: "")
@@ -1099,6 +1102,7 @@ object ExtensionManager {
 
     private fun captionsOn(session: GeckoSession) = JSONObject().apply {
         put("type", "captions")
+        put("generation", LiveCaptions.bridgeGeneration(session))
         put("active", true)
         put("live", LiveCaptions.audioAllowed(session))
         put("target", BrowserPrefs.captionTranslateTo(AppContext.get()).takeIf { it.matches(Regex("[a-zA-Z]{2,3}(-[A-Za-z]{2,4})?")) } ?: "")
@@ -1115,7 +1119,7 @@ object ExtensionManager {
     }
 
     fun restoreCaptions(session: GeckoSession) {
-        if (LiveCaptions.isActive(session) && !LiveCaptions.usingDeviceAudio(session)) postCaptions(session, captionsOn(session))
+        if (LiveCaptions.isActive(session) && LiveCaptions.acceptsPageCaptions(session)) postCaptions(session, captionsOn(session))
     }
 
     /** Avisa al puente de que la app pasa a segundo plano o vuelve (recuperación de video). */
@@ -1152,18 +1156,19 @@ object ExtensionManager {
         return delivered
     }
 
-    fun sendBrowserState(context: Context) {
-        val message = JSONObject().apply {
-            put("type", "browser_state")
-            put("accent", BrowserPrefs.accent(context))
-            put("theme", BrowserPrefs.theme(context))
-            put("showBadge", false)
-            put("backgroundMedia", BrowserPrefs.backgroundMedia(context))
-            put("smartPip", BrowserPrefs.smartPip(context))
-        }
+    private fun browserState(context: Context, session: GeckoSession?) = JSONObject().apply {
+        put("type", "browser_state")
+        put("accent", BrowserPrefs.accent(context))
+        put("theme", BrowserPrefs.theme(context))
+        put("night", NightMode.state(context, session))
+        put("showBadge", false)
+        put("backgroundMedia", BrowserPrefs.backgroundMedia(context))
+        put("smartPip", BrowserPrefs.smartPip(context))
+    }
 
-        ports.toList().forEach { port ->
-            runCatching { port.postMessage(message) }
+    fun sendBrowserState(context: Context, onlySession: GeckoSession? = null) {
+        ports.toList().filter { onlySession == null || it.sender.session === onlySession }.forEach { port ->
+            runCatching { port.postMessage(browserState(context, port.sender.session)) }
         }
     }
 
@@ -1338,7 +1343,13 @@ object ExtensionManager {
             )
     }
 
-    fun forgetSession(session: GeckoSession) { sessionActions.remove(session) }
+    fun forgetSession(session: GeckoSession) {
+        sessionActions.remove(session)
+        captionOwners.remove(session); captionOffers.remove(session)
+        ports.filter { it.sender.session === session }.toList().forEach { port ->
+            playingFrames.remove(port); ports.remove(port); runCatching { port.disconnect() }
+        }
+    }
 
     private fun rememberAction(
         extension: WebExtension,
@@ -1594,6 +1605,9 @@ object ExtensionManager {
                             port: WebExtension.Port
                         ) {
                             val json = message as? JSONObject
+                            if (json?.optString("type") == "video_state") {
+                                if (json.optBoolean("playing")) playingFrames += port else playingFrames -= port
+                            }
                             if (json?.optString("type") == "video_state" && port.sender.isTopLevel()) {
                                 val tab = port.sender.session?.let { TabManager.tabForSession(it) }
                                 if (tab != null) {
@@ -1616,7 +1630,8 @@ object ExtensionManager {
                             val session = port.sender.session
                             // Con la captura de Android activa la página no participa: un marco nuevo
                             // (anuncio, reproductor recargado) no puede reiniciarla ni cancelarla.
-                            if (json != null && session != null && LiveCaptions.isActive(session) && !LiveCaptions.usingDeviceAudio(session)) {
+                            if (json != null && session != null && LiveCaptions.isActive(session) && LiveCaptions.acceptsPageCaptions(session)) {
+                                if (json.optLong("generation", -1L) != LiveCaptions.bridgeGeneration(session)) return
                                 val type = json.optString("type")
                                 if (type == "captions_offer" && captionOwners[session] == null) {
                                     val pending = captionOffers[session]
@@ -1664,6 +1679,7 @@ object ExtensionManager {
 
                         override fun onDisconnect(port: WebExtension.Port) {
                             ports -= port
+                            playingFrames -= port
                             port.sender.session?.let { session ->
                                 if (captionOwners[session] === port) {
                                     captionOwners.remove(session)
@@ -1674,11 +1690,11 @@ object ExtensionManager {
                     }
                 )
 
-                sendBrowserState(AppContext.get())
+                runCatching { port.postMessage(browserState(AppContext.get(), port.sender.session)) }
                 port.sender.session?.let { session ->
                     // Solo al marco nuevo: la orden pudo llegar antes de que conectara. Los
                     // demás marcos siguen como estaban (sin reiniciar a quien tiene los subtítulos).
-                    if (LiveCaptions.isActive(session) && !LiveCaptions.usingDeviceAudio(session)) {
+                    if (LiveCaptions.isActive(session) && LiveCaptions.acceptsPageCaptions(session)) {
                         runCatching { port.postMessage(captionsOn(session)) }
                         LiveCaptions.onBridgeConnected(session)
                     }

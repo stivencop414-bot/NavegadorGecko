@@ -30,6 +30,13 @@ object TabTools {
         val host = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull()?.removePrefix("www.").orEmpty()
         val body = NexoUi.column(activity)
 
+        if (UrlSafety.isWebUrl(tab.url)) {
+            body.addView(NexoUi.switchRow(activity, "Modo nocturno en este sitio",
+                "Oscurece las páginas cuando Nexo usa un tema oscuro.", NightMode.allowed(activity, tab)) { enabled ->
+                NightMode.setAllowed(activity, tab, enabled)
+            })
+        }
+
         // --- Grupo ---------------------------------------------------------
         body.addView(NexoUi.section(activity, "Grupo de esta pestaña"))
         fun groupChips(): View {

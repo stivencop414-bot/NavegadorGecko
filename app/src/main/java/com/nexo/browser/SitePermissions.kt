@@ -20,6 +20,33 @@ import org.mozilla.geckoview.GeckoSession.PermissionDelegate.MediaSource
  * porque Nexo aún no las muestra.
  */
 object SitePermissions : PermissionDelegate {
+    private val pending = mutableSetOf<Request>()
+    private class Request(val session: GeckoSession, val deny: () -> Unit) {
+        private val tab = TabManager.tabForSession(session)
+        private val epoch = tab?.navigationEpoch
+        private val url = tab?.url
+        var dialog: AlertDialog? = null
+        private var answered = false
+        fun current(): Boolean = !answered && tab != null && TabManager.activeSession() === session &&
+            TabManager.tabForSession(session) === tab && tab.navigationEpoch == epoch && tab.url == url
+        fun finish(allow: Boolean, grant: () -> Unit = {}) {
+            if (answered) return
+            val accepted = allow && current()
+            answered = true
+            pending.remove(this)
+            if (accepted) grant() else deny()
+            dialog?.dismiss(); dialog = null
+        }
+    }
+    fun cancel(session: GeckoSession) { pending.filter { it.session === session }.toList().forEach { it.finish(false) } }
+    fun cancelAll() { pending.toList().forEach { it.finish(false) } }
+    private fun request(session: GeckoSession, deny: () -> Unit): Request? {
+        val value = Request(session, deny)
+        if (!value.current()) { value.finish(false); return null }
+        pending += value
+        return value
+    }
+
     private val locationPermissions = setOf(
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION
@@ -36,14 +63,15 @@ object SitePermissions : PermissionDelegate {
         permissions: Array<out String>?,
         callback: PermissionDelegate.Callback
     ) {
+        val guard = request(session) { callback.reject() } ?: return
         val requested = permissions?.filterNotNull().orEmpty()
         val host = BrowserHosts.current()
         if (requested.isEmpty()) {
-            callback.grant()
+            guard.finish(true) { callback.grant() }
             return
         }
         if (host == null) {
-            callback.reject()
+            guard.finish(false)
             return
         }
 
@@ -52,7 +80,7 @@ object SitePermissions : PermissionDelegate {
             activity.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
         }
         if (missing.isEmpty()) {
-            callback.grant()
+            guard.finish(true) { callback.grant() }
             return
         }
 
@@ -63,7 +91,7 @@ object SitePermissions : PermissionDelegate {
             // La ubicación aproximada basta para la geolocalización web.
             val ok = granted.size == requested.size ||
                 (requested.all { it in locationPermissions } && granted.isNotEmpty())
-            if (ok) callback.grant() else callback.reject()
+            if (ok) guard.finish(true) { callback.grant() } else guard.finish(false)
         }
     }
 
@@ -110,15 +138,11 @@ object SitePermissions : PermissionDelegate {
             ?: return GeckoResult.fromValue(ContentPermission.VALUE_DENY)
 
         val result = GeckoResult<Int>()
-        var answered = false
-        fun answer(value: Int) {
-            if (answered) return
-            answered = true
-            result.complete(value)
-        }
+        val guard = request(session) { result.complete(ContentPermission.VALUE_DENY) } ?: return result
+        fun answer(value: Int) = guard.finish(value == ContentPermission.VALUE_ALLOW) { result.complete(value) }
 
         runCatching {
-            AlertDialog.Builder(activity)
+            guard.dialog = AlertDialog.Builder(activity)
                 .setTitle("Permiso del sitio")
                 .setMessage("${host(perm.uri)} quiere $description.")
                 .setNegativeButton("Bloquear") { _, _ -> answer(ContentPermission.VALUE_DENY) }
@@ -152,21 +176,19 @@ object SitePermissions : PermissionDelegate {
             else -> "usar tu micrófono"
         }
 
-        var answered = false
+        val guard = request(session) { callback.reject() } ?: return
         runCatching {
-            AlertDialog.Builder(activity)
+            guard.dialog = AlertDialog.Builder(activity)
                 .setTitle("Permiso del sitio")
                 .setMessage("${host(uri)} quiere $what.")
                 .setNegativeButton("Bloquear") { _, _ ->
-                    answered = true
-                    callback.reject()
+                    guard.finish(false)
                 }
                 .setPositiveButton("Permitir") { _, _ ->
-                    answered = true
-                    callback.grant(camera, microphone)
+                    guard.finish(true) { callback.grant(camera, microphone) }
                 }
-                .setOnDismissListener { if (!answered) callback.reject() }
+                .setOnDismissListener { guard.finish(false) }
                 .show()
-        }.onFailure { callback.reject() }
+        }.onFailure { guard.finish(false) }
     }
 }

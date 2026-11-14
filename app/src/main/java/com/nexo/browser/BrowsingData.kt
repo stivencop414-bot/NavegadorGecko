@@ -9,6 +9,7 @@ object BrowsingData {
         val app = context.applicationContext
         TabManager.closeAllSessionsKeepingState()
         HistoryStore.clear(app)
+        NightMode.clear(app)
         TabPreviewStore.clear(app)
         GeckoRuntimeHolder.get(app).storageController
             .clearData(StorageController.ClearFlags.ALL)

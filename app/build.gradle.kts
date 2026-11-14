@@ -13,8 +13,8 @@ android {
         applicationId = if (project.hasProperty("nexoTransition")) "com.ejemplo.navegador" else "com.nexo.browser"
         minSdk = 26
         targetSdk = 34
-        versionCode = 50
-        versionName = "0.27.2"
+        versionCode = 51
+        versionName = "0.28.0"
         // Solo la actualización de transición (paquete anterior) entrega sus datos a Nexo nuevo.
         manifestPlaceholders["legacyExport"] = project.hasProperty("nexoTransition").toString()
     }

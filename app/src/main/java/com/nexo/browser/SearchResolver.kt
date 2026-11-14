@@ -46,7 +46,7 @@ object SearchResolver {
         return search(context, input)
     }
 
-    private fun search(context: Context, input: String): String {
+    fun search(context: Context, input: String): String {
         val q = URLEncoder.encode(input, "UTF-8")
         val free = BrowserPrefs.freeSearch(context)
 

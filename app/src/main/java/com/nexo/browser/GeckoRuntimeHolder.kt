@@ -35,10 +35,9 @@ object GeckoRuntimeHolder {
                     .largeKeepaliveFactor(2)
                     // Los sitios con modo oscuro siguen el tema de Nexo.
                     .preferredColorScheme(colorScheme(context))
-                    // Las pestañas en procesos con el UID de Nexo (el valor por defecto actual):
-                    // la captura de audio de Android para subtítulos filtra por ese UID y, con
-                    // procesos aislados, solo recibiría silencio.
-                    .isolatedProcessEnabled(false)
+                    // Capturing multimedia is opt-in and no longer filters by app UID.
+                    // Keep untrusted web content in isolated Android processes.
+                    .isolatedProcessEnabled(true)
 
 
                 GeckoRuntime.create(

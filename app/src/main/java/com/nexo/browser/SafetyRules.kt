@@ -85,9 +85,12 @@ object UrlSafety {
      * Se usa antes de guardar el historial en disco.
      */
     fun redactSensitiveQuery(url: String): String {
-        val hashIndex = url.indexOf('#')
-        val beforeHash = if (hashIndex >= 0) url.substring(0, hashIndex) else url
-        val fragment = if (hashIndex >= 0) url.substring(hashIndex + 1) else null
+        // Remove user:password@ too, including malformed browser-style URLs.
+        val clean = url.filterNot { it == '\t' || it == '\r' || it == '\n' }.trim()
+            .replace(Regex("(?i)^(https?://)[^/?#]*@"), "$1")
+        val hashIndex = clean.indexOf('#')
+        val beforeHash = if (hashIndex >= 0) clean.substring(0, hashIndex) else clean
+        val fragment = if (hashIndex >= 0) clean.substring(hashIndex + 1) else null
 
         val queryIndex = beforeHash.indexOf('?')
         val base = if (queryIndex >= 0) beforeHash.substring(0, queryIndex) else beforeHash
@@ -110,6 +113,13 @@ object UrlSafety {
             if (!keptFragment.isNullOrEmpty()) append('#').append(keptFragment)
         }
     }
+
+    /** Service credentials must never travel over cleartext or URL user-info. */
+    fun isSecureServiceUrl(value: String): Boolean = runCatching {
+        val uri = URI(value)
+        uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() &&
+            uri.rawUserInfo == null && uri.fragment == null && !uri.isOpaque
+    }.getOrDefault(false)
 }
 
 /** Nombres de archivo seguros para descargas. */

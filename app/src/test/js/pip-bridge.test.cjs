@@ -529,9 +529,31 @@ test('pending track discovery is cancelled and does not create a recorder after 
 test('a player exposing no audio fails after a bounded wait',async()=>{
   const audio=audioMocks(),h=harness(audio.extra),video=h.video();
   video.captureStream=()=>new audio.extra.MediaStream([]);
-  h.captions(true);await flush();h.tick(3100);await flush();await flush();
+  h.captions(true);await flush();h.tick(8100);await flush();await flush();
   assert.ok(h.reports.some(x=>x.code==='no_audio'));
   assert.equal(audio.recorders.length,0);
+});
+
+test('HLS audio tracks arriving after five seconds can still start recording', async () => {
+  const audio=audioMocks(),h=harness(audio.extra),video=h.video(),tracks=[];
+  video.captureStream=()=>new audio.extra.MediaStream(tracks);
+  h.captions(true);await flush();h.tick(5000);await flush();
+  assert.equal(h.reports.some(x=>x.code==='no_audio'),false);
+  tracks.push({stop(){},addEventListener(){},getSettings(){return {};}});
+  h.tick(100);await flush();await flush();
+  assert.equal(audio.recorders.length,1);
+});
+
+test('capture messages carry the native generation and a source switch releases the recorder', async () => {
+  const audio=audioMocks(),h=harness(audio.extra);h.video();
+  h.message({type:'captions',active:true,live:true,generation:42});
+  h.message({type:'captions_grant'});await flush();await flush();
+  assert.ok(h.reports.some(x=>x.type==='captions_start' && x.generation===42));
+  h.message({type:'captions',active:false,generation:43});
+  assert.equal(audio.recorders[0].state,'inactive');
+  const count=h.reports.filter(x=>x.type==='captions_audio').length;
+  h.tick(2000);await flush();
+  assert.equal(h.reports.filter(x=>x.type==='captions_audio').length,count);
 });
 
 // --- Audio que no se detecta: video silenciado y silencio real ---
