@@ -57,6 +57,16 @@
       <div id="memory-confirm" class="confirmation" hidden><p>¿Borrar todas las huellas aprendidas? Tus ajustes se conservan.</p><div class="confirm-actions"><button type="button" id="memory-confirm-clear" class="danger-button">Borrar memoria</button><button type="button" id="memory-cancel" class="secondary">Cancelar</button></div></div>
       <p id="memory-status" class="hint" role="status" aria-live="polite"></p>
     </section>
+    <section class="form-card memory-card" aria-labelledby="learned-title">
+      <div class="card-heading"><h2 id="learned-title">Dominios publicitarios aprendidos</h2><span class="code-tag cyan">En este dispositivo</span></div>
+      <div class="json-row memory-switch"><div><label for="learn-domains">Aprender dominios de anuncios</label><p class="hint">Cuando la IA oculta un anuncio, se guarda el dominio de su marco o de su enlace de clic. Si aparece en anuncios de dos sitios (o cuatro veces en uno), se bloquea en todas las páginas. Nunca bloquea páginas que abras tú ni dominios del propio sitio.</p></div><label class="switch"><input type="checkbox" id="learn-domains" aria-label="Aprender dominios de anuncios" checked><span class="slider"></span></label></div>
+      <div class="memory-toolbar"><input type="search" id="learned-search" placeholder="Buscar dominio…" aria-label="Buscar dominio publicitario aprendido"><button type="button" id="learned-refresh" class="secondary">Actualizar</button></div>
+      <p id="learned-summary" class="hint" role="status">Consultando dominios…</p>
+      <div id="learned-domains" class="memory-domains"></div>
+      <div id="learned-allowed-box" hidden><h3 class="learned-subtitle">Nunca bloquear</h3><div id="learned-allowed" class="memory-domains"></div></div>
+      <button type="button" id="learned-clear" class="secondary memory-clear">Olvidar todos los dominios aprendidos</button>
+      <p id="learned-status" class="hint" role="status" aria-live="polite"></p>
+    </section>
     <div class="action-bar"><button type="submit" id="save" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg><span>Guardar configuración</span></button><button type="button" id="local-only" class="secondary" disabled>Rechazar IA y usar solo bloqueo local</button><p id="status" role="status" aria-live="polite"></p></div>
   </form>
 </main><script src="../data/ai-config.js"></script><script src="options.js"></script><script src="memory.js"></script></body></html>

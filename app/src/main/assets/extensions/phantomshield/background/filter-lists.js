@@ -37,7 +37,7 @@
     ] }
   ]);
 
-  const UNSUPPORTED_NETWORK = /\$(?:[^,]*,)*(?:badfilter|csp|redirect(?:-rule)?|removeparam|replace|urltransform|permissions|header|uritransform|ipaddress|to|method)(?:[=,]|$)/i;
+  const UNSUPPORTED_NETWORK = /\$(?:[^,]*,)*(?:csp|redirect(?:-rule)?|removeparam|replace|urltransform|permissions|header|uritransform|ipaddress|to|method)(?:[=,]|$)/i;
   const HIDE_EXCEPTION = /\$(?:[^,]*,)*(?:elemhide|ehide|generichide|ghide)(?:,|$)/i;
 
   class FilterListManager {
@@ -61,6 +61,9 @@
         return line.startsWith('@@') ? { type: 'hide-exception', ruleString: line } : null;
       }
 
+      // `regla$badfilter`: los autores de la lista desactivan una regla que rompía sitios.
+      if (/\$(?:[^,]*,)*badfilter(?:,|$)/i.test(line)) return { type: 'badfilter', ruleString: line };
+
       if ((line.startsWith('/') && line.lastIndexOf('/') > 0) || UNSUPPORTED_NETWORK.test(line) ||
           /\$(?:[^,]*,)*genericblock(?:,|$)/i.test(line)) {
         return null;
@@ -77,7 +80,9 @@
       for (let i = 0; i < lines.length; i++) {
         const parsed = this.parseRule(lines[i]);
         if (parsed) {
-          if (parsed.type === 'network') {
+          if (parsed.type === 'badfilter') {
+            if (typeof engine.addBadFilter === 'function') engine.addBadFilter(parsed.ruleString);
+          } else if (parsed.type === 'network') {
             if (count < maxRules && engine.addRule(engine._createRuleObject(parsed.ruleString))) count++;
           } else if (cosmetic) {
             if (parsed.type === 'cosmetic') cosmetic.addLine(parsed.ruleString);
@@ -100,6 +105,23 @@
       const nextEngine = engine.createEmpty();
       const nextCosmetic = cosmetic ? cosmetic.createEmpty() : null;
 
+      // Primera pasada: las reglas `$badfilter` de todas las listas, antes de cargar
+      // ninguna regla, para que la regla anulada no llegue a entrar en el motor.
+      const texts = [];
+      for (const list of LISTS) {
+        const key = 'phantom_list_' + list.id;
+        try {
+          const result = await browser.storage.local.get(key);
+          const text = result[key];
+          if (!text) continue;
+          texts.push({ id: list.id, text: text });
+          const bad = text.match(/^[^!\n]*\$(?:[^,\n]*,)*badfilter(?:,[^\n]*)?$/gim);
+          if (bad && typeof nextEngine.addBadFilter === 'function') bad.forEach(line => nextEngine.addBadFilter(line.trim()));
+        } catch (e) {
+          console.warn('[PhantomShield FilterLists] Could not load ' + list.id + ' from storage.', e);
+        }
+      }
+
       // Reglas incluidas en la app: funcionan antes de la primera descarga.
       nextEngine.init(
         globalThis.PHANTOM_AD_DOMAINS,
@@ -111,16 +133,12 @@
       }
 
       let total = 0;
-      for (const list of LISTS) {
-        const key = 'phantom_list_' + list.id;
+      while (texts.length) {
+        const entry = texts.shift();
         try {
-          const result = await browser.storage.local.get(key);
-          const text = result[key];
-          if (text) {
-            total += await this.loadRulesText(text, nextEngine, MAX_DYNAMIC_RULES - total, nextCosmetic);
-          }
+          total += await this.loadRulesText(entry.text, nextEngine, MAX_DYNAMIC_RULES - total, nextCosmetic);
         } catch (e) {
-          console.warn('[PhantomShield FilterLists] Could not load ' + list.id + ' from storage.', e);
+          console.warn('[PhantomShield FilterLists] Could not load ' + entry.id + ' from storage.', e);
         }
       }
       if (typeof nextEngine.finalize === 'function') nextEngine.finalize();

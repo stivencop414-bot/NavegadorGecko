@@ -70,7 +70,7 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
   digitales, limpieza de parámetros de rastreo, borrar datos al salir y depuración remota.
 - Limpieza de datos.
 - Administrador de extensiones.
-- PhantomShield 9.0.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
+- PhantomShield 9.1.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
   eliminación de anuncios de YouTube, contadores reales y controles por sitio. IA opcional
   (tu propia API) para los anuncios que las reglas no reconocen; las señales inequívocas se
   resuelven en el dispositivo sin gastar tokens y el panel muestra lo revisado/ocultado en cada página.
@@ -187,4 +187,4 @@ Consulta [transferencia cifrada del perfil](docs/TRANSFERENCIA-PERFIL.md) para l
 
 Los cambios de [estabilidad de pestañas y captura de reproducción de Android](docs/ESTABILIDAD-Y-AUDIO-ANDROID.md) explican la confirmación de ventanas, la opción nativa de CC y sus permisos/límites.
 
-La [versión 0.28.0](docs/VERSION-0.28.0.md) reúne la captura de Android que ya no cancela la página, el modo nocturno con Dark Reader, las sugerencias de la barra, la revisión de seguridad y las mediciones de rendimiento, con lo que falta validar en el teléfono. La 0.28.1 corrige las extensiones (PhantomShield, instaladas y tienda), que la 0.28.0 dejaba sin arrancar.
+La [versión 0.28.0](docs/VERSION-0.28.0.md) reúne la captura de Android que ya no cancela la página, el modo nocturno con Dark Reader, las sugerencias de la barra, la revisión de seguridad y las mediciones de rendimiento, con lo que falta validar en el teléfono. La 0.28.1 corrige las extensiones (PhantomShield, instaladas y tienda), que la 0.28.0 dejaba sin arrancar. La 0.29.0 trae PhantomShield 9.1: menos bloqueos innecesarios, más ventanas emergentes cortadas y dominios publicitarios aprendidos con la IA ([detalle](app/src/main/assets/extensions/phantomshield/README.md#cambios-en-91)).

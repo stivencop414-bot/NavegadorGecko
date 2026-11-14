@@ -9,6 +9,7 @@
   const updater = globalThis.PhantomUpdaterInstance;
   const listManager = globalThis.PhantomFilterListManager;
   const cosmetic = globalThis.PhantomCosmeticEngineInstance;
+  const adDomains = globalThis.PhantomAdDomains;
 
   const DEFAULT_SETTINGS = Object.freeze({
     adblockEnabled: true,
@@ -30,7 +31,8 @@
   function aiTabState(tabId) {
     let state = tabAi.get(tabId);
     if (!state) {
-      state = { active: false, scans: 0, analyzed: 0, hidden: 0, local: 0, model: 0, memory: 0, cache: 0, code: '', at: 0 };
+      state = { active: false, scans: 0, analyzed: 0, hidden: 0, local: 0, model: 0, memory: 0, cache: 0, code: '', at: 0,
+        learned: 0, seenDomains: new Set() };
       tabAi.set(tabId, state);
     }
     return state;
@@ -357,9 +359,10 @@
         // sitio de una empresa de publicidad daba error de conexión. Solo se
         // cortan las redes de ventanas emergentes, que nadie visita a propósito.
         if (POPUP_HOSTS.some(function(domain) { return hostnameMatches(parsedUrl.hostname, domain); })) return block();
-        // Ventana nueva hacia una red de "popunder" (reglas $popup de las listas): se cierra sola.
+        // Ventana nueva hacia una red de "popunder" (reglas $popup de las listas o dominio
+        // publicitario aprendido con la IA): se cierra sola.
         if (openedByPage && settings.popupBlockEnabled && engine && siteOfHost(hostOf(details.originUrl)) !== siteOfHost(parsedUrl.hostname) &&
-            engine.shouldBlock(url, 'popup', details.originUrl, false)) {
+            (engine.shouldBlock(url, 'popup', details.originUrl, false) || (adDomains && adDomains.isBlocked(parsedUrl.hostname)))) {
           if (!details.incognito) engine.recordBlocked();
           countTabBlock(details.tabId);
           if (!details.incognito) scheduleCountPersist();
@@ -374,6 +377,11 @@
         countTabBlock(details.tabId);
         if (!details.incognito) scheduleCountPersist();
         return { cancel: true };
+      }
+
+      // Dominios publicitarios aprendidos: solo recursos de terceros (nunca los del propio sitio).
+      if (adDomains && adDomains.isBlocked(parsedUrl.hostname) && siteOfHost(parsedUrl.hostname) !== siteOfHost(topHost)) {
+        return block();
       }
 
       return {};
@@ -439,14 +447,49 @@
       const copy = Object.assign({}, candidate);
       const urls = Array.isArray(copy.localUrls) ? copy.localUrls.slice(0, 4) : [];
       delete copy.localUrls;
+      delete copy.localFrame;
       if (engine && Array.isArray(copy.signals) && !copy.signals.includes('ad-network') && urls.some(function(url) {
         return typeof url === 'string' && url.length <= 512 && /^https?:\/\//.test(url) &&
-          engine.shouldBlock(url, 'sub_frame', documentUrl, false);
+          (engine.shouldBlock(url, 'sub_frame', documentUrl, false) || (adDomains && adDomains.isBlocked(hostOf(url))));
       })) {
         copy.signals = copy.signals.concat('ad-network');
       }
       return copy;
     });
+  }
+
+  /**
+   * Tras una clasificación: los anuncios ocultados enseñan sus dominios de
+   * infraestructura (marco y enlaces de clic). Cada dominio cuenta una vez por
+   * carga de página; los ya bloqueados por las listas no se guardan.
+   */
+  async function learnAdDomains(tabId, host, candidates, decisions) {
+    if (!adDomains || !Array.isArray(candidates) || !Array.isArray(decisions)) return;
+    let config;
+    try { config = await globalThis.PhantomAI.config(); } catch (error) { return; }
+    if (!config || config.learnDomains === false) return;
+    const byId = new Map(candidates.filter(c => c && typeof c.id === 'string').map(c => [c.id, c]));
+    const state = aiTabState(tabId);
+    const fresh = [];
+    for (const decision of decisions) {
+      if (!decision || decision.hide !== true) continue;
+      const candidate = byId.get(decision.id);
+      if (!candidate) continue;
+      const links = (Array.isArray(candidate.localUrls) ? candidate.localUrls : []).filter(url => url !== candidate.localFrame);
+      const found = adDomains.evidence(host, candidate.localFrame, links, function(candidateHost) {
+        return Boolean(engine && engine.isDomainBlocked(candidateHost));
+      });
+      for (const domain of found) {
+        if (state.seenDomains.has(domain) || state.seenDomains.size >= 40) continue;
+        state.seenDomains.add(domain);
+        fresh.push(domain);
+      }
+    }
+    if (!fresh.length) return;
+    try {
+      const promoted = await adDomains.learn(host, fresh);
+      state.learned += promoted.length;
+    } catch (error) {}
   }
 
   browser.runtime.onMessage.addListener(function(message, sender) {
@@ -465,6 +508,7 @@
         const candidates = enrichCandidates(message.candidates, tab.url);
         const result = await globalThis.PhantomAI.classify(host, candidates, tab.incognito);
         if(tabAi.get(tab.id)!==before)return {ok:false,code:'changed',error:'La página cambió.'};
+        if (result && result.ok && !tab.incognito) await learnAdDomains(tab.id, host, message.candidates, result.decisions);
         if (!isEnabledForHost(host)) return { ok: false, error: 'Protección desactivada.' };
         const ai = aiTabState(tab.id);
         ai.active = true;
@@ -581,6 +625,28 @@
       return ready.then(function() { return globalThis.PhantomAI.probe(message.config); });
     }
 
+    if (['AI_DOMAINS_LIST', 'AI_DOMAINS_FORGET', 'AI_DOMAINS_ALLOW', 'AI_DOMAINS_UNALLOW', 'AI_DOMAINS_CLEAR'].includes(message.type)) {
+      const ownPages = ['options/options.html', 'popup/popup.html'].map(path => browser.runtime.getURL(path));
+      if (!adDomains || !sender || sender.id !== browser.runtime.id || !ownPages.includes(sender.url) || (sender.tab && sender.tab.incognito)) {
+        return Promise.resolve({ ok: false, error: 'Abre los dominios aprendidos desde los ajustes de PhantomShield.' });
+      }
+      return (async function() {
+        try {
+          const domain = typeof message.domain === 'string' ? message.domain.toLowerCase() : '';
+          if (message.type !== 'AI_DOMAINS_LIST' && message.type !== 'AI_DOMAINS_CLEAR' && !PhantomAIConfig.publicHost(domain)) {
+            return { ok: false, error: 'Dominio inválido.' };
+          }
+          if (message.type === 'AI_DOMAINS_FORGET') await adDomains.forget(domain);
+          if (message.type === 'AI_DOMAINS_CLEAR') await adDomains.forget(null);
+          if (message.type === 'AI_DOMAINS_ALLOW') await adDomains.allow(domain, true);
+          if (message.type === 'AI_DOMAINS_UNALLOW') await adDomains.allow(domain, false);
+          return Object.assign({ ok: true }, await adDomains.list());
+        } catch (error) {
+          return { ok: false, error: 'No se pudieron leer los dominios aprendidos.' };
+        }
+      })();
+    }
+
     if (message.type === 'GET_STATS') {
       const tabId = typeof message.tabId === 'number' ? message.tabId : -1;
       const host = typeof message.host === 'string' ? message.host.toLowerCase() : '';
@@ -588,9 +654,14 @@
         ok: true,
         blockedCount: engine ? engine.getBlockedCount() : 0,
         tabBlocked: tabBlocked.get(tabId) || 0,
-        tabAi: tabAi.has(tabId) ? Object.assign({}, tabAi.get(tabId)) : null,
+        tabAi: tabAi.has(tabId) ? (function(state) {
+          const copy = Object.assign({}, state);
+          delete copy.seenDomains;
+          return copy;
+        })(tabAi.get(tabId)) : null,
         siteDisabled: isHostDisabled(host),
         rules: listManager && listManager.counts ? Object.assign({}, listManager.counts) : { network: 0, cosmetic: 0 },
+        learnedDomains: adDomains ? adDomains.counts() : { blocked: 0, watching: 0 },
         settings: Object.assign({}, settings)
       });
     }

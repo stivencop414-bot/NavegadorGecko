@@ -48,10 +48,14 @@
     return hostname === domain || hostname.endsWith('.' + domain);
   }
 
+  // Igual que data/domains-popups.js (este script corre en la página y no puede leerlo).
   const POPUP_DOMAINS = [
     'popads.net', 'popcash.net', 'exoclick.com', 'juicyads.com',
-    'propellerads.com', 'propellerclicks.com', 'hilltopads.com',
-    'adsterra.com', 'clickadu.com', 'trafficjunky.net', 'trafficjunky.com'
+    'propellerads.com', 'propellerclicks.com', 'hilltopads.com', 'hilltopads.net',
+    'adsterra.com', 'clickadu.com', 'trafficjunky.net', 'trafficjunky.com',
+    'popunder.net', 'popmyads.com', 'onclickads.net', 'onclkds.com', 'admaven.com', 'ad-maven.com',
+    'monetag.com', 'adcash.com', 'trafficstars.com', 'galaksion.com', 'clickadilla.com',
+    'evadav.com', 'richads.com', 'zeropark.com', 'clickaine.com'
   ];
 
   function isKnownPopupUrl(value) {
@@ -147,38 +151,124 @@
     window.addEventListener('click', recordGesture, true);
     window.addEventListener('keydown', recordGesture, true);
 
-    window.open = function(url) {
-      if (!state.adblockEnabled) return originalOpen.apply(this, arguments);
+    function recentTarget() {
+      return Date.now() - lastTrustedGesture <= 1500 ? lastGestureTarget : null;
+    }
 
-      const recentlyActivated = Date.now() - lastTrustedGesture <= 2500;
-      const userActivated = Boolean(
-        navigator.userActivation && navigator.userActivation.isActive
-      );
-      const blankWithoutGesture = (!url || url === 'about:blank') &&
-        !recentlyActivated && !userActivated;
+    /** El último toque fue sobre un control real (enlace, botón…), no sobre texto o una capa. */
+    function tappedControl() {
+      const target = recentTarget();
+      if (!target || typeof target.closest !== 'function') return false;
+      const control = target.closest('a[href], button, [role="button"], [role="link"], [role="menuitem"], input[type="button"], input[type="submit"], summary, label');
+      return Boolean(control && !looksLikeTrap(control));
+    }
 
-      if (isKnownPopupUrl(url) || blankWithoutGesture) {
-        reportBlockedPopup();
-        return null;
+    /** ¿Se permite abrir `url` en una ventana nueva ahora? */
+    function allowWindow(url) {
+      if (!state.adblockEnabled) return true;
+      if (isKnownPopupUrl(url)) return false;
+      const blank = !url || String(url) === 'about:blank';
+      if (blank) {
+        // Ventana en blanco que luego salta al anuncio: solo tras tocar un control
+        // (pagos e impresiones la abren así desde un botón), nunca desde texto o una capa.
+        const userActivated = Boolean(navigator.userActivation && navigator.userActivation.isActive);
+        if (!state.popupBlockEnabled) return Date.now() - lastTrustedGesture <= 2500 || userActivated;
+        return tappedControl();
       }
-      if (state.popupBlockEnabled && isCrossSite(url) &&
-          !intendedWindow(Date.now() - lastTrustedGesture <= 1500 ? lastGestureTarget : null, url)) {
-        reportBlockedPopup();
-        return null;
-      }
-      return originalOpen.apply(this, arguments);
-    };
+      if (state.popupBlockEnabled && isCrossSite(url) && !intendedWindow(recentTarget(), url)) return false;
+      return true;
+    }
 
-    document.addEventListener('click', function(event) {
+    /** Sustituye `open` de una ventana (la principal o un iframe vacío del mismo origen). */
+    const guarded = new WeakSet();
+    function guardWindow(win) {
+      try {
+        if (!win || guarded.has(win) || typeof win.open !== 'function') return;
+        const nativeOpen = win.open;
+        guarded.add(win);
+        win.open = function(url) {
+          if (!allowWindow(url)) { reportBlockedPopup(); return null; }
+          return nativeOpen.apply(this, arguments);
+        };
+      } catch (error) {}
+    }
+    guardWindow(window);
+
+    /*
+     * Truco habitual: crear un iframe vacío y llamar a su `contentWindow.open`,
+     * que aún no tiene la guarda. Se protege la ventana del iframe al pedirla.
+     */
+    function wrapFrameGetter(proto, property, toWindow) {
+      try {
+        const descriptor = proto && Object.getOwnPropertyDescriptor(proto, property);
+        if (!descriptor || typeof descriptor.get !== 'function' || !descriptor.configurable) return;
+        const getter = descriptor.get;
+        Object.defineProperty(proto, property, Object.assign({}, descriptor, {
+          get: new Proxy(getter, {
+            apply: function(target, thisArg, args) {
+              const value = Reflect.apply(target, thisArg, args);
+              try { guardWindow(toWindow(value)); } catch (error) {}
+              return value;
+            }
+          })
+        }));
+      } catch (error) {}
+    }
+    if (window.HTMLIFrameElement) {
+      wrapFrameGetter(HTMLIFrameElement.prototype, 'contentWindow', value => value);
+      wrapFrameGetter(HTMLIFrameElement.prototype, 'contentDocument', value => value && value.defaultView);
+    }
+
+    function opensWindow(element) {
+      return /^_(?:blank|new)$|^[^_]/i.test((element.getAttribute && element.getAttribute('target')) || '');
+    }
+
+    /** Un enlace "pulsado" por un script hacia otro sitio en una pestaña nueva. */
+    function blockedSyntheticLink(anchor) {
+      if (!state.adblockEnabled || !anchor || !anchor.href) return false;
+      if (isKnownPopupUrl(anchor.href)) return true;
+      return state.popupBlockEnabled && opensWindow(anchor) && isCrossSite(anchor.href) &&
+        !intendedWindow(recentTarget(), anchor.href);
+    }
+
+    // Los enlaces que no están en la página (creados y "pulsados" en memoria) no
+    // pasan por los oyentes del documento: se vigila el propio click().
+    if (window.HTMLElement && HTMLElement.prototype && typeof HTMLElement.prototype.click === 'function') {
+      wrapNative(HTMLElement.prototype, 'click', function(target, thisArg, args) {
+        const anchor = thisArg && typeof thisArg.closest === 'function' ? thisArg.closest('a[href]') : null;
+        if (anchor && blockedSyntheticLink(anchor)) { reportBlockedPopup(); return undefined; }
+        return Reflect.apply(target, thisArg, args);
+      });
+    }
+
+    // Formularios con target=_blank enviados por script hacia otro sitio.
+    if (window.HTMLFormElement && HTMLFormElement.prototype) {
+      for (const name of ['submit', 'requestSubmit']) {
+        wrapNative(HTMLFormElement.prototype, name, function(target, thisArg, args) {
+          try {
+            const action = thisArg.action || location.href;
+            if (state.adblockEnabled && opensWindow(thisArg) &&
+                (isKnownPopupUrl(action) || (state.popupBlockEnabled && isCrossSite(action) && !intendedWindow(recentTarget(), action)))) {
+              reportBlockedPopup();
+              return undefined;
+            }
+          } catch (error) {}
+          return Reflect.apply(target, thisArg, args);
+        });
+      }
+    }
+
+    // En la ventana y en captura: así un script de la página no puede detener
+    // el evento antes de que llegue aquí (antes estaba en el documento).
+    window.addEventListener('click', function(event) {
       if (!state.adblockEnabled) return;
       const element = event.target instanceof Element ? event.target.closest('a[href]') : null;
       if (!element) return;
-      const opensWindow = /^_(?:blank|new)$|^[^_]/i.test(element.getAttribute('target') || '');
       const blocked = isKnownPopupUrl(element.href) ||
         // Un script que crea un enlace y lo "pulsa" para abrir otro sitio en una pestaña nueva.
-        (state.popupBlockEnabled && !event.isTrusted && opensWindow && isCrossSite(element.href)) ||
+        (!event.isTrusted && blockedSyntheticLink(element)) ||
         // Enlace transparente que cubre la página para robar el primer toque.
-        (state.popupBlockEnabled && event.isTrusted && opensWindow && isCrossSite(element.href) && looksLikeTrap(element));
+        (state.popupBlockEnabled && event.isTrusted && opensWindow(element) && isCrossSite(element.href) && looksLikeTrap(element));
       if (blocked) {
         event.preventDefault();
         event.stopImmediatePropagation();

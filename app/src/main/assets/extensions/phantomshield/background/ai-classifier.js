@@ -18,6 +18,8 @@
     'dialogs, login or newsletter forms, comments, video players and user controls. ' +
     'A known ad-network host in "links" or "frame", a "Sponsored/Patrocinado/Publicidad" label, or a standard ' +
     'ad size together with third-party links is strong evidence. Size or a generic class name alone is not.\n' +
+    'Links that stay on the page\'s own site ("host") point to editorial content or the site\'s own offers, not ads, ' +
+    'unless a sponsored label says otherwise. Hiding real content is worse than missing an ad: when in doubt, isAd false.\n' +
     '"ad-link" means a link to an ad click server and "ad-network" a link or frame to a known ad network: both are ads.\n' +
     'Without text or links (basic mode) judge the signal combination: "ad-class" with "ad-size", "external-links" ' +
     'or "fixed-position" is usually an ad slot; "sponsored-label" or "advertisement-label" on a card is a ' +

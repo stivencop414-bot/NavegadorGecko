@@ -8,6 +8,8 @@
     // 'basic': solo tipo, señales y tamaño. 'rich': añade un fragmento corto del
     // texto visible del candidato, dominios de sus enlaces y nombres de clase.
     detail: 'basic', rememberDecisions: false,
+    // Guardar en el dispositivo los dominios de anuncios que la IA detecta y bloquearlos.
+    learnDomains: true,
     // Umbral y alcance del análisis: 'conservative', 'balanced' o 'aggressive'.
     sensitivity: 'balanced'
   });
@@ -30,6 +32,7 @@
     config.consent = input.consent === true;
     config.jsonMode = input.jsonMode === true;
     config.rememberDecisions = input.rememberDecisions === true;
+    config.learnDomains = input.learnDomains !== false;
     config.scope = input.scope === undefined ? 'selected' : input.scope;
     if (!['selected', 'public'].includes(config.scope)) throw new Error('Alcance IA inválido.');
     config.includeSubdomains = input.includeSubdomains === true;

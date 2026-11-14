@@ -1,4 +1,4 @@
-# PhantomShield 8.3 para Firefox y GeckoView
+# PhantomShield 9.1 para Firefox y GeckoView
 
 WebExtension MV2 de bloqueo de solicitudes publicitarias, filtrado cosmético y clasificación IA opcional. Requiere Gecko/Firefox 142 o posterior por los permisos de datos utilizados también en Android. La integración de Nexo se prepara para una futura compilación del APK; no se ha validado aquí una app Android.
 
@@ -136,6 +136,68 @@ La API oficial de extensiones integradas solo carga carpetas dentro del APK medi
 - [Informe, descripción propuesta y borrador opcional de revisión](docs/MOZILLA_REVIEW.md).
 - [Políticas oficiales de complementos](https://extensionworkshop.com/documentation/publish/add-on-policies/).
 
+## Cambios en 9.1
+
+**Menos bloqueos innecesarios**
+
+- **Reglas `$badfilter`:** se respetan. Los autores de las listas las usan para
+  desactivar reglas que rompían sitios. Antes se descartaban y la regla dañina
+  seguía activa.
+- **Detector de candidatos:**
+  - `banner` y `promo` ya no cuentan como clases publicitarias. Las webs los
+    usan para su portada, sus ofertas o el aviso de cookies.
+  - Solo cuentan etiquetas cortas («Publicidad», «Patrocinado»), no frases ni
+    enlaces de menú como «Publicar anuncio».
+  - Un bloque con solo una clase sospechosa y todos sus enlaces dentro del
+    propio sitio, o un artículo (`h1` o cuatro párrafos o más), ya no se envía
+    a la IA.
+- **Instrucciones de la IA:** dicen que los enlaces al propio sitio son
+  contenido y que ocultar contenido real es peor que dejar pasar un anuncio.
+
+**Más bloqueo donde corresponde**
+
+- **Reglas `$important`:** bloquean aunque exista una excepción, como en
+  ABP/uBO.
+
+**Ventanas emergentes**
+
+- Ya no se pueden abrir de estas formas:
+  - un enlace creado en memoria y «pulsado» por un script (no pasaba por los
+    oyentes de la página);
+  - `contentWindow.open` de un iframe vacío;
+  - formularios `target=_blank` enviados por script hacia otro sitio.
+- Una ventana en blanco solo se abre tras tocar un control real, como pagar o
+  imprimir. Antes bastaba tocar texto, y el anuncio se cargaba después en esa
+  ventana.
+- El control de clics está en la ventana, en fase de captura, para que un
+  script no pueda detenerlo antes.
+- Lista de redes de *popunder* ampliada y sincronizada entre el fondo y la
+  página.
+
+**Dominios publicitarios aprendidos con la IA** (`background/ai-domains.js`)
+
+- **Qué se guarda:** cuando la IA o una regla local oculta un anuncio, el
+  dominio de su marco o de su enlace de clic. Nunca la tienda anunciada.
+- **Cuándo se bloquea:** pasa de «observando» a «bloqueado» al aparecer en
+  anuncios de dos sitios distintos, o cuatro veces en uno.
+- **Qué se bloquea:** las peticiones de terceros hacia ese dominio y las
+  ventanas que una página intente abrir hacia él.
+- **Qué no se bloquea nunca:**
+  - páginas que abre el usuario;
+  - recursos del propio sitio;
+  - servicios comunes (Google, CDN, redes sociales, pagos);
+  - dominios que ya bloquean las listas;
+  - dominios que el usuario marcó «Nunca bloquear».
+- **Señal para la IA:** los enlaces hacia un dominio aprendido son la señal
+  `ad-network`, así que esos anuncios se resuelven sin gastar tokens.
+- **Privacidad:** de cada sitio solo se guarda una huella con sal, nunca su
+  nombre. No se aprende en privado.
+- **Límites:** hasta 400 dominios. Caducan a los 30 días en observación y a
+  los 90 bloqueados.
+- **Ajustes:** interruptor «Aprender dominios de anuncios» (activado por
+  defecto) y lista con «Olvidar», «Nunca bloquear» y borrado total. El panel
+  muestra cuántos hay.
+
 ## Cambios en 8.3
 
 Retirados la suplantación de cabeceras, señuelos de anuncios, modificación de respuestas JSON,
@@ -165,6 +227,7 @@ indetectabilidad, eliminación universal de anuncios ni aprobación o firma de M
 | `FORCE_UPDATE` | resultado por lista `[{ id, ok }]` |
 | `RESET_STATS` | `{ ok, blockedCount: 0 }` |
 | `AI_CLASSIFY` (`candidates`) | `{ ok, decisions: [{ id, hide }] }` solo desde el documento principal de un sitio autorizado |
+| `AI_DOMAINS_LIST` / `_FORGET` / `_ALLOW` / `_UNALLOW` / `_CLEAR` (`domain`) | `{ ok, domains, allowed, blocked, watching }`; solo desde opciones o panel |
 | `AI_SCAN` (a la pestaña) | `{ ok, analyzed, hidden }` o un error; solicita analizar candidatos pendientes |
 
 ## Compatibilidad con GeckoView

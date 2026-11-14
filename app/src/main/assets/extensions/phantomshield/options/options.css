@@ -794,3 +794,5 @@ html { scroll-padding-bottom:var(--action-space,168px); }
 .memory-domain { padding:12px 14px; }
 .memory-actions button { min-height:38px; font-size:12px; }
 select { font-size:13px; font-weight:500; }
+
+.learned-subtitle { font-size:13px; margin:16px 0 4px; opacity:.8; }

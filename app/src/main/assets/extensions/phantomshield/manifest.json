@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "PhantomShield",
   "short_name": "PhantomShield",
-  "version": "9.0.0",
+  "version": "9.1.0",
   "description": "Bloquea anuncios y rastreadores con reglas locales (red, ocultación y YouTube). Clasificación IA opcional para lo que las reglas no detectan, con consentimiento, exclusiones y presupuesto.",
   "icons": {
     "48": "icons/icon-48.png",
@@ -57,6 +57,7 @@
       "background/anti-block-patcher.js",
       "data/ai-config.js",
       "background/ai-memory.js",
+      "background/ai-domains.js",
       "background/ai-classifier.js",
       "background/background.js"
     ],

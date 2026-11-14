@@ -121,6 +121,7 @@
   function controls() {
     field('save').disabled = !loaded || busy;
     field('remember-decisions').disabled = !loaded || busy;
+    field('learn-domains').disabled = !loaded || busy;
     field('local-only').disabled = !loaded || busy;
     field('enabled').disabled = !loaded || busy;
     field('delete-key').disabled = !loaded || busy || !saved.apiKey;
@@ -190,6 +191,7 @@
       field('consent').checked = saved.consent;
       field('json-mode').checked = saved.jsonMode;
       field('remember-decisions').checked = saved.rememberDecisions;
+      field('learn-domains').checked = saved.learnDomains !== false;
       field('endpoint').value = saved.endpoint;
       field('provider').value = saved.provider;
       providerState();
@@ -272,12 +274,14 @@
         detail: field('detail').value,
         sensitivity: field('sensitivity').value,
         rememberDecisions: field('remember-decisions').checked,
+        learnDomains: field('learn-domains').checked,
         includeSubdomains: field('include-subdomains').checked,
         excludedHosts: field('excluded-hosts').value.split(/\s+/).filter(Boolean),
         requestsPerMinute: Number(field('requests-minute').value),
         requestsPerHour: Number(field('requests-hour').value),
         timeoutMs: Number(field('timeout').value), jsonMode: field('json-mode').checked
-      }) : Object.assign({}, saved, { enabled: false, consent: false, rememberDecisions: field('remember-decisions').checked });
+      }) : Object.assign({}, saved, { enabled: false, consent: false, rememberDecisions: field('remember-decisions').checked,
+        learnDomains: field('learn-domains').checked });
       if (enabled && saved.apiKey && config.endpoint !== saved.endpoint && !newKey) {
         throw new Error('Al cambiar la dirección de la API, introduce una clave nueva o borra la guardada.');
       }
@@ -335,7 +339,8 @@
     if (!loaded || busy) return;
     busy = true; controls();
     try {
-      const next = Object.assign({}, saved, { enabled: false, consent: false, rememberDecisions: field('remember-decisions').checked });
+      const next = Object.assign({}, saved, { enabled: false, consent: false, rememberDecisions: field('remember-decisions').checked,
+        learnDomains: field('learn-domains').checked });
       await browser.storage.local.set({ aiConfig: next });
       saved = next;
       field('enabled').checked = false;
