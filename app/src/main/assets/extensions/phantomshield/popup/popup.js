@@ -94,11 +94,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const stateText = { ok: 'Conectada', auth: 'La API rechazó la clave', model: 'Modelo o dirección no encontrados',
       request: 'La API rechazó la solicitud', rate: 'Límite del proveedor o sin saldo', server: 'Fallo temporal del proveedor',
       timeout: 'El proveedor tardó demasiado', network: 'Sin conexión con el proveedor', format: 'Respuesta ilegible del modelo',
-      refusal: 'El modelo declinó responder' };
+      refusal: 'El modelo declinó responder', unavailable: 'Ningún proveedor responde ahora' };
     const showState = Boolean(config.enabled && aiState && stateText[aiState.state]);
     field('ai-state').hidden = !showState;
     field('ai-state').textContent = showState
       ? (aiState.state === 'ok' ? '✓ ' : '✕ ') + stateText[aiState.state] + (aiState.http ? ' (HTTP ' + aiState.http + ')' : '') +
+        // Quién respondió: si fue un respaldo, el principal está fallando.
+        (aiState.label && aiState.via && aiState.via !== 'primary' ? ' · vía ' + aiState.label : '') +
         (aiState.state === 'ok' ? '' : '.')
       : '';
     field('ai-state').className = 'ai-state' + (showState ? (aiState.state === 'ok' ? ' good' : ' bad') : '');

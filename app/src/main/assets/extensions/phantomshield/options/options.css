@@ -796,3 +796,14 @@ html { scroll-padding-bottom:var(--action-space,168px); }
 select { font-size:13px; font-weight:500; }
 
 .learned-subtitle { font-size:13px; margin:16px 0 4px; opacity:.8; }
+
+.backups { display:grid; gap:12px; margin:12px 0; }
+.backup-item { padding:14px; border:1px solid rgba(128,144,180,.28); border-radius:16px; background:rgba(128,144,180,.05); display:grid; gap:6px; }
+.backup-item h3 { margin:0; font-size:14px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.backup-item .backup-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
+.backup-item .backup-actions button { min-height:44px; flex:1; }
+.backup-item .check-row { margin-top:4px; }
+.provider-health { display:grid; gap:4px; margin-top:12px; font-size:13px; }
+.provider-health .good { color:#0a7656; }
+.provider-health .bad { color:#c2410c; }
+@media (prefers-color-scheme: dark) { .provider-health .good { color:#7eeac6; } .provider-health .bad { color:#fdba74; } }

@@ -1,4 +1,4 @@
-# PhantomShield 9.1 para Firefox y GeckoView
+# PhantomShield 9.2 para Firefox y GeckoView
 
 WebExtension MV2 de bloqueo de solicitudes publicitarias, filtrado cosmético y clasificación IA opcional. Requiere Gecko/Firefox 142 o posterior por los permisos de datos utilizados también en Android. La integración de Nexo se prepara para una futura compilación del APK; no se ha validado aquí una app Android.
 
@@ -135,6 +135,44 @@ La API oficial de extensiones integradas solo carga carpetas dentro del APK medi
 - [Integración privada en Nexo y límites del importador](docs/NEXO_PRIVATE_EXTENSIONS.md).
 - [Informe, descripción propuesta y borrador opcional de revisión](docs/MOZILLA_REVIEW.md).
 - [Políticas oficiales de complementos](https://extensionworkshop.com/documentation/publish/add-on-policies/).
+
+## Cambios en 9.2: modelos de respaldo con cambio automático
+
+- **Hasta dos modelos de respaldo**, además del principal. Cada uno tiene su
+  proveedor, dirección, modelo y clave, y se pueden mezclar.
+- **Proveedores incluidos:**
+  - ChatGPT (OpenAI) y Claude (Anthropic);
+  - OpenRouter, Gemini (Google), Groq, DeepSeek, Mistral y xAI;
+  - cualquier API compatible con Chat Completions.
+- **Cuándo se pasa al respaldo.** En la misma petición, si el principal no
+  responde:
+  - sin conexión o tiempo agotado;
+  - error 5xx o 529;
+  - límite o sin saldo (429/402);
+  - clave o modelo rechazados;
+  - solicitud rechazada después del reintento con el cuerpo mínimo;
+  - respuesta ilegible o negativa a responder.
+- **Proveedor que falla:** queda apartado un tiempo y se vuelve a probar
+  solo.
+  - Fallos de red o del servidor: de 20 s a 10 min, creciente.
+  - Clave o modelo rechazados: 30 min, salvo que cambies los ajustes.
+  - Respuestas ilegibles: 2 min.
+  - `Retry-After`: aparta esa API entera.
+  - Si todos están apartados, no se llama a ninguno y se explica el motivo.
+- **Presupuesto:** cada intento cuenta en el presupuesto común. Un respaldo
+  nunca dispara el gasto.
+- **Claves:** cada una se envía solo a su propia API. Al cambiar la
+  dirección de un respaldo hay que introducir su clave de nuevo.
+- **Consentimiento:** añadir, quitar o cambiar un respaldo exige volver a
+  aceptarlo.
+- **En pantalla:**
+  - opciones: tarjetas de respaldo con «Probar» y «Quitar», y el estado de
+    cada proveedor (responde, motivo del fallo, tiempo de respuesta);
+  - panel: «vía Respaldo N» cuando respondió un respaldo;
+  - estadística `fallbacks`.
+- **Código:** el cliente de IA se reescribió alrededor de una cadena de
+  proveedores (`PhantomAIConfig.chain`), con salud por proveedor y pausas
+  por API.
 
 ## Cambios en 9.1
 

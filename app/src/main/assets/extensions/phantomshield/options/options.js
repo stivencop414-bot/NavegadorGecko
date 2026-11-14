@@ -85,7 +85,8 @@
     timeout: 'Tiempo límite agotado',
     network: 'Sin conexión con el proveedor',
     format: 'Respuesta ilegible',
-    refusal: 'El modelo declinó responder'
+    refusal: 'El modelo declinó responder',
+    unavailable: 'Ningún proveedor responde ahora'
   };
   async function showState() {
     const stored = await browser.storage.local.get({ aiStatus: null });
@@ -94,7 +95,8 @@
     if (!state || !STATE_TEXT[state.state]) { node.textContent = ''; node.className = 'ai-state'; return; }
     const when = Number.isFinite(state.at) ? new Date(state.at).toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
     node.textContent = (state.state === 'ok' ? '✓ ' : '✕ ') + STATE_TEXT[state.state] +
-      (state.http ? ' (HTTP ' + state.http + ')' : '') + (when ? ' · ' + when : '');
+      (state.http ? ' (HTTP ' + state.http + ')' : '') +
+      (state.label && state.via !== 'primary' ? ' · vía ' + state.label : '') + (when ? ' · ' + when : '');
     node.className = 'ai-state ' + (state.state === 'ok' ? 'good' : 'bad');
   }
   if (browser.storage.onChanged) browser.storage.onChanged.addListener(function(changes, area) {
@@ -104,6 +106,7 @@
     }
     if (area === 'local' && changes.aiStats) showUsage().catch(function() {});
     if (area === 'local' && changes.aiStatus) showState().catch(function() {});
+    if (area === 'local' && changes.aiProviders) showProviders().catch(function() {});
   });
   showUsage().catch(function() {});
   showState().catch(function() {});
@@ -127,6 +130,7 @@
     field('delete-key').disabled = !loaded || busy || !saved.apiKey;
     field('confirm-delete').disabled = busy;
     field('test-ai').disabled = !loaded || busy;
+    field('add-backup').disabled = !loaded || busy;
     field('ai-fields').disabled = !field('enabled').checked || busy;
   }
   function draftHosts() {
@@ -183,6 +187,141 @@
     });
   }
   field('timeout').addEventListener('input', timeoutPresets);
+
+  // ---------------------------------------------------------------
+  // Modelos de respaldo: tarjetas creadas aquí (hasta dos), cada una con su
+  // proveedor, dirección, modelo y clave. La clave guardada nunca se muestra.
+  // ---------------------------------------------------------------
+  const PROVIDERS = globalThis.PhantomAIConfig.providers;
+  const MAX_BACKUPS = globalThis.PhantomAIConfig.MAX_BACKUPS || 2;
+  let backups = [];
+  function element(tag, props, children) {
+    const node = document.createElement(tag);
+    Object.assign(node, props || {});
+    for (const child of children || []) node.appendChild(child);
+    return node;
+  }
+  function backupState(draft) {
+    const preset = PROVIDERS[draft.provider.value] || PROVIDERS.custom;
+    draft.model.placeholder = preset.placeholder;
+    draft.jsonRow.hidden = preset.protocol === 'claude';
+    draft.endpointRow.hidden = draft.provider.value !== 'custom' && draft.endpoint.value === preset.endpoint;
+    draft.chips.replaceChildren && draft.chips.replaceChildren();
+    if (!draft.chips.replaceChildren) draft.chips.children = [];
+    for (const model of preset.models || []) {
+      const chip = element('button', { type: 'button', className: 'model-chip', textContent: model });
+      chip.addEventListener('click', function() { draft.model.value = model; });
+      draft.chips.appendChild(chip);
+    }
+    draft.key.placeholder = draft.savedKey ? 'Guardada; deja vacío para conservar' : 'Clave de este proveedor (opcional con proxy)';
+  }
+  function renderBackups() {
+    field('backups').replaceChildren();
+    backups.forEach(function(draft, index) {
+      draft.title.textContent = 'Respaldo ' + (index + 1);
+      field('backups').appendChild(draft.root);
+    });
+    field('add-backup').hidden = backups.length >= MAX_BACKUPS;
+    field('add-backup').disabled = busy || !loaded;
+  }
+  function addBackup(saved) {
+    if (backups.length >= MAX_BACKUPS) return null;
+    const draft = { savedKey: saved && saved.apiKey || '', savedEndpoint: saved && saved.endpoint || '' };
+    draft.title = element('span', { textContent: 'Respaldo' });
+    draft.provider = element('select', { className: 'backup-provider' });
+    for (const [id, preset] of Object.entries(PROVIDERS)) {
+      draft.provider.appendChild(element('option', { value: id, textContent: preset.label }));
+    }
+    draft.provider.value = saved && saved.provider || 'openrouter';
+    draft.endpoint = element('input', { type: 'url', placeholder: 'https://tu-api.example/v1', autocomplete: 'off',
+      value: saved && saved.endpoint || (PROVIDERS[draft.provider.value] || {}).endpoint || '' });
+    draft.endpointRow = element('div', {}, [element('label', { textContent: 'URL base de la API' }), draft.endpoint]);
+    draft.model = element('input', { type: 'text', maxLength: 200, autocomplete: 'off', spellcheck: false, value: saved && saved.model || '' });
+    draft.chips = element('div', { className: 'model-chips' });
+    draft.key = element('input', { type: 'password', maxLength: 4096, autocomplete: 'new-password', value: '' });
+    draft.json = element('input', { type: 'checkbox', checked: Boolean(saved && saved.jsonMode) });
+    draft.jsonRow = element('label', { className: 'check-row' }, [draft.json, element('span', { textContent: ' Respuesta JSON estructurada (response_format)' })]);
+    draft.status = element('p', { className: 'test-result', textContent: '' });
+    const test = element('button', { type: 'button', className: 'secondary', textContent: 'Probar' });
+    const remove = element('button', { type: 'button', className: 'secondary', textContent: 'Quitar' });
+    draft.title.setAttribute && draft.title.setAttribute('role', 'heading');
+    draft.root = element('article', { className: 'backup-item' }, [
+      element('h3', {}, [draft.title]),
+      element('label', { textContent: 'Proveedor' }), draft.provider,
+      draft.endpointRow,
+      element('label', { textContent: 'Modelo' }), draft.model, draft.chips,
+      element('label', { textContent: 'Clave API' }), draft.key,
+      draft.jsonRow,
+      element('div', { className: 'backup-actions' }, [test, remove]),
+      draft.status
+    ]);
+    draft.provider.addEventListener('change', function() {
+      draft.endpoint.value = (PROVIDERS[draft.provider.value] || {}).endpoint || '';
+      draft.model.value = '';
+      field('consent').checked = false;
+      backupState(draft);
+    });
+    draft.endpoint.addEventListener('input', function() { field('consent').checked = false; });
+    remove.addEventListener('click', function() {
+      backups = backups.filter(item => item !== draft);
+      field('consent').checked = false;
+      renderBackups();
+      status('Respaldo quitado del borrador. Guarda para aplicar el cambio.');
+    });
+    test.addEventListener('click', function() { testConnection(draft); });
+    backups.push(draft);
+    backupState(draft);
+    renderBackups();
+    return draft;
+  }
+  /** Respaldos del formulario, validados; una clave guardada solo vale para su misma dirección. */
+  function draftBackups() {
+    return backups.map(function(draft, index) {
+      const endpoint = String(draft.endpoint.value || '').trim().replace(/\/+$/, '');
+      const newKey = String(draft.key.value || '').trim();
+      if (draft.savedKey && endpoint !== draft.savedEndpoint && !newKey) {
+        throw new Error('Respaldo ' + (index + 1) + ': al cambiar la dirección de la API, introduce una clave nueva o quita el respaldo.');
+      }
+      return globalThis.PhantomAIConfig.validateConnection({
+        provider: draft.provider.value, endpoint: endpoint, model: draft.model.value,
+        apiKey: newKey || (endpoint === draft.savedEndpoint ? draft.savedKey : ''), jsonMode: draft.json.checked
+      }, 'Respaldo ' + (index + 1));
+    });
+  }
+  field('add-backup').addEventListener('click', function() {
+    const draft = addBackup(null);
+    if (draft) {
+      field('consent').checked = false;
+      status('Respaldo añadido al borrador. Elige proveedor y modelo, pruébalo y guarda.');
+    }
+  });
+
+  const PROVIDER_STATE = {
+    ok: 'responde', auth: 'clave rechazada', model: 'modelo no encontrado', request: 'solicitud rechazada',
+    rate: 'límite o sin saldo', server: 'fallo del proveedor', timeout: 'tiempo agotado', network: 'sin conexión',
+    format: 'respuesta ilegible', refusal: 'declinó responder'
+  };
+  /** Último estado conocido de cada proveedor de la cadena. */
+  async function showProviders() {
+    const stored = await browser.storage.local.get({ aiProviders: {} });
+    const map = stored.aiProviders && typeof stored.aiProviders === 'object' ? stored.aiProviders : {};
+    const box = field('provider-health');
+    box.replaceChildren();
+    const order = [['primary', 'Principal'], ['backup1', 'Respaldo 1'], ['backup2', 'Respaldo 2']];
+    for (const [id, label] of order) {
+      const state = map[id];
+      if (!state || !PROVIDER_STATE[state.state]) continue;
+      const when = Number.isFinite(state.at) ? new Date(state.at).toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+      box.appendChild(element('p', {
+        className: state.state === 'ok' ? 'good' : 'bad',
+        textContent: (state.state === 'ok' ? '✓ ' : '✕ ') + label + (state.model ? ' (' + state.model + ')' : '') + ': ' +
+          PROVIDER_STATE[state.state] + (state.http ? ' · HTTP ' + state.http : '') +
+          (state.state === 'ok' && state.ms ? ' · ' + (state.ms / 1000).toFixed(1) + ' s' : '') + (when ? ' · ' + when : '')
+      }));
+    }
+  }
+  showProviders().catch(function() {});
+
   async function load() {
     try {
       const stored = await browser.storage.local.get({ aiConfig: saved });
@@ -209,6 +348,9 @@
       field('requests-hour').value = saved.requestsPerHour;
       scopeState();
       field('timeout').value = saved.timeoutMs;
+      backups = [];
+      for (const backup of saved.backups || []) addBackup(backup);
+      renderBackups();
       renderDomains();
       timeoutPresets();
       if (browser.permissions && browser.permissions.getAll) {
@@ -279,7 +421,8 @@
         excludedHosts: field('excluded-hosts').value.split(/\s+/).filter(Boolean),
         requestsPerMinute: Number(field('requests-minute').value),
         requestsPerHour: Number(field('requests-hour').value),
-        timeoutMs: Number(field('timeout').value), jsonMode: field('json-mode').checked
+        timeoutMs: Number(field('timeout').value), jsonMode: field('json-mode').checked,
+        backups: draftBackups()
       }) : Object.assign({}, saved, { enabled: false, consent: false, rememberDecisions: field('remember-decisions').checked,
         learnDomains: field('learn-domains').checked });
       if (enabled && saved.apiKey && config.endpoint !== saved.endpoint && !newKey) {
@@ -298,24 +441,35 @@
       }
       await browser.storage.local.set({ aiConfig: config });
       saved = config;
+      backups = [];
+      for (const backup of saved.backups || []) addBackup(backup);
+      renderBackups();
       keyState(); disclosure();
-      status(enabled ? 'Configuración guardada. IA ' + (config.scope === 'public' ? 'automática en sitios públicos' : 'en sitios elegidos') + ', con exclusiones y presupuesto.' : 'Guardado: solo bloqueo local, sin llamadas a IA.');
+      status(enabled ? 'Configuración guardada. IA ' + (config.scope === 'public' ? 'automática en sitios públicos' : 'en sitios elegidos') + ', con exclusiones y presupuesto' +
+        (config.backups.length ? ' y ' + config.backups.length + (config.backups.length === 1 ? ' respaldo.' : ' respaldos.') : '.') : 'Guardado: solo bloqueo local, sin llamadas a IA.');
     } catch (error) { status(error.message || 'No se pudo guardar la configuración.', true); }
     finally { busy = false; controls(); }
   });
-  field('test-ai').addEventListener('click', async function() {
+  /** Prueba el principal (draft null) o un respaldo con lo escrito en el formulario. */
+  async function testConnection(draft) {
     if (!loaded || busy) return;
-    const result = field('test-result');
+    const result = draft ? draft.status : field('test-result');
     busy = true; controls();
     result.className = 'test-result';
     result.textContent = 'Probando la conexión con el proveedor…';
     try {
+      const index = draft ? backups.indexOf(draft) : -1;
       // Se prueba lo que hay escrito en el formulario, aunque no esté guardado.
-      const reply = await browser.runtime.sendMessage({ type: 'AI_TEST', config: {
-        provider: field('provider').value, endpoint: field('endpoint').value, model: field('model').value,
+      const config = draft ? {
+        slot: 'backup' + (index + 1), provider: draft.provider.value, endpoint: draft.endpoint.value, model: draft.model.value,
+        apiKey: String(draft.key.value || '').trim(), timeoutMs: Number(field('timeout').value) || 12000,
+        jsonMode: draft.json.checked, detail: 'rich'
+      } : {
+        slot: 'primary', provider: field('provider').value, endpoint: field('endpoint').value, model: field('model').value,
         apiKey: field('api-key').value.trim(), timeoutMs: Number(field('timeout').value) || 12000,
         jsonMode: field('json-mode').checked, detail: 'rich'
-      } });
+      };
+      const reply = await browser.runtime.sendMessage({ type: 'AI_TEST', config: config });
       if (reply && reply.ok) {
         result.className = 'test-result good';
         result.textContent = '✓ Conexión correcta en ' + (Number(reply.ms) / 1000).toFixed(1) + ' s. ' +
@@ -331,7 +485,8 @@
       result.className = 'test-result bad';
       result.textContent = '✕ No se pudo contactar con el bloqueador. Recarga esta página.';
     } finally { busy = false; controls(); }
-  });
+  }
+  field('test-ai').addEventListener('click', function() { return testConnection(null); });
   field('endpoint').addEventListener('input', function() {
     if (field('endpoint').value.trim().replace(/\/+$/, '') !== saved.endpoint) field('consent').checked = false;
   });
