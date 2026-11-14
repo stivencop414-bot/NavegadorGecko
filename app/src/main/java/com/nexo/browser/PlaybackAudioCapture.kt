@@ -173,7 +173,9 @@ class PlaybackCaptureService : Service() {
                 .setSampleRate(PlaybackPcm.SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build()
             val min = AudioRecord.getMinBufferSize(PlaybackPcm.SAMPLE_RATE,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
             check(min > 0)
-            val audio = AudioRecord.Builder().setAudioFormat(format).setBufferSizeInBytes(maxOf(min*2,16000))
+            // Búfer de 1 s: si el teléfono va cargado, el hilo de lectura nunca se queda atrás
+            // (con el búfer justo Android descartaba audio y Gecko podía notar la presión).
+            val audio = AudioRecord.Builder().setAudioFormat(format).setBufferSizeInBytes(maxOf(min*4, PlaybackPcm.SAMPLE_RATE * 2))
                 .setAudioPlaybackCaptureConfig(config).build()
             recorder = audio
             check(audio.state == AudioRecord.STATE_INITIALIZED)
@@ -183,7 +185,12 @@ class PlaybackCaptureService : Service() {
             running = true
             main.post(playbackWatch)
             Thread({
-                val buffer = ByteArray(8000) // 250 ms, mono PCM16 at 16 kHz
+                // Prioridad de audio: lecturas puntuales con poco trabajo cada vez, sin competir
+                // con la decodificación del video por ráfagas grandes.
+                runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO) }
+                // Bloques de 100 ms (antes 250): Deepgram recibe la voz antes y los subtítulos
+                // llegan ~150 ms antes; el trabajo por bloque es mínimo.
+                val buffer = ByteArray(3200) // 100 ms, mono PCM16 at 16 kHz
                 val gain = PlaybackPcm.Gain()
                 val queued = java.util.concurrent.atomic.AtomicInteger()
                 var signal = false
@@ -209,7 +216,7 @@ class PlaybackCaptureService : Service() {
                         signal = signal || heard
                         if (heard) gain.apply(bytes)
                         // Cola acotada: con el hilo principal ocupado se descarta audio en vez de acumularlo.
-                        if (queued.incrementAndGet() > 40) queued.decrementAndGet()
+                        if (queued.incrementAndGet() > 80) queued.decrementAndGet()
                         else main.post {
                             queued.decrementAndGet()
                             if (running && LiveCaptions.matchesCapture(grant.session,grant.token)) LiveCaptions.onDeviceAudio(grant.session,bytes)

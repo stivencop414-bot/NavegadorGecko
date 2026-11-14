@@ -20,5 +20,15 @@ window.PHANTOM_POPUP_DOMAINS = [
   "admaven.com",
   "monetag.com",
   "adcash.com",
-  "trafficstars.com"
+  "trafficstars.com",
+  "trafficjunky.com",
+  "propellerclicks.com",
+  "hilltopads.com",
+  "ad-maven.com",
+  "galaksion.com",
+  "clickadilla.com",
+  "evadav.com",
+  "richads.com",
+  "zeropark.com",
+  "clickaine.com"
 ];

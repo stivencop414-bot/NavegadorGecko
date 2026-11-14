@@ -67,7 +67,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     field('ai-tokens').textContent = metric('inputTokens') + metric('outputTokens') === 0 && metric('requests') && metric('requests') === metric('usageMissing') ? '—' : (metric('inputTokens') + metric('outputTokens')).toLocaleString('es');
     field('ai-detected').textContent = metric('detected').toLocaleString('es');
     field('ai-usage-note').textContent = metric('analyzed').toLocaleString('es') + ' analizados · ' +
-      metric('requests').toLocaleString('es') + ' solicitudes' + (metric('local') ? ' · ' + metric('local').toLocaleString('es') + ' resueltos sin modelo' : '');
+      metric('requests').toLocaleString('es') + ' solicitudes' + (metric('local') ? ' · ' + metric('local').toLocaleString('es') + ' resueltos sin modelo' : '') +
+      (function() {
+        // Dominios publicitarios que la IA enseñó y que ya se bloquean en todas las páginas.
+        const learned = stats.learnedDomains && typeof stats.learnedDomains === 'object' ? stats.learnedDomains : {};
+        const blocked = Number(learned.blocked) || 0;
+        const watching = Number(learned.watching) || 0;
+        if (!blocked && !watching) return '';
+        return ' · ' + blocked.toLocaleString('es') + (blocked === 1 ? ' dominio aprendido bloqueado' : ' dominios aprendidos bloqueados') +
+          (watching ? ' (' + watching.toLocaleString('es') + ' en observación)' : '');
+      })();
     const config = stored.aiConfig && typeof stored.aiConfig === 'object' ? stored.aiConfig : {};
     const authorized = globalThis.PhantomAIConfig.hostAllowed(config, host);
     scanAvailable = Boolean(domain && globalOn && siteOn && config.enabled === true && config.consent === true && authorized && !(currentTab && currentTab.incognito));
@@ -85,11 +94,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const stateText = { ok: 'Conectada', auth: 'La API rechazó la clave', model: 'Modelo o dirección no encontrados',
       request: 'La API rechazó la solicitud', rate: 'Límite del proveedor o sin saldo', server: 'Fallo temporal del proveedor',
       timeout: 'El proveedor tardó demasiado', network: 'Sin conexión con el proveedor', format: 'Respuesta ilegible del modelo',
-      refusal: 'El modelo declinó responder' };
+      refusal: 'El modelo declinó responder', unavailable: 'Ningún proveedor responde ahora' };
     const showState = Boolean(config.enabled && aiState && stateText[aiState.state]);
     field('ai-state').hidden = !showState;
     field('ai-state').textContent = showState
       ? (aiState.state === 'ok' ? '✓ ' : '✕ ') + stateText[aiState.state] + (aiState.http ? ' (HTTP ' + aiState.http + ')' : '') +
+        // Quién respondió: si fue un respaldo, el principal está fallando.
+        (aiState.label && aiState.via && aiState.via !== 'primary' ? ' · vía ' + aiState.label : '') +
         (aiState.state === 'ok' ? '' : '.')
       : '';
     field('ai-state').className = 'ai-state' + (showState ? (aiState.state === 'ok' ? ' good' : ' bad') : '');

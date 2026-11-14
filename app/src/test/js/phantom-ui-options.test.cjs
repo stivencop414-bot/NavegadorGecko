@@ -115,5 +115,5 @@ test('test connection sends the unsaved draft, never the stored key, and explain
 test('provider presets offer one-tap model suggestions',async()=>{
   const h=await harness();h.field('provider').value='claude';await h.fire('provider','change');
   const chips=h.field('model-chips').children;assert.ok(chips.length>=3);
-  assert.equal(chips[0].textContent,'claude-opus-5-5');chips[0].listeners.click();assert.equal(h.field('model').value,'claude-opus-5-5');
+  assert.equal(chips[0].textContent,'claude-haiku-5-5');chips[0].listeners.click();assert.equal(h.field('model').value,'claude-haiku-5-5');
 });

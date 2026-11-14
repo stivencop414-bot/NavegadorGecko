@@ -1377,9 +1377,23 @@ class MainActivity :
     // Subtítulos en vivo
     // ---------------------------------------------------------------
 
+    // Los subtítulos cambian varias veces por segundo (texto provisional): se dibujan como
+    // mucho cada ~66 ms, agrupando los cambios, para no recolocar la pantalla en cada uno.
+    private var captionRenderPending = false
+    private var lastCaptionRender = 0L
+    private val captionRender = Runnable {
+        captionRenderPending = false
+        lastCaptionRender = android.os.SystemClock.uptimeMillis()
+        refreshCaptionsUi()
+    }
+
     override fun onCaptionsChanged(session: GeckoSession) {
         if (session !== attachedSession) return
-        refreshCaptionsUi()
+        if (!captionRenderPending) {
+            captionRenderPending = true
+            val wait = (66L - (android.os.SystemClock.uptimeMillis() - lastCaptionRender)).coerceAtLeast(0L)
+            captionView.postDelayed(captionRender, wait)
+        }
         val message = LiveCaptions.message(session)
         if (LiveCaptions.state(session) == LiveCaptions.State.ERROR && message != null && message != lastCaptionMessage) {
             lastCaptionMessage = message

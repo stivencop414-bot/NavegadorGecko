@@ -164,6 +164,17 @@ object BrowserPrefs {
     fun setAiTranslateEndpoint(c: Context, v: String) = p(c).edit().putString("ai_translate_endpoint", v.trim()).apply()
     fun aiTranslateKey(c: Context) = secret(c, "ai_translate_key")
     fun setAiTranslateKey(c: Context, v: String) = SecretStore.put(c, "ai_translate_key", v)
+    // Segundo modelo de IA (otra API/proveedor): se piden los dos a la vez y gana el primero que responde.
+    fun aiTranslate2Enabled(c: Context) = p(c).getBoolean("ai_translate2_enabled", false)
+    fun setAiTranslate2Enabled(c: Context, v: Boolean) = p(c).edit().putBoolean("ai_translate2_enabled", v).apply()
+    fun aiTranslate2Provider(c: Context) = p(c).getString("ai_translate2_provider", "openrouter") ?: "openrouter"
+    fun setAiTranslate2Provider(c: Context, v: String) = p(c).edit().putString("ai_translate2_provider", v).apply()
+    fun aiTranslate2Model(c: Context) = p(c).getString("ai_translate2_model", "") ?: ""
+    fun setAiTranslate2Model(c: Context, v: String) = p(c).edit().putString("ai_translate2_model", v.trim()).apply()
+    fun aiTranslate2Endpoint(c: Context) = p(c).getString("ai_translate2_endpoint", "") ?: ""
+    fun setAiTranslate2Endpoint(c: Context, v: String) = p(c).edit().putString("ai_translate2_endpoint", v.trim()).apply()
+    fun aiTranslate2Key(c: Context) = secret(c, "ai_translate2_key")
+    fun setAiTranslate2Key(c: Context, v: String) = SecretStore.put(c, "ai_translate2_key", v)
     // Original, traducido o ambos.
     fun captionMode(c: Context) = p(c).getString("caption_mode", "translated") ?: "translated"
     fun setCaptionMode(c: Context, v: String) = p(c).edit().putString("caption_mode", v).apply()
@@ -195,8 +206,19 @@ object BrowserPrefs {
         val total = captionSecondsToday(c) + seconds
         p(c).edit().putString("caption_usage_day", today()).putInt("caption_usage_seconds", total).apply()
     }
-    fun captionSize(c: Context) = p(c).getInt("caption_size", 16).coerceIn(12, 26)
-    fun setCaptionSize(c: Context, v: Int) = p(c).edit().putInt("caption_size", v.coerceIn(12, 26)).apply()
+    fun captionSize(c: Context) = p(c).getInt("caption_size", 16).coerceIn(10, 26)
+    fun setCaptionSize(c: Context, v: Int) = p(c).edit().putInt("caption_size", v.coerceIn(10, 26)).apply()
+    // Diseño de los subtítulos: fondo ("solid", "soft", "none"), color del texto y longitud.
+    fun captionBackground(c: Context) = p(c).getString("caption_background", "solid")?.takeIf { it in setOf("solid", "soft", "none") } ?: "solid"
+    fun setCaptionBackground(c: Context, v: String) = p(c).edit().putString("caption_background", v).apply()
+    fun captionColor(c: Context) = p(c).getString("caption_color", "white")?.takeIf { it in setOf("white", "yellow") } ?: "white"
+    fun setCaptionColor(c: Context, v: String) = p(c).edit().putString("caption_color", v).apply()
+    /** Líneas visibles (1–3): también fija cuánto texto se conserva en pantalla. */
+    fun captionLines(c: Context) = p(c).getInt("caption_lines", 2).coerceIn(1, 3)
+    fun setCaptionLines(c: Context, v: Int) = p(c).edit().putInt("caption_lines", v.coerceIn(1, 3)).apply()
+    /** Segundos sin voz tras los que se borra el último subtítulo. */
+    fun captionClearSeconds(c: Context) = p(c).getInt("caption_clear_seconds", 3).coerceIn(1, 10)
+    fun setCaptionClearSeconds(c: Context, v: Int) = p(c).edit().putInt("caption_clear_seconds", v.coerceIn(1, 10)).apply()
 
     fun pullToRefresh(c: Context) = p(c).getBoolean("pull_to_refresh", true)
     /** Deslizar la barra inferior: a los lados cambia de pestaña, hacia arriba abre el selector. */

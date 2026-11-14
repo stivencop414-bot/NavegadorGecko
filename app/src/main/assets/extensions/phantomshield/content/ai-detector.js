@@ -26,7 +26,9 @@
   const AD_LINK = /(?:\/aclk\?|\/pagead\/|[?&]adurl=|[?&]utm_medium=(?:cpc|ppc|paid|display|banner)\b|doubleclick\.net|googleadservices\.com|googlesyndication\.com|adservice\.google\.|taboola\.com|outbrain\.com|adnxs\.com|criteo\.(?:com|net)|amazon-adsystem\.com|adform\.net|smartadserver\.com|pubmatic\.com|rubiconproject\.com|revcontent\.com|mgid\.com|zemanta\.com)/i;
   let walker = null;
   const hidden = new Map();
-  const marker = /(?:^|[\s_-])(?:ads?|advert(?:isement|ising)?|sponsor(?:ed)?|promo(?:ted|tion)?|publicidad|banner)(?:$|[\s_-])/i;
+  // Sin "banner" ni "promo": los usan las propias webs para su cabecera, sus ofertas
+  // o el aviso de cookies, y provocaban ocultaciones de contenido útil.
+  const marker = /(?:^|[\s_-])(?:ads?|advert(?:isement|ising)?|sponsor(?:ed)?|promoted|publicidad|adsense|dfp|gpt-ad)(?:$|[\s_-])/i;
   const labels = /\b(sponsored|patrocinad[oa]s?|promocionad[oa]s?|advertisement|publicidad|anuncios?|promoted|gesponsert|werbung|pubblicità|sponsoris[ée]e?)(?![\wà-ÿ])/i;
   // Etiqueta corta que es exactamente "Ad", "Anuncio"… (no una palabra dentro de un texto).
   const shortLabel = /^(?:ad|ads|anuncio|anuncios|publicidad|patrocinado|patrocinada|sponsored|promoted|promocionado|advertisement)$/i;
@@ -117,9 +119,22 @@
     const signals = [];
     if (element.hasAttribute('data-ad-slot') || element.hasAttribute('data-ad-client')) signals.push('ad-attribute');
     if (marker.test(element.className + ' ' + element.id)) signals.push('ad-class');
-    const labelNodes = Array.from(element.querySelectorAll('small, span, [aria-label], [class*="sponsor"], [class*="label"], [class*="badge"]')).slice(0, 16);
-    const label = (element.getAttribute('aria-label') || '') + ' ' +
-      labelNodes.slice(0, 8).map(node => ((node.getAttribute('aria-label') || '') + ' ' + node.textContent).slice(0, 80)).join(' ');
+    // Solo cuentan etiquetas cortas ("Publicidad", "Patrocinado · 2 h"); una frase
+    // del artículo o un enlace del menú ("Publicar anuncio") no es una etiqueta.
+    const labelNodes = Array.from(element.querySelectorAll('small, span, [aria-label], [class*="sponsor"], [class*="label"], [class*="badge"]'))
+      .filter(node => {
+        // Un enlace corto de menú ("Anuncios", "Publicar anuncio") no es una etiqueta;
+        // una tarjeta entera enlazada sí puede llevarla dentro.
+        const link = node.closest('a[href]');
+        return !link || String(link.textContent || '').trim().length > 40 || /sponsor|patrocin/i.test(String(node.className || ''));
+      })
+      .slice(0, 16);
+    const shortText = node => {
+      const text = ((node.getAttribute('aria-label') || '') + ' ' + String(node.textContent || '')).replace(/\s+/g, ' ').trim();
+      return text.length <= 40 ? text : '';
+    };
+    const ownLabel = String(element.getAttribute('aria-label') || '').trim();
+    const label = (ownLabel.length <= 40 ? ownLabel : '') + ' ' + labelNodes.slice(0, 8).map(shortText).join(' ');
     const match = label.match(labels);
     const exact = labelNodes.find(node => shortLabel.test(String(node.textContent || '').trim()));
     if (match) signals.push(/sponsor|patrocin|promo|gesponsert/i.test(match[0]) ? 'sponsored-label' : 'advertisement-label');
@@ -168,13 +183,26 @@
       signals.push('external-links');
     }
     if (!signals.length) return null;
+    // Contenido propio: solo un nombre de clase sospechoso y todos sus enlaces van
+    // al mismo sitio (ofertas, destacados, tarjetas del propio medio). Un anuncio
+    // de verdad enlaza fuera, lleva etiqueta o atributos de red publicitaria.
+    const weakOnly = signals.every(signal => signal === 'ad-class');
+    if (weakOnly && linkHosts.length && !external.length && !adLink) return null;
+    // El artículo o bloque principal de la página nunca es candidato por una clase.
+    if (weakOnly && (element.querySelector('h1') || element.querySelectorAll('p').length >= 4 ||
+        element.closest('main article, [role="main"] article') === element)) return null;
     if (/^(?:fixed|sticky)$/.test(getComputedStyle(element).position)) signals.push('fixed-position');
 
     const descriptor = { tag: element.tagName, signals: signals, width: rect.width, height: rect.height };
     // Solo para la comprobación local contra las listas; el fondo no las envía al proveedor.
     const localUrls = externalUrls.slice();
     if (thirdPartyFrame && localUrls.length < 4) {
-      try { localUrls.push(new URL(frameElement.getAttribute('src'), location.href).href.slice(0, 512)); } catch (error) {}
+      try {
+        const frameUrl = new URL(frameElement.getAttribute('src'), location.href).href.slice(0, 512);
+        localUrls.push(frameUrl);
+        // Para aprender dominios publicitarios en el dispositivo; nunca va al proveedor.
+        descriptor.localFrame = frameUrl;
+      } catch (error) {}
     }
     if (localUrls.length) descriptor.localUrls = localUrls;
     // Local-only identity: separates similar cards, never forwarded to the provider.

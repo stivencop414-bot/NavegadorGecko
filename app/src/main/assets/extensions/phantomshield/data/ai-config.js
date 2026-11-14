@@ -8,19 +8,80 @@
     // 'basic': solo tipo, señales y tamaño. 'rich': añade un fragmento corto del
     // texto visible del candidato, dominios de sus enlaces y nombres de clase.
     detail: 'basic', rememberDecisions: false,
+    // Guardar en el dispositivo los dominios de anuncios que la IA detecta y bloquearlos.
+    learnDomains: true,
     // Umbral y alcance del análisis: 'conservative', 'balanced' o 'aggressive'.
-    sensitivity: 'balanced'
+    sensitivity: 'balanced',
+    // Hasta dos proveedores de respaldo, en orden: si el principal no responde
+    // (caído, sin saldo, clave rechazada, respuesta ilegible…) se usa el siguiente.
+    backups: []
+  });
+  const MAX_BACKUPS = 2;
+
+  /*
+   * Proveedores. `protocol`: 'claude' (Messages) o 'chat' (Chat Completions,
+   * que también hablan Gemini, Groq, DeepSeek, Mistral, xAI y OpenRouter).
+   * `minimal`: el proveedor prefiere el cuerpo mínimo (max_completion_tokens).
+   * Los modelos son sugerencias de un toque; se puede escribir cualquiera.
+   */
+  const providers = Object.freeze({
+    openai: { label: 'ChatGPT (OpenAI)', protocol: 'chat', minimal: true, endpoint: 'https://api.openai.com/v1', placeholder: 'gpt-4.1-mini',
+      models: ['gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o-mini'] },
+    claude: { label: 'Claude (Anthropic)', protocol: 'claude', endpoint: 'https://api.anthropic.com/v1', placeholder: 'claude-haiku-5-5',
+      models: ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'] },
+    openrouter: { label: 'OpenRouter', protocol: 'chat', endpoint: 'https://openrouter.ai/api/v1', placeholder: 'openai/gpt-4.1-mini',
+      models: ['openai/gpt-4.1-mini', 'google/gemini-2.5-flash', 'anthropic/claude-haiku-5-5', 'meta-llama/llama-3.3-70b-instruct'] },
+    gemini: { label: 'Gemini (Google)', protocol: 'chat', endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai', placeholder: 'gemini-2.5-flash',
+      models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'] },
+    groq: { label: 'Groq', protocol: 'chat', endpoint: 'https://api.groq.com/openai/v1', placeholder: 'llama-3.3-70b-versatile',
+      models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] },
+    deepseek: { label: 'DeepSeek', protocol: 'chat', endpoint: 'https://api.deepseek.com/v1', placeholder: 'deepseek-chat',
+      models: ['deepseek-chat'] },
+    mistral: { label: 'Mistral', protocol: 'chat', endpoint: 'https://api.mistral.ai/v1', placeholder: 'mistral-small-latest',
+      models: ['mistral-small-latest', 'mistral-medium-latest'] },
+    xai: { label: 'xAI (Grok)', protocol: 'chat', endpoint: 'https://api.x.ai/v1', placeholder: 'grok-3-mini',
+      models: ['grok-3-mini'] },
+    custom: { label: 'Compatible / personalizado', protocol: 'chat', endpoint: '', placeholder: 'Identificador del modelo', models: [] }
   });
 
-  const providers = Object.freeze({
-    openai: { label: 'OpenAI', endpoint: 'https://api.openai.com/v1', placeholder: 'gpt-4.1-mini',
-      models: ['gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o-mini'] },
-    claude: { label: 'Claude (Anthropic)', endpoint: 'https://api.anthropic.com/v1', placeholder: 'claude-opus-5-5',
-      models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] },
-    openrouter: { label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1', placeholder: 'openai/gpt-4.1-mini',
-      models: [] },
-    custom: { label: 'Compatible / personalizado', endpoint: '', placeholder: 'Identificador del modelo', models: [] }
-  });
+  /** Valida una conexión (principal o de respaldo): proveedor, URL HTTPS, modelo y clave. */
+  function validateConnection(input, label) {
+    const prefix = label ? label + ': ' : '';
+    const connection = {};
+    connection.provider = input.provider === undefined ? 'custom' : input.provider;
+    if (!Object.hasOwn(providers, connection.provider)) throw new Error(prefix + 'Proveedor IA inválido.');
+    connection.endpoint = String(input.endpoint || providers[connection.provider].endpoint).trim().replace(/\/+$/, '');
+    connection.model = String(input.model || '').trim();
+    connection.apiKey = String(input.apiKey || '').trim();
+    connection.jsonMode = input.jsonMode === true;
+    if (connection.endpoint) {
+      let url;
+      try { url = new URL(connection.endpoint); } catch (error) { throw new Error(prefix + 'URL de API inválida.'); }
+      if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+        throw new Error(prefix + 'La API debe usar HTTPS, sin credenciales ni parámetros en la URL.');
+      }
+      connection.endpoint = url.href.replace(/\/+$/, '');
+    }
+    if (connection.model.length > 200 || connection.apiKey.length > 4096 || /[\r\n]/.test(connection.apiKey)) {
+      throw new Error(prefix + 'Modelo o clave API inválidos.');
+    }
+    return connection;
+  }
+
+  /** Cadena de proveedores en orden de uso: principal y respaldos completos. */
+  function chain(config) {
+    const list = [];
+    if (config && config.endpoint && config.model) {
+      list.push({ id: 'primary', label: 'Principal', provider: config.provider, endpoint: config.endpoint, model: config.model,
+        apiKey: config.apiKey, jsonMode: config.jsonMode });
+    }
+    (config && Array.isArray(config.backups) ? config.backups : []).forEach(function(backup, index) {
+      if (backup && backup.endpoint && backup.model) {
+        list.push(Object.assign({ id: 'backup' + (index + 1), label: 'Respaldo ' + (index + 1) }, backup));
+      }
+    });
+    return list;
+  }
   function validate(input) {
     if (!input || typeof input !== 'object') throw new Error('Configuración IA inválida.');
     const config = Object.assign({}, defaults);
@@ -30,6 +91,7 @@
     config.consent = input.consent === true;
     config.jsonMode = input.jsonMode === true;
     config.rememberDecisions = input.rememberDecisions === true;
+    config.learnDomains = input.learnDomains !== false;
     config.scope = input.scope === undefined ? 'selected' : input.scope;
     if (!['selected', 'public'].includes(config.scope)) throw new Error('Alcance IA inválido.');
     config.includeSubdomains = input.includeSubdomains === true;
@@ -43,23 +105,19 @@
         throw new Error('Presupuesto IA inválido: ' + key);
       }
     }
-    config.endpoint = String(input.endpoint || providers[config.provider].endpoint).trim().replace(/\/+$/, '');
-    config.model = String(input.model || '').trim();
-    config.apiKey = String(input.apiKey || '').trim();
+    Object.assign(config, validateConnection(input, ''));
+    config.jsonMode = input.jsonMode === true;
+    if (input.backups !== undefined && !Array.isArray(input.backups)) throw new Error('Respaldos IA inválidos.');
+    if ((input.backups || []).length > MAX_BACKUPS) throw new Error('Como máximo ' + MAX_BACKUPS + ' modelos de respaldo.');
+    config.backups = (input.backups || []).map(function(backup, index) {
+      if (!backup || typeof backup !== 'object') throw new Error('Respaldo ' + (index + 1) + ' inválido.');
+      const connection = validateConnection(backup, 'Respaldo ' + (index + 1));
+      if (!connection.endpoint || !connection.model) throw new Error('Respaldo ' + (index + 1) + ': indica la API y el modelo, o quítalo.');
+      return connection;
+    });
     config.timeoutMs = input.timeoutMs === undefined ? defaults.timeoutMs : Number(input.timeoutMs);
     if (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1000 || config.timeoutMs > 30000) {
       throw new Error('El tiempo límite debe estar entre 1000 y 30000 ms.');
-    }
-    if (config.endpoint) {
-      let url;
-      try { url = new URL(config.endpoint); } catch (error) { throw new Error('URL de API inválida.'); }
-      if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
-        throw new Error('La API debe usar HTTPS, sin credenciales ni parámetros en la URL.');
-      }
-      config.endpoint = url.href.replace(/\/+$/, '');
-    }
-    if (config.model.length > 200 || config.apiKey.length > 4096 || /[\r\n]/.test(config.apiKey)) {
-      throw new Error('Modelo o clave API inválidos.');
     }
     function hosts(values) {
       if (!Array.isArray(values || []) || (values || []).length > 100) {
@@ -99,7 +157,9 @@
       host === domain || (config.includeSubdomains && matches(domain)));
   }
   function requiredPermissions(config) {
-    return ['websiteContent', 'browsingActivity'].concat(config.apiKey ? ['authenticationInfo'] : []);
+    const keyed = Boolean(config.apiKey) || (config.backups || []).some(backup => backup && backup.apiKey);
+    return ['websiteContent', 'browsingActivity'].concat(keyed ? ['authenticationInfo'] : []);
   }
-  globalThis.PhantomAIConfig = { defaults: defaults, validate: validate, requiredPermissions: requiredPermissions, hostAllowed: hostAllowed, publicHost: publicHost, providers: providers };
+  globalThis.PhantomAIConfig = { defaults: defaults, validate: validate, requiredPermissions: requiredPermissions, hostAllowed: hostAllowed, publicHost: publicHost, providers: providers,
+    validateConnection: validateConnection, chain: chain, MAX_BACKUPS: MAX_BACKUPS };
 })();

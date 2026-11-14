@@ -1,5 +1,5 @@
 /**
- * PhantomShield 8.1 - Network rule engine.
+ * PhantomShield 9.1 - Network rule engine.
  * Supports the conservative ABP subset used by the bundled and downloaded lists.
  */
 (function() {
@@ -13,7 +13,7 @@
   ]);
 
   const UNSUPPORTED_OPTIONS = new Set([
-    'badfilter', 'csp', 'elemhide', 'generichide', 'genericblock',
+    'csp', 'elemhide', 'generichide', 'genericblock',
     'removeparam', 'redirect', 'redirect-rule', 'replace', 'urltransform',
     'match-case', 'strict1p', 'strict3p'
   ]);
@@ -60,8 +60,33 @@
       // Reglas exclusivas de ventanas nuevas: aparte, para no evaluarlas en cada recurso.
       this.popupRules = [];
       this.popupExceptions = [];
+      // `$important`: bloqueos que ninguna excepción puede anular (pocos cientos).
+      this.importantRules = [];
+      this.importantTrie = null;
+      // `$badfilter`: claves de reglas que los autores de las listas desactivaron.
+      this.badFilters = new Set();
       this.ruleKeys = new Set();
       this.ruleTotal = 0;
+    }
+
+    /**
+     * Clave normalizada de una regla (opciones en minúscula y ordenadas, sin
+     * `badfilter`), para que `regla$badfilter` anule exactamente a `regla`.
+     */
+    ruleKey(raw) {
+      const text = String(raw || '').trim();
+      const index = text.indexOf('$');
+      if (index === -1) return text.toLowerCase();
+      const options = text.slice(index + 1).split(',').map(option => option.trim().toLowerCase())
+        .filter(option => option && option !== 'badfilter').sort();
+      return (text.slice(0, index) + (options.length ? '$' + options.join(',') : '')).toLowerCase();
+    }
+
+    /** Registra `regla$badfilter`; las reglas ya cargadas con esa clave se quitan al recargar. */
+    addBadFilter(raw) {
+      if (typeof raw !== 'string' || !/\$(?:[^,]*,)*badfilter(?:,|$)/i.test(raw)) return false;
+      this.badFilters.add(this.ruleKey(raw));
+      return true;
     }
 
     /** Libera el índice de duplicados, que solo hace falta mientras se cargan listas. */
@@ -85,6 +110,9 @@
       this.plainDomains = other.plainDomains;
       this.popupRules = other.popupRules;
       this.popupExceptions = other.popupExceptions;
+      this.importantRules = other.importantRules;
+      this.importantTrie = other.importantTrie;
+      this.badFilters = other.badFilters;
       this.ruleKeys = other.ruleKeys;
       this.ruleTotal = other.ruleTotal;
     }
@@ -139,6 +167,8 @@
       if (typeof rawString !== 'string') return null;
       let raw = rawString.trim();
       if (!raw || raw.length > 4096 || raw.startsWith('!') || raw.startsWith('[')) return null;
+      // Una línea `$badfilter` no es una regla: desactiva otra (addBadFilter).
+      if (/\$(?:[^,]*,)*badfilter(?:,|$)/i.test(raw)) return null;
       if (raw.includes('##') || raw.includes('#@#') || raw.includes('#?#')) return null;
 
       const optionIndex = raw.indexOf('$');
@@ -173,6 +203,7 @@
       const hasOptions = Object.keys(options).length > 0;
       const rule = {
         raw: raw,
+        key: this.ruleKey(raw),
         options: hasOptions ? options : NO_OPTIONS,
         plain: !hasOptions,
         isException: isException,
@@ -252,6 +283,7 @@
 
     addRule(rule) {
       if (!rule || !rule.pattern) return false;
+      if (this.badFilters.size && this.badFilters.has(rule.key)) return false;
       const key = rule.raw.toLowerCase();
       if (!this.ruleKeys) this.ruleKeys = new Set();
       if (this.ruleKeys.has(key)) return false;
@@ -261,6 +293,17 @@
 
       if (rule.options.popup && Object.keys(rule.options).filter(function(key) { return REQUEST_TYPES.has(key); }).length === 1) {
         (rule.isException ? this.popupExceptions : this.popupRules).push(rule);
+        this.ruleTotal++;
+        return true;
+      }
+      if (!rule.isException && rule.options.important) {
+        // Por dominio en un trie (búsqueda por etiquetas); el resto, en una lista corta.
+        if (rule.simpleDomain) {
+          if (!this.importantTrie) this.importantTrie = new TrieNode();
+          this._insertIntoTrie(rule.simpleDomain, rule, this.importantTrie);
+        } else {
+          this.importantRules.push(rule);
+        }
         this.ruleTotal++;
         return true;
       }
@@ -463,6 +506,16 @@
           this._matchOptions(rule, 'popup', isThirdParty, documentDomain);
         if (this.popupExceptions.some(matches)) return false;
         if (this.popupRules.some(matches)) return true;
+      }
+
+      // `$important` gana a cualquier excepción (semántica de ABP/uBO).
+      const important = this.importantTrie ? this._findDomainRules(hostname, this.importantTrie) : [];
+      for (const rule of important.concat(this.importantRules)) {
+        const hit = rule.simpleDomain ? true : this._test(rule, url);
+        if (hit && this._matchOptions(rule, requestType, isThirdParty, documentDomain)) {
+          if (countBlocked !== false) this.recordBlocked();
+          return true;
+        }
       }
 
       for (const rule of this._findExceptionRules(hostname, url)) {

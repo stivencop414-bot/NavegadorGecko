@@ -1,4 +1,14 @@
-/* Optional remote classification. Never blocks the webRequest path. */
+/*
+ * Clasificación remota opcional. Nunca bloquea el camino de webRequest.
+ *
+ * Cadena de proveedores: el principal y hasta dos de respaldo (cada uno con
+ * su API, modelo y clave). Si uno falla (sin conexión, tiempo agotado, error
+ * del servidor, sin saldo, clave o modelo rechazados, respuesta ilegible o
+ * negativa a responder) se pasa al siguiente en la misma petición. Un
+ * proveedor que falla queda apartado un tiempo creciente para no perder
+ * segundos en cada página; un 429/5xx con Retry-After aparta su API entera.
+ * El presupuesto de peticiones es común: cada intento cuenta.
+ */
 (function() {
   'use strict';
   const SIGNALS = new Set(['ad-attribute', 'ad-class', 'sponsored-label', 'advertisement-label', 'sponsored-link',
@@ -18,6 +28,8 @@
     'dialogs, login or newsletter forms, comments, video players and user controls. ' +
     'A known ad-network host in "links" or "frame", a "Sponsored/Patrocinado/Publicidad" label, or a standard ' +
     'ad size together with third-party links is strong evidence. Size or a generic class name alone is not.\n' +
+    'Links that stay on the page\'s own site ("host") point to editorial content or the site\'s own offers, not ads, ' +
+    'unless a sponsored label says otherwise. Hiding real content is worse than missing an ad: when in doubt, isAd false.\n' +
     '"ad-link" means a link to an ad click server and "ad-network" a link or frame to a known ad network: both are ads.\n' +
     'Without text or links (basic mode) judge the signal combination: "ad-class" with "ad-size", "external-links" ' +
     'or "fixed-position" is usually an ad slot; "sponsored-label" or "advertisement-label" on a card is a ' +
@@ -38,6 +50,7 @@
     format: 'La IA respondió en un formato que no se pudo leer.',
     refusal: 'El modelo declinó clasificar este contenido.',
     budget: 'Límite temporal de IA; el bloqueo local sigue activo.',
+    unavailable: 'Ningún proveedor de IA responde ahora; se reintentará más tarde.',
     busy: 'Hay otro análisis de IA en curso.',
     changed: 'La configuración de IA cambió durante el análisis.',
     off: 'IA desactivada o sitio sin autorización.',
@@ -160,7 +173,8 @@
    * razonamiento): se usa tras un HTTP 400.
    */
   function buildRequest(config, userContent, variant) {
-    const claude = config.provider === 'claude';
+    const preset = globalThis.PhantomAIConfig && globalThis.PhantomAIConfig.providers[config.provider];
+    const claude = preset ? preset.protocol === 'claude' : config.provider === 'claude';
     const suffix = claude ? '/messages' : '/chat/completions';
     const endpoint = config.endpoint.endsWith(suffix) ? config.endpoint : config.endpoint + suffix;
     const headers = { 'Content-Type': 'application/json' };
@@ -196,9 +210,21 @@
     return { endpoint: endpoint, headers: headers, body: body, claude: claude };
   }
 
+  // Errores tras los que se prueba el siguiente proveedor de la cadena.
+  const FAILOVER = new Set(['network', 'timeout', 'server', 'rate', 'auth', 'model', 'request', 'format', 'refusal']);
+  // Tiempo que un proveedor queda apartado tras fallar (ms), según el motivo.
+  function penalty(code, fails) {
+    if (code === 'auth' || code === 'model') return 30 * 60000;
+    if (code === 'request') return 10 * 60000;
+    if (code === 'refusal') return 0;
+    // Respuestas ilegibles: el modelo no sigue el formato; se aparta y se usa el siguiente.
+    if (code === 'format') return Math.min(10 * 60000, 2 * 60000 * fails);
+    return Math.min(10 * 60000, 20000 * Math.pow(2, Math.max(0, fails - 1)));
+  }
+
   class AIClassifier {
     constructor() {
-      this.stats = { requests: 0, inputTokens: 0, outputTokens: 0, usageMissing: 0, analyzed: 0, detected: 0, cacheHits: 0, local: 0, memoryHits: 0, remote: 0 };
+      this.stats = { requests: 0, inputTokens: 0, outputTokens: 0, usageMissing: 0, analyzed: 0, detected: 0, cacheHits: 0, local: 0, memoryHits: 0, remote: 0, fallbacks: 0 };
       this.statsReady = browser.storage.local.get({ aiStats: {} }).then(stored => {
         for (const key of Object.keys(this.stats)) {
           const value = stored.aiStats && stored.aiStats[key];
@@ -208,7 +234,11 @@
       this.statsQueue = this.statsReady;
       this.cache = new Map();
       this.requests = [];
-      this.cooldownUntil = 0;
+      // API (endpoint) -> fin del Retry-After. Sobrevive a cambios de ajustes:
+      // el límite es de la cuenta del proveedor, no del formulario.
+      this.cooldowns = new Map();
+      // endpoint|modelo -> { fails, until, code }. Se borra al cambiar los ajustes.
+      this.health = new Map();
       this.active = null;
       this.epoch = 0;
       // endpoint|modelo -> variante de cuerpo que el proveedor aceptó.
@@ -225,16 +255,29 @@
       }).catch(function() {});
       return this.statsQueue;
     }
-    /** Último resultado real con el proveedor, para que la interfaz explique qué pasa. */
-    report(state, status) {
-      return browser.storage.local.set({
-        aiStatus: { state: state, http: status || 0, at: Date.now() }
+    /** Último resultado real, para que la interfaz explique qué pasa y quién respondió. */
+    report(state, status, connection, fallback) {
+      const value = { state: state, http: status || 0, at: Date.now() };
+      if (connection) { value.via = connection.id; value.label = connection.label; }
+      if (fallback) value.fallback = true;
+      return browser.storage.local.set({ aiStatus: value }).catch(function() {});
+    }
+    /** Estado por proveedor (Principal, Respaldo 1…), sin claves ni cuerpos de respuesta. */
+    reportProvider(connection, state, status, ms) {
+      if (!connection || !connection.id) return Promise.resolve();
+      return browser.storage.local.get({ aiProviders: {} }).then(stored => {
+        const map = stored.aiProviders && typeof stored.aiProviders === 'object' ? Object.assign({}, stored.aiProviders) : {};
+        map[connection.id] = { state: state, http: status || 0, at: Date.now(), ms: Number.isFinite(ms) ? Math.round(ms) : 0,
+          model: String(connection.model || '').slice(0, 80) };
+        return browser.storage.local.set({ aiProviders: map });
       }).catch(function() {});
     }
     async usage() { await this.statsQueue; return Object.assign({}, this.stats); }
     invalidate() {
       this.epoch++;
       this.cache.clear();
+      // Ajustes nuevos (otra clave, otro modelo): los proveedores vuelven a probarse.
+      this.health.clear();
       if (this.active) this.active.abort();
     }
     async config() {
@@ -249,6 +292,23 @@
       } catch (error) { return false; }
     }
 
+    healthKey(connection) { return connection.endpoint + '|' + connection.model; }
+    /** El proveedor no está apartado por un fallo reciente ni por Retry-After. */
+    usable(connection, now) {
+      if ((this.cooldowns.get(connection.endpoint) || 0) > now) return false;
+      const health = this.health.get(this.healthKey(connection));
+      return !health || health.until <= now;
+    }
+    markFailed(connection, error) {
+      const key = this.healthKey(connection);
+      const previous = this.health.get(key);
+      const fails = (previous ? previous.fails : 0) + 1;
+      const wait = penalty(error.code, fails);
+      this.health.set(key, { fails: fails, until: Date.now() + wait, code: error.code });
+      while (this.health.size > 20) this.health.delete(this.health.keys().next().value);
+    }
+    markHealthy(connection) { this.health.delete(this.healthKey(connection)); }
+
     /** Una llamada HTTP con una variante de cuerpo. Lanza AIError con código. */
     async send(config, userContent, variant, controller) {
       const request = buildRequest(config, userContent, variant);
@@ -262,12 +322,13 @@
         throw new AIError(controller.timedOut ? 'timeout' : controller.signal.aborted ? 'changed' : 'network');
       }
       if (!response.ok) {
-        // Back off across tabs; malformed or huge Retry-After values cannot overflow timers.
+        // Back off this API across tabs; malformed or huge Retry-After values cannot overflow timers.
         if (response.status === 429 || response.status >= 500) {
           const value = response.headers.get('Retry-After');
           const seconds = value && /^\d+$/.test(value) ? Number(value) :
             value ? (Date.parse(value) - Date.now()) / 1000 : 60;
-          this.cooldownUntil = Date.now() + Math.min(3600, Math.max(60, Number.isFinite(seconds) ? seconds : 60)) * 1000;
+          this.cooldowns.set(config.endpoint, Date.now() + Math.min(3600, Math.max(60, Number.isFinite(seconds) ? seconds : 60)) * 1000);
+          while (this.cooldowns.size > 20) this.cooldowns.delete(this.cooldowns.keys().next().value);
         }
         try { if (response.body) await response.body.cancel(); } catch (error) {}
         throw httpError(response.status);
@@ -330,28 +391,28 @@
     }
 
     /**
-     * Petición completa con presupuesto, tiempo límite y un único reintento
-     * con el cuerpo mínimo si el proveedor rechaza los parámetros (HTTP 400).
-     * Devuelve Map(id -> ocultar).
+     * Un proveedor: presupuesto, tiempo límite y un único reintento con el
+     * cuerpo mínimo si rechaza los parámetros (HTTP 400). Devuelve Map(id -> ocultar).
      */
-    async request(config, host, payload, epoch) {
+    async requestOne(config, connection, host, payload, epoch) {
       const controller = new AbortController();
       this.active = controller;
       const timeout = setTimeout(() => { controller.timedOut = true; controller.abort(); }, config.timeoutMs);
-      const variantKey = config.endpoint + '|' + config.model;
-      let variant = this.variants.has(variantKey) ? this.variants.get(variantKey)
-        : config.provider === 'openai' ? 1 : 0;
+      const variantKey = connection.endpoint + '|' + connection.model;
+      const preset = globalThis.PhantomAIConfig.providers[connection.provider] || {};
+      const claude = preset.protocol === 'claude';
+      let variant = this.variants.has(variantKey) ? this.variants.get(variantKey) : preset.minimal ? 1 : 0;
       const userContent = JSON.stringify(payload);
       const validIds = new Set(payload.candidates.map(candidate => candidate.id));
       try {
         for (let attempt = 0; attempt < 2; attempt++) {
-          if(!this.budgetAllows(config,host,Date.now())) throw new AIError('budget');
+          if (!this.budgetAllows(config, host, Date.now())) throw new AIError('budget');
           let recorded = false;
           this.requests.push({ host: host, time: Date.now() });
           await this.record({ requests: 1 });
           try {
             if (epoch !== this.epoch || controller.signal.aborted) throw new AIError('changed');
-            const result = await this.send(config, userContent, variant, controller);
+            const result = await this.send(connection, userContent, variant, controller);
             await this.record(result.delta);
             recorded = true;
             if (result.refusal) throw new AIError('refusal');
@@ -363,7 +424,7 @@
           } catch (error) {
             if (!recorded) await this.record({ usageMissing: 1 });
             const retry = attempt === 0 && error instanceof AIError && error.code === 'request' &&
-              error.status === 400 && config.provider !== 'claude';
+              error.status === 400 && !claude;
             if (!retry) throw error;
             variant = variant === 1 ? 0 : 1;
           }
@@ -375,9 +436,47 @@
       }
     }
 
+    /**
+     * Petición completa con cambio automático de proveedor. Prueba los
+     * proveedores disponibles en orden; si todos están apartados, explica por
+     * qué sin llamar a ninguno. Devuelve Map(id -> ocultar) con `connection`.
+     */
+    async request(config, host, payload, epoch) {
+      const connections = globalThis.PhantomAIConfig.chain(config);
+      if (!connections.length) throw new AIError('off');
+      const now = Date.now();
+      const ready = connections.filter(connection => this.usable(connection, now));
+      if (!ready.length) {
+        const limited = connections.some(connection => (this.cooldowns.get(connection.endpoint) || 0) > now);
+        throw new AIError(limited ? 'rate' : 'unavailable');
+      }
+      let lastError = null;
+      for (let index = 0; index < ready.length; index++) {
+        const connection = ready[index];
+        if (epoch !== this.epoch) throw new AIError('changed');
+        const started = Date.now();
+        try {
+          const decisions = await this.requestOne(config, connection, host, payload, epoch);
+          this.markHealthy(connection);
+          this.reportProvider(connection, 'ok', 0, Date.now() - started);
+          decisions.connection = connection;
+          decisions.fallback = connection !== connections[0];
+          if (decisions.fallback) await this.record({ fallbacks: 1 });
+          return decisions;
+        } catch (error) {
+          if (!(error instanceof AIError) || !FAILOVER.has(error.code)) throw error;
+          this.markFailed(connection, error);
+          this.reportProvider(connection, error.code, error.status, Date.now() - started);
+          lastError = error;
+          lastError.connection = connection;
+        }
+      }
+      throw lastError;
+    }
+
     budgetAllows(config, host, now) {
       this.requests = this.requests.filter(request => now - request.time < 3600000);
-      return !(now < this.cooldownUntil || this.requests.length >= config.requestsPerHour ||
+      return !(this.requests.length >= config.requestsPerHour ||
         this.requests.filter(request => now - request.time < 60000).length >= config.requestsPerMinute ||
         this.requests.filter(request => request.host === host && now - request.time < 60000).length >= 3);
     }
@@ -416,7 +515,7 @@
           else if(this.cache.has(signature(c)))decisions.set(c.id,{id:c.id,hide:this.cache.get(signature(c)).hide,source:'cache'});
           else missing.set(signature(c),c);
         }
-        let warning=null;
+        let warning=null, via=null;
         if(missing.size) {
           try {
             if(this.active)throw new AIError('busy');
@@ -424,6 +523,7 @@
             contacted=true;
             const remote=await this.request(config,host,{host,candidates:[...missing.values()]},epoch);
             if(epoch!==this.epoch)throw new AIError('changed');
+            via=remote.connection||null;
             const learned=[];
             for(const [sig,c] of missing) if(remote.has(c.id)) {
               this.cache.set(sig,{hide:remote.get(c.id)===true,time:Date.now()});
@@ -433,12 +533,12 @@
             for(const c of batch)if(!decisions.has(c.id) && this.cache.has(signature(c)))
               decisions.set(c.id,{id:c.id,hide:this.cache.get(signature(c)).hide,source:'model'});
             while(this.cache.size>500)this.cache.delete(this.cache.keys().next().value);
-            this.report('ok');
+            this.report('ok',0,via,remote.fallback);
           } catch(error) {
             const code=error instanceof AIError?error.code:'format';
             if(code==='changed')throw error;
             warning={code,error:MESSAGES[code]||MESSAGES.format};
-            if(contacted)this.report(code,error.status);
+            if(contacted)this.report(code,error.status,error.connection);
           }
         }
         if(epoch!==this.epoch)throw new AIError('changed');
@@ -451,46 +551,61 @@
           local:resolved.filter(d=>d.source==='local').length,cacheHits:resolved.filter(d=>d.source==='cache').length,
           memoryHits:hits.length,remote:resolved.filter(d=>d.source==='model').length});
         if(epoch!==this.epoch)throw new AIError('changed');
-        return {ok:true,decisions:batch.map(c=>decisions.get(c.id)||{id:c.id,hide:false,deferred:true}),
+        const result={ok:true,decisions:batch.map(c=>decisions.get(c.id)||{id:c.id,hide:false,deferred:true}),
           warning,memoryError};
+        if(via)result.via=via.id;
+        return result;
       } catch (error) {
         // Never surface provider bodies: they can echo keys or private configuration.
         const code = error instanceof AIError ? error.code : 'format';
-        if (contacted && code !== 'changed') this.report(code, error.status);
+        if (contacted && code !== 'changed') this.report(code, error.status, error.connection);
         return { ok: false, code: code, error: (MESSAGES[code] || MESSAGES.format) + ' El bloqueo local sigue activo.' };
       }
     }
 
     /**
-     * "Probar conexión": una petición con dos candidatos inventados (no sale
-     * ningún dato de navegación). Usa el borrador del formulario; si no trae
-     * clave, la guardada solo se reutiliza con la misma dirección.
+     * "Probar conexión" de un proveedor (el principal o uno de respaldo): una
+     * petición con dos candidatos inventados (no sale ningún dato de
+     * navegación). Usa el borrador del formulario; si no trae clave, se
+     * reutiliza la guardada solo para la misma dirección.
      */
     async probe(draft) {
       const started = Date.now();
+      let connection = null;
       try {
         const stored = await browser.storage.local.get({ aiConfig: globalThis.PhantomAIConfig.defaults });
         const saved = stored.aiConfig || {};
-        const input = Object.assign({}, draft && typeof draft === 'object' ? draft : saved, { enabled: false, consent: false });
+        const input = Object.assign({}, draft && typeof draft === 'object' ? draft : saved, { enabled: false, consent: false, backups: [] });
         const config = globalThis.PhantomAIConfig.validate(input);
         if (!config.endpoint || !config.model) {
           return { ok: false, code: 'request', error: 'Indica el proveedor y el modelo antes de probar.' };
         }
-        if (!config.apiKey && saved.apiKey && String(saved.endpoint || '') === config.endpoint) config.apiKey = saved.apiKey;
+        if (!config.apiKey) {
+          const savedConnections = [saved].concat(Array.isArray(saved.backups) ? saved.backups : []);
+          const match = savedConnections.find(item => item && item.apiKey && String(item.endpoint || '') === config.endpoint);
+          if (match) config.apiKey = match.apiKey;
+        }
+        connection = { id: draft && /^(?:primary|backup[12])$/.test(draft.slot || '') ? draft.slot : 'primary',
+          label: 'Prueba', provider: config.provider, endpoint: config.endpoint, model: config.model, apiKey: config.apiKey, jsonMode: config.jsonMode };
         if (this.active) return { ok: false, code: 'busy', error: MESSAGES.busy };
-        if (Date.now() < this.cooldownUntil) return { ok: false, code: 'rate', error: MESSAGES.rate };
+        if ((this.cooldowns.get(config.endpoint) || 0) > Date.now()) return { ok: false, code: 'rate', error: MESSAGES.rate };
         const payload = { host: 'prueba.example', candidates: [
           { id: 't-1', tag: 'IFRAME', signals: ['ad-size', 'third-party-frame'], width: 300, height: 250,
             frame: 'googleads.g.doubleclick.net', text: 'Publicidad' },
           { id: 't-2', tag: 'ARTICLE', signals: ['ad-class'], width: 350, height: 400,
             text: 'El concejo aprobó ayer el presupuesto municipal para el próximo año.', cls: ['article-body'] }
         ] };
-        const decisions = await this.request(config, 'prueba.example', payload, this.epoch);
-        this.report('ok');
+        const decisions = await this.requestOne(config, connection, 'prueba.example', payload, this.epoch);
+        this.markHealthy(connection);
+        this.report('ok', 0, connection);
+        this.reportProvider(connection, 'ok', 0, Date.now() - started);
         return { ok: true, ms: Date.now() - started, detected: decisions.get('t-1') === true, kept: decisions.get('t-2') !== true };
       } catch (error) {
         const code = error instanceof AIError ? error.code : 'request';
-        if (error instanceof AIError && code !== 'changed') this.report(code, error.status);
+        if (error instanceof AIError && code !== 'changed') {
+          this.report(code, error.status, connection);
+          this.reportProvider(connection, code, error.status, Date.now() - started);
+        }
         return {
           ok: false, code: code, http: error instanceof AIError ? error.status : 0,
           error: error instanceof AIError ? error.message : (error && error.message) || MESSAGES.request

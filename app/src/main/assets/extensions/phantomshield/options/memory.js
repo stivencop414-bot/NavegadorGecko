@@ -44,4 +44,63 @@
   field('memory-cancel').addEventListener('click',()=>{field('memory-confirm').hidden=true;field('memory-clear').focus();});
   field('memory-confirm-clear').addEventListener('click',()=>request('AI_MEMORY_CLEAR'));
   request('AI_MEMORY_LIST');
+
+  /* Dominios publicitarios aprendidos con la IA (bloqueados u observando). */
+  let learned={domains:[],allowed:[]},learnedBusy=false,learnedLoaded=false;
+  function learnedControls(){
+    for(const id of ['learned-refresh','learned-search'])field(id).disabled=learnedBusy;
+    field('learned-clear').disabled=learnedBusy||!learned.domains.length;
+  }
+  function domainCard(title,detail,buttons){
+    const card=document.createElement('article');card.className='memory-domain';
+    const heading=document.createElement('h3');heading.textContent=title;
+    const text=document.createElement('p');text.className='hint';text.textContent=detail;
+    const actions=document.createElement('div');actions.className='memory-actions';
+    for(const [label,type,domain] of buttons){
+      const button=document.createElement('button');button.type='button';button.className='secondary';button.textContent=label;button.disabled=learnedBusy;
+      button.setAttribute('aria-label',label+' '+domain);
+      button.addEventListener('click',()=>learnedRequest(type,domain));actions.appendChild(button);
+    }
+    card.append(heading,text,actions);return card;
+  }
+  function renderLearned(){
+    const query=field('learned-search').value.trim().toLowerCase();
+    const list=field('learned-domains');list.replaceChildren();
+    const blocked=learned.domains.filter(d=>d.state==='blocked').length;
+    field('learned-summary').textContent=learned.domains.length
+      ?blocked+' bloqueados · '+(learned.domains.length-blocked)+' en observación.'
+      :learnedLoaded?'Aún no hay dominios aprendidos. Se guardan cuando la IA oculta anuncios.':'Consultando dominios…';
+    for(const d of learned.domains.filter(d=>d.domain.includes(query))){
+      const state=d.state==='blocked'?'Bloqueado':'Observando';
+      const where=d.sites===1?'1 sitio':d.sites+' sitios';
+      list.appendChild(domainCard(d.domain,state+' · visto en '+where+' · '+d.hits+(d.hits===1?' vez':' veces')+' · '+new Date(d.last).toLocaleDateString('es'),
+        [['Olvidar','AI_DOMAINS_FORGET',d.domain],['Nunca bloquear','AI_DOMAINS_ALLOW',d.domain]]));
+    }
+    const allowed=field('learned-allowed');allowed.replaceChildren();
+    field('learned-allowed-box').hidden=!learned.allowed.length;
+    for(const domain of learned.allowed)allowed.appendChild(domainCard(domain,'No se aprenderá ni se bloqueará.',[['Quitar','AI_DOMAINS_UNALLOW',domain]]));
+    learnedControls();
+  }
+  async function learnedRequest(type,domain){
+    if(learnedBusy)return;learnedBusy=true;renderLearned();
+    try{
+      const result=await browser.runtime.sendMessage({type,domain});
+      if(!result||!result.ok)throw Error(result&&result.error||'No se pudieron leer los dominios aprendidos.');
+      learned={domains:result.domains||[],allowed:result.allowed||[]};learnedLoaded=true;
+      field('learned-status').textContent={AI_DOMAINS_FORGET:'Dominio olvidado.',AI_DOMAINS_ALLOW:'No se volverá a bloquear.',
+        AI_DOMAINS_UNALLOW:'Se podrá volver a aprender.',AI_DOMAINS_CLEAR:'Dominios aprendidos borrados.'}[type]||'';
+    }catch(error){field('learned-status').textContent=error.message||'No se pudo completar la operación.';}
+    finally{learnedBusy=false;renderLearned();}
+  }
+  field('learned-search').addEventListener('input',renderLearned);
+  field('learned-refresh').addEventListener('click',()=>learnedRequest('AI_DOMAINS_LIST'));
+  // Confirmación en el propio botón (los diálogos del navegador no siempre se muestran en la app).
+  let clearArmed=null;
+  field('learned-clear').addEventListener('click',()=>{
+    const button=field('learned-clear');
+    if(clearArmed){clearTimeout(clearArmed);clearArmed=null;button.textContent='Olvidar todos los dominios aprendidos';learnedRequest('AI_DOMAINS_CLEAR');return;}
+    button.textContent='Toca otra vez para olvidarlos todos';
+    clearArmed=setTimeout(()=>{clearArmed=null;button.textContent='Olvidar todos los dominios aprendidos';},4000);
+  });
+  learnedRequest('AI_DOMAINS_LIST');
 })();
